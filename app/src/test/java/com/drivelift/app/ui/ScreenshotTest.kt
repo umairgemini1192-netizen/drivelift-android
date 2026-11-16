@@ -31,7 +31,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
-import androidx.compose.ui.test.performTextInput
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -401,7 +401,10 @@ class ScreenshotTest {
         waitFor("DriveLift Backup")
         compose.onNodeWithContentDescription("New folder here").press()
         waitFor("New folder in My Drive")
-        compose.onNodeWithText("Folder name").performTextInput("Holiday 2026")
+        // The name is set without focusing the field: a focused field keeps the test from
+        // ever going idle, and a blinking cursor would differ between runs.
+        compose.onNodeWithText("Folder name")
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("Holiday 2026")) }
         waitFor("Holiday 2026")
     }
 
