@@ -22,6 +22,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -35,7 +38,6 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
-import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.testing.WorkManagerTestInitHelper
 import coil.Coil
 import coil.EventListener
@@ -117,9 +119,6 @@ class ScreenshotTest {
         // The app restarts unfinished transfers on launch. Here that must only queue a job in a
         // test WorkManager, which never runs it: nothing may try to upload during a test.
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
-        // As on a phone being touched: a dialog that opens does not hand keyboard focus to its
-        // first field, so no cursor starts blinking under a frozen clock.
-        InstrumentationRegistry.getInstrumentation().setInTouchMode(true)
     }
 
     @Before
@@ -330,7 +329,7 @@ class ScreenshotTest {
     fun folderPicker() {
         grantMedia()
         eachVariant(
-            "folder-picker", expect = "Move here: My Drive", connected = true, overlay = true,
+            "folder-picker", expect = "Move here: My Drive", connected = true, overlay = true, ownWindow = true,
             act = {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
@@ -342,7 +341,7 @@ class ScreenshotTest {
     fun folderPickerEmptyFolder() {
         grantMedia()
         eachVariant(
-            "folder-picker-empty", expect = "Move here: Archive 2024", connected = true, overlay = true,
+            "folder-picker-empty", expect = "Move here: Archive 2024", connected = true, overlay = true, ownWindow = true,
             act = {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
@@ -404,6 +403,10 @@ class ScreenshotTest {
     private fun openNewFolderDialog() {
         waitFor("DriveLift Backup")
         compose.onNodeWithContentDescription("New folder here").press()
+        // The text field measures its label and then recomposes, which needs frames. With the
+        // clock frozen that never completes and the test cannot go idle, so the clock runs from
+        // here on. Nothing on this screen or in this dialog animates without end.
+        compose.mainClock.autoAdvance = true
         waitFor("New folder in My Drive")
         // The name is set without focusing the field: a focused field keeps the test from
         // ever going idle, and a blinking cursor would differ between runs.
@@ -422,6 +425,11 @@ class ScreenshotTest {
         tab: Int = AppViewModel.TAB_PHONE,
         /** True when a sheet or dialog is open: those are separate windows, so the whole screen is captured. */
         overlay: Boolean = false,
+        /**
+         * True for the full-screen folder picker: only the window that shows [expect] is
+         * captured. A whole-screen capture draws the sheet under it on top of it.
+         */
+        ownWindow: Boolean = false,
         drive: DriveFolders = FakeDrive(),
         act: (() -> Unit)? = null,
         content: @Composable (AppViewModel) -> Unit,
@@ -463,15 +471,20 @@ class ScreenshotTest {
                 settleImages()
                 // Lets a sheet finish sliding in before it is captured.
                 if (overlay) pump(40)
-                if (record) capture("build/outputs/screenshots/$name-${variant.name.lowercase()}.png", overlay)
+                if (record) {
+                    val path = "build/outputs/screenshots/$name-${variant.name.lowercase()}.png"
+                    when {
+                        ownWindow -> compose.onNode(isRoot() and hasAnyDescendant(hasText(expect))).captureRoboImage(path)
+                        overlay -> captureScreen(path)
+                        else -> compose.onRoot().captureRoboImage(path)
+                    }
+                }
             }
         }
     }
 
     @OptIn(ExperimentalRoborazziApi::class)
-    private fun capture(path: String, overlay: Boolean) {
-        if (overlay) captureScreenRoboImage(path) else compose.onRoot().captureRoboImage(path)
-    }
+    private fun captureScreen(path: String) = captureScreenRoboImage(path)
 
     /** Runs the UI until every thumbnail request that started has loaded or failed. */
     private fun settleImages() {
