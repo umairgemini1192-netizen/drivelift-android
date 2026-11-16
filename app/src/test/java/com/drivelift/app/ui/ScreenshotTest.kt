@@ -403,10 +403,9 @@ class ScreenshotTest {
     private fun openNewFolderDialog() {
         waitFor("DriveLift Backup")
         compose.onNodeWithContentDescription("New folder here").press()
-        // The text field measures its label and then recomposes, which needs frames. With the
-        // clock frozen that never completes and the test cannot go idle, so the clock runs from
-        // here on. Nothing on this screen or in this dialog animates without end.
-        compose.mainClock.autoAdvance = true
+        // The dialog needs several frames to open. Asking the test to go idle before they have
+        // run never returns under the frozen clock, so the frames are run first.
+        pump(20)
         waitFor("New folder in My Drive")
         // The name is set without focusing the field: a focused field keeps the test from
         // ever going idle, and a blinking cursor would differ between runs.
