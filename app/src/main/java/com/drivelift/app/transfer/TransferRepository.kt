@@ -7,6 +7,7 @@ import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import com.drivelift.app.data.AppDatabase
+import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaItem
 import com.drivelift.app.data.MediaRepository
 import com.drivelift.app.data.Prefs
@@ -123,13 +124,18 @@ class TransferRepository(
 
     /**
      * Verified files that are still on the phone, ready for the system delete
-     * prompt. Rows whose file is already gone are closed out as removed.
+     * prompt. Rows whose file is already gone are closed out as removed, but only
+     * while the app can see every photo: otherwise "not visible" is not "gone".
      */
     suspend fun verifiedForRemoval(limit: Int): List<String> {
         media.refresh()
         val present = media.items.value.mapTo(HashSet()) { it.uri.toString() }
         val rows = dao.byStatus(TransferStatus.VERIFIED.name, limit)
-        val (onPhone, gone) = rows.map { it.mediaUri }.partition { it in present }
+        val (onPhone, gone) = splitForRemoval(
+            verified = rows.map { it.mediaUri },
+            present = present,
+            fullAccess = MediaAccess.hasFullAccess(context),
+        )
         markRemoved(gone)
         return onPhone
     }

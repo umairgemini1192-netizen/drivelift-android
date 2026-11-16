@@ -58,13 +58,16 @@ These protect the user's files. A change that touches them is high risk and need
    for things no retry can fix. `CANCELLED` is the user's choice. No state is skipped.
 2. **Nothing is removed unverified.** Only `VERIFIED` rows are ever offered for removal, and
    `VERIFIED` requires both the size and the MD5 checksum of the phone file to equal Drive's.
+   A file that could not be compared is never shown as verified or removed. A file that cannot
+   be read right now is retried, not treated as gone.
 3. **Removal is confirmed by Android.** Deletion goes through `MediaStore.createDeleteRequest`.
    The app never deletes media silently and never asks for broad storage management access.
 4. **Retries have no limit.** Recoverable errors are retried forever with capped backoff. A
    dropped connection resumes from the byte Drive confirms, never from an assumed offset.
 5. **A bad copy is never left looking good.** A size or checksum mismatch trashes the Drive copy
-   and requeues the file.
-6. **Original bytes.** Files are uploaded unchanged, with location metadata preserved.
+   and only then requeues the file. The Drive reference is kept until the trash call succeeds.
+6. **Original bytes.** Only the unredacted original is uploaded. There is no fallback to a
+   location-stripped stream.
 7. **One row per phone file.** `mediaUri` is unique in `transfers`.
 
 Enforce these in code and tests, not only in this document.
