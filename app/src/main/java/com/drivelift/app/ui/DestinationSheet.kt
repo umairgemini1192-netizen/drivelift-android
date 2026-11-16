@@ -32,7 +32,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -54,7 +53,7 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
     ModalBottomSheet(onDismissRequest = onDismiss) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
-                .padding(horizontal = 20.dp).padding(bottom = 20.dp).navigationBarsPadding(),
+                .padding(horizontal = Tokens.Edge).padding(bottom = Tokens.Edge).navigationBarsPadding(),
         ) {
             Text("Move ${selection.size} items to Drive", style = MaterialTheme.typography.titleLarge)
             Text(
@@ -62,7 +61,7 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
                     "anything is removed from this phone.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 4.dp, bottom = 20.dp),
+                modifier = Modifier.padding(top = Tokens.Tiny, bottom = Tokens.Edge),
             )
 
             if (conn != DriveConn.CONNECTED) {
@@ -77,11 +76,11 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
                 "Creates \"${Destination.AUTO_ROOT}\" in My Drive with one folder per phone folder, such as Camera or Screenshots.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 6.dp, bottom = 20.dp),
+                modifier = Modifier.padding(top = Tokens.Snug, bottom = Tokens.Edge),
             )
 
             if (presets.isNotEmpty()) {
-                Text("Presets", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = 8.dp))
+                Text("Presets", style = MaterialTheme.typography.titleSmall, modifier = Modifier.padding(bottom = Tokens.Small))
                 presets.forEach { preset ->
                     PresetRow(
                         preset = preset,
@@ -93,7 +92,7 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
 
             OutlinedButton(
                 onClick = { browsing = true },
-                modifier = Modifier.fillMaxWidth().padding(top = 12.dp),
+                modifier = Modifier.fillMaxWidth().padding(top = Tokens.Medium),
             ) { Text("Choose a Drive folder") }
         }
     }
@@ -103,7 +102,8 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
             onDismissRequest = { browsing = false },
             properties = DialogProperties(usePlatformDefaultWidth = false),
         ) {
-            Surface(Modifier.fillMaxSize(), color = MaterialTheme.colorScheme.background) {
+            // A dialog is its own window, so it needs its own backdrop.
+            GlassBackdrop {
                 DriveBrowser(
                     vm = vm,
                     pickMode = true,
@@ -124,17 +124,18 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
 @Composable
 private fun PresetRow(preset: PresetEntity, onUse: () -> Unit, onRemove: () -> Unit) {
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLowest,
-        border = BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-        modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp),
+        shape = Tokens.PanelShape,
+        // Solid, not glass: this row sits on the sheet, where text must stay readable.
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        border = BorderStroke(Tokens.Hairline, MaterialTheme.colorScheme.outlineVariant),
+        modifier = Modifier.fillMaxWidth().padding(bottom = Tokens.Small),
     ) {
         Row(
-            Modifier.clickable(onClick = onUse).padding(start = 16.dp, end = 4.dp, top = 6.dp, bottom = 6.dp),
+            Modifier.clickable(onClick = onUse).padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Snug, bottom = Tokens.Snug),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.Outlined.Folder, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-            Column(Modifier.weight(1f).padding(horizontal = 12.dp)) {
+            Column(Modifier.weight(1f).padding(horizontal = Tokens.Medium)) {
                 Text(preset.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
                     preset.path, style = MaterialTheme.typography.bodySmall,

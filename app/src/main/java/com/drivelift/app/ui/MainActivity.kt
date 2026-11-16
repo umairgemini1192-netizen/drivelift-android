@@ -3,6 +3,7 @@ package com.drivelift.app.ui
 import android.content.Intent
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -41,8 +42,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -55,9 +56,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        enableEdgeToEdge()
+        // The app is always dark, so system bar icons are always light.
+        val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+        enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         routeIntent(intent)
-        setContent { DriveLiftTheme { AppRoot(vm) } }
+        setContent { DriveLiftTheme { GlassBackdrop { AppRoot(vm) } } }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -114,10 +117,13 @@ fun AppRoot(vm: AppViewModel) {
         (counts[TransferStatus.UPLOADING.name]?.count ?: 0)
 
     Scaffold(
+        // Transparent, so the backdrop drawn at the root shows through the glass.
+        containerColor = Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurface,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
             if (!inFolder) {
-                NavigationBar {
+                NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                     NavigationBarItem(
                         selected = tab == AppViewModel.TAB_PHONE,
                         onClick = { vm.tab.value = AppViewModel.TAB_PHONE },
@@ -196,7 +202,7 @@ private const val NO_BUCKET = Long.MIN_VALUE
 @Composable
 private fun PermissionGate(onGrant: () -> Unit) {
     Column(
-        modifier = Modifier.fillMaxSize().padding(horizontal = 24.dp),
+        modifier = Modifier.fillMaxSize().padding(horizontal = Tokens.Section),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.Start,
     ) {
@@ -206,7 +212,7 @@ private fun PermissionGate(onGrant: () -> Unit) {
                 "Nothing leaves the phone until you choose files and a Drive folder.",
             style = MaterialTheme.typography.bodyLarge,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 12.dp, bottom = 24.dp).widthIn(max = 480.dp),
+            modifier = Modifier.padding(top = Tokens.Medium, bottom = Tokens.Section).widthIn(max = Tokens.ReadableWidth),
         )
         Button(onClick = onGrant) { Text("Allow access to photos and videos") }
     }
