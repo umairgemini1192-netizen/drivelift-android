@@ -222,7 +222,10 @@ fun TransfersScreen(vm: AppViewModel) {
                     ) {
                         Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
                         Spacer(Modifier.width(Tokens.Small))
-                        Text("Remove $verified verified files from phone")
+                        Text(
+                            if (verified == 1) "Remove 1 verified file from phone"
+                            else "Remove $verified verified files from phone"
+                        )
                     }
                     Text(
                         "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm.",

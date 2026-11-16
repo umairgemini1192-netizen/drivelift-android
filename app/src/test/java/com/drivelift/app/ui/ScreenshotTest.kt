@@ -153,7 +153,7 @@ class ScreenshotTest {
             message = "Connection problem: network unavailable",
             retryAtMs = System.currentTimeMillis() + 30_000,
         )
-        eachVariant("transfers-retrying", expect = "Needs attention", tab = AppViewModel.TAB_TRANSFERS) { vm ->
+        eachVariant("transfers-retrying", expect = "Retry failed", tab = AppViewModel.TAB_TRANSFERS) { vm ->
             AppRoot(vm)
         }
     }

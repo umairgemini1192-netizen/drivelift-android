@@ -135,7 +135,9 @@ photos, "not visible" does not mean "gone", so those files go to Android's promp
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |
 | `ui/TransfersScreen.kt` | Progress, controls, removal |
-| `ui/Theme.kt` | Colours, type, formatting helpers |
+| `ui/Theme.kt` | The one dark theme: every colour, type, formatting helpers |
+| `ui/Tokens.kt` | Every size, gap, shape and duration; reduced-motion handling |
+| `ui/Glass.kt` | Backdrop, glass panel and bar, the dot progress gauge |
 
 ## Permissions
 

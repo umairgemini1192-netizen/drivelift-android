@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
@@ -149,6 +150,12 @@ fun DotArcGauge(fraction: Float, label: String, modifier: Modifier = Modifier) {
                 }
             }
         }
-        Text(label, style = MaterialTheme.typography.displayLarge)
+        // With large text the smaller display style is used, so the figure stays inside the dome
+        // instead of covering the dots. It is still the largest text on the screen.
+        val large = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+        Text(
+            label,
+            style = if (large) MaterialTheme.typography.displaySmall else MaterialTheme.typography.displayLarge,
+        )
     }
 }

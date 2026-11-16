@@ -83,20 +83,35 @@ Enforce these in code and tests, not only in this document.
 
 ## Native design system
 
-One theme, one source of truth. Every screen follows these rules.
+One theme, one source of truth. Every screen follows these rules. The look was set by the owner
+on 17 November 2026: futuristic dark glass.
 
-1. Colour comes from `MaterialTheme.colorScheme`, defined once in `ui/Theme.kt`. No raw colour
-   values in screens. Green (primary) marks the main action; red (error) is used only for removal
-   and failure.
-2. Spacing follows a 4 dp rhythm with a 20 dp screen edge. Values are still written inline in
-   screens; a shared token file replaces them in the design-system pull request.
-3. Motion is limited to state feedback (selection, progress). Nothing decorative.
-4. One thing leads on each screen (the display-size figure or title). Lists are flat rows with
-   hairline dividers, not a card per row.
-5. Every interactive element has a touch target of at least 48 dp and a content
-   description or visible label.
-6. Every screen handles loading, empty, error and populated states.
-7. UI copy is plain and specific: what happened, why, what to do. No marketing words.
+1. **One dark theme.** A deep indigo night sky that warms to violet at the bottom, with
+   translucent glass panels on it. There is no light theme. All raw colour values live in
+   `ui/Theme.kt` and nowhere else; screens read `MaterialTheme.colorScheme` and `GlassPalette`.
+2. **Colour by meaning.** Coral (primary) is the one accent and marks the main action. Rose red
+   (error) is used only for removal and failure. Violet and sky blue are atmosphere (backdrop,
+   progress gauge), never an action.
+3. **Glass.** `GlassBackdrop` is drawn once at the root, and once more inside a full-screen
+   dialog because a dialog is its own window. Screens and scaffolds on it are transparent.
+   Panels and rows use `GlassPanel` or `Modifier.glass`. Pinned bars use `Modifier.glassBar`,
+   which is denser. Sheets, dialogs and menus stay solid (`surfaceContainer` roles) so text on
+   them is readable. Do not nest a glass panel inside a glass panel.
+4. **Tokens.** Spacing, sizes, shapes and durations come from `ui/Tokens.kt`. No raw `dp` or
+   millisecond values in screens. A new token needs a reason stated in the pull request.
+5. **Motion.** Only state feedback (selection, progress). It uses `AppMotion.spec`, so it snaps
+   when the phone has animations turned off. Nothing decorative moves.
+6. **One thing leads** on each screen: the display-size figure, title or the dot gauge on
+   Transfers. Glow and gradient are reserved for the backdrop and that lead element.
+7. Every interactive element has a touch target of at least `Tokens.TouchTarget` (48 dp) and a
+   content description or visible label.
+8. Layout must hold at font scale 1.5 and on a 320 dp wide phone. A row with text beside a
+   button stacks them from `Tokens.STACK_AT_FONT_SCALE`.
+9. Every screen handles loading, empty, error and populated states.
+10. UI copy is plain and specific: what happened, why, what to do. No marketing words.
+
+The owner's reference image set a direction, not a feature list. Do not add subscriptions,
+upgrade prompts, other cloud providers or iOS chrome because a reference shows them.
 
 How to build and prove a UI change is in `docs/UI_WORKFLOW.md`.
 
@@ -126,4 +141,5 @@ Keep this list honest and update it when it changes.
 - The app has not been run on a physical phone or against a real Google account.
 - Colour contrast and touch-target sizes have not been measured.
 - Screenshot tests render on the JVM. They show layout, not thumbnails loaded from real media,
-  not animation smoothness, and not system dialogs.
+  not the Drive folder listing, not animation smoothness, and not system dialogs.
+- Glass here is a translucent fill with a lit edge. There is no live blur of what is behind it.

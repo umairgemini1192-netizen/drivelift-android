@@ -9,8 +9,9 @@ carry out and prove a UI change. It does not add rules.
 2. Name the comparable existing screen (Phone folder list, folder grid, Drive browser, Transfers,
    destination sheet) and read its current source. An existing screen is an example, not
    permission to copy a known defect.
-3. Reuse what is already shared: the theme in `ui/Theme.kt`, and the shared rows and status
-   components. Do not create a local variant of something that exists.
+3. Reuse what is already shared: the theme in `ui/Theme.kt`, the tokens in `ui/Tokens.kt`, and
+   the backdrop, panel, bar and gauge in `ui/Glass.kt`. Do not create a local variant of
+   something that exists.
 
 ## Prove the change
 
@@ -26,9 +27,13 @@ carry out and prove a UI change. It does not add rules.
 ## Screenshot tests
 
 Screenshots are rendered on the JVM with Roborazzi and Robolectric, in GitHub Actions, with no
-phone and no emulator. The tests arrive with the design-system pull request; from then on:
+phone and no emulator. `ScreenshotTest` drives the real `AppRoot`, view model, Room database and
+theme, fed by a fake media store and seeded transfer rows.
 
 - Tests live in `app/src/test/java/com/drivelift/app/ui/`.
+- Add a scenario as one `@Test` that calls `eachVariant`; it is captured at standard size, font
+  scale 1.5 and 320 dp wide. Raise `expected` in `.github/workflows/android.yml` by three.
+- A local run needs about 2 GB of free memory. If it cannot start, let CI record instead.
 - Record with `./gradlew testDebugUnitTest -PrecordScreenshots`. Images are written to
   `app/build/outputs/screenshots/`.
 - CI records them on every pull request, fails if an expected image is missing, and uploads them
