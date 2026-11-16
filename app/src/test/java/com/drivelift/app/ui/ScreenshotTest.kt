@@ -35,6 +35,7 @@ import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.test.platform.app.InstrumentationRegistry
 import androidx.work.testing.WorkManagerTestInitHelper
 import coil.Coil
 import coil.EventListener
@@ -116,6 +117,9 @@ class ScreenshotTest {
         // The app restarts unfinished transfers on launch. Here that must only queue a job in a
         // test WorkManager, which never runs it: nothing may try to upload during a test.
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
+        // As on a phone being touched: a dialog that opens does not hand keyboard focus to its
+        // first field, so no cursor starts blinking under a frozen clock.
+        InstrumentationRegistry.getInstrumentation().setInTouchMode(true)
     }
 
     @Before
