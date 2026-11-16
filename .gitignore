@@ -11,3 +11,5 @@ captures/
 # keystore/ is intentionally committed so every build has the same SHA-1.
 *.jks
 release.keystore
+hs_err_pid*.log
+replay_pid*.log

@@ -16,6 +16,11 @@ class Prefs(context: Context) {
     private val _paused = MutableStateFlow(sp.getBoolean(KEY_PAUSED, false))
     val paused: StateFlow<Boolean> = _paused
 
+    /** Email of the connected Drive account. Only used to pin background token requests. */
+    var accountEmail: String?
+        get() = sp.getString(KEY_ACCOUNT, null)
+        set(value) = sp.edit().putString(KEY_ACCOUNT, value).apply()
+
     fun setWifiOnly(value: Boolean) {
         sp.edit().putBoolean(KEY_WIFI, value).apply()
         _wifiOnly.value = value
@@ -35,5 +40,6 @@ class Prefs(context: Context) {
         const val KEY_WIFI = "wifi_only"
         const val KEY_AUTO_REMOVE = "auto_remove"
         const val KEY_PAUSED = "paused"
+        const val KEY_ACCOUNT = "account_email"
     }
 }

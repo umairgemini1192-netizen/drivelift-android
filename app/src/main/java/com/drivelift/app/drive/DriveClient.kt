@@ -2,6 +2,7 @@ package com.drivelift.app.drive
 
 import android.content.Context
 import android.os.ParcelFileDescriptor
+import com.drivelift.app.data.Prefs
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -59,7 +60,7 @@ fun nextOffsetFromRange(rangeHeader: String?): Long {
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
-class DriveClient(private val context: Context) {
+class DriveClient(private val context: Context, private val prefs: Prefs) {
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(2, TimeUnit.MINUTES)
@@ -68,7 +69,7 @@ class DriveClient(private val context: Context) {
         .build()
 
     private suspend fun token(): String = try {
-        DriveAuth.tokenOrNull(context) ?: throw AuthRequiredException()
+        DriveAuth.tokenOrNull(context, prefs.accountEmail) ?: throw AuthRequiredException()
     } catch (e: ApiException) {
         throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
     }

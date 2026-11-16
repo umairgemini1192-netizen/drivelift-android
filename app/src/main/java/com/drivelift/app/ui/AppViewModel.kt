@@ -97,7 +97,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveConn.value = DriveConn.CONNECTING
         viewModelScope.launch {
             try {
-                val result = DriveAuth.authorize(getApplication())
+                // A tap on Connect may be a switch of account, so it must not be pinned to the old one.
+                if (interactive) prefs.accountEmail = null
+                val result = DriveAuth.authorize(getApplication(), prefs.accountEmail)
                 if (result.hasResolution()) {
                     driveConn.value = DriveConn.DISCONNECTED
                     if (interactive) result.pendingIntent?.let { consentRequests.emit(it) }
@@ -117,6 +119,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             try {
                 if (DriveAuth.tokenFromConsent(getApplication(), data) != null) {
+                    prefs.accountEmail = null
                     loadAccount()
                     graph.transfers.recover()
                 } else {
@@ -133,7 +136,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         // Having a token is what makes the connection usable; the profile is a nicety.
         driveConn.value = DriveConn.CONNECTED
         runCatching { drive.about() }
-            .onSuccess { account.value = it }
+            .onSuccess {
+                account.value = it
+                prefs.accountEmail = it.email
+            }
             .onFailure { messages.emit("Connected, but Drive did not answer: ${it.message}") }
     }
 

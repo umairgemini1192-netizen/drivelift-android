@@ -104,8 +104,8 @@ last safety check. After you confirm, the rows become `REMOVED`.
 | `DriveLiftApp.kt` | App start, shared objects, restart of unfinished work |
 | `data/Media.kt` | Phone photos and videos, permissions, opening original bytes |
 | `data/Db.kt` | `transfers` and `presets` tables and their queries |
-| `data/Prefs.kt` | Wi-Fi only, auto-offer removal, paused |
-| `drive/DriveAuth.kt` | Google sign-in and access tokens |
+| `data/Prefs.kt` | Wi-Fi only, auto-offer removal, paused, connected account email |
+| `drive/DriveAuth.kt` | Google sign-in and access tokens, pinned to the connected account |
 | `drive/DriveClient.kt` | Drive REST calls: list, create folder, resumable upload, metadata, trash |
 | `transfer/TransferRepository.kt` | Queueing, starting and stopping the jobs |
 | `transfer/TransferWorker.kt` | The upload job |

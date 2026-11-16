@@ -1,0 +1,30 @@
+name: UI contract
+
+# Checks that the two assistant entry files point at the shared rulebook, and that a pull request
+# which changes production UI carries complete screenshot evidence for its current head commit.
+# It validates the evidence record, not the images: a reviewer still has to open them.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ui-contract-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  ui-contract:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Test the check itself
+        run: python3 -m unittest discover -s .github/gate -p 'test_*.py'
+      - name: Check entry points and current-head UI evidence
+        run: python3 .github/gate/ui_contract.py
