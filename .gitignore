@@ -1,0 +1,13 @@
+.gradle/
+build/
+local.properties
+.idea/
+*.iml
+.kotlin/
+captures/
+.cxx/
+.DS_Store
+# Release signing material never belongs in the repo. The debug keystore in
+# keystore/ is intentionally committed so every build has the same SHA-1.
+*.jks
+release.keystore
