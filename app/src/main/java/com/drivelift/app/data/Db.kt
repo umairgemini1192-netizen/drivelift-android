@@ -146,6 +146,10 @@ interface PresetDao {
 
     @Query("DELETE FROM presets WHERE folderId = :folderId")
     suspend fun delete(folderId: String)
+
+    /** Pinned destinations are folder ids of one Drive account; they go when the account changes. */
+    @Query("DELETE FROM presets")
+    suspend fun clear()
 }
 
 @Database(entities = [TransferEntity::class, PresetEntity::class], version = 1, exportSchema = false)
