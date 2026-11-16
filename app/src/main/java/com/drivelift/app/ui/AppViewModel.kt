@@ -18,6 +18,7 @@ import com.drivelift.app.drive.AccountConnector
 import com.drivelift.app.drive.ConnectOutcome
 import com.drivelift.app.drive.DriveAbout
 import com.drivelift.app.drive.DriveAuth
+import com.drivelift.app.drive.DriveFolders
 import com.drivelift.app.drive.stillConnected
 import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.LiveProgress
@@ -39,6 +40,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = Graph.get(app)
     private val dao = graph.db.transfers()
     val drive get() = graph.drive
+
+    /** What the Drive browser lists and creates folders through. Replaced only in screenshot tests. */
+    var driveFolders: DriveFolders = graph.drive
     val prefs get() = graph.prefs
 
     val tab = MutableStateFlow(0)

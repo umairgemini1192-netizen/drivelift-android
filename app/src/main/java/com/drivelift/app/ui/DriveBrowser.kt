@@ -92,7 +92,7 @@ fun DriveBrowser(
         entries = null
         error = null
         try {
-            entries = vm.drive.listChildren(here.id, foldersOnly = pickMode)
+            entries = vm.driveFolders.listChildren(here.id, foldersOnly = pickMode)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -232,7 +232,7 @@ fun DriveBrowser(
                         failure = null
                         scope.launch {
                             try {
-                                val created = vm.drive.createFolder(name.trim(), here.id)
+                                val created = vm.driveFolders.createFolder(name.trim(), here.id)
                                 showNewFolder = false
                                 stack = stack + Crumb(created.id, created.name)
                             } catch (e: CancellationException) {

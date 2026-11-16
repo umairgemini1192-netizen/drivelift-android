@@ -77,8 +77,18 @@ suspend fun <T> collectAllPages(fetch: suspend (pageToken: String?) -> Pair<List
     return out
 }
 
+/**
+ * The two Drive calls the folder browser makes. An interface so the browser, the folder picker
+ * and the new-folder dialog can be rendered in screenshot tests with made-up folders and no
+ * network. [DriveClient] is the only implementation in the app.
+ */
+interface DriveFolders {
+    suspend fun listChildren(folderId: String, foldersOnly: Boolean): List<DriveFile>
+    suspend fun createFolder(name: String, parentId: String): DriveFile
+}
+
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
-class DriveClient(private val context: Context, private val prefs: Prefs) {
+class DriveClient(private val context: Context, private val prefs: Prefs) : DriveFolders {
     private val http = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(2, TimeUnit.MINUTES)
@@ -167,7 +177,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
     }
 
     /** Every child of a folder. Follows Drive's paging to the end, however long the folder is. */
-    suspend fun listChildren(folderId: String, foldersOnly: Boolean): List<DriveFile> {
+    override suspend fun listChildren(folderId: String, foldersOnly: Boolean): List<DriveFile> {
         val query = buildString {
             append("'").append(escape(folderId)).append("' in parents and trashed = false")
             if (foldersOnly) append(" and mimeType = '").append(FOLDER_MIME).append("'")
@@ -187,7 +197,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
         }
     }
 
-    suspend fun createFolder(name: String, parentId: String): DriveFile {
+    override suspend fun createFolder(name: String, parentId: String): DriveFile {
         val body = JSONObject()
             .put("name", name)
             .put("mimeType", FOLDER_MIME)
