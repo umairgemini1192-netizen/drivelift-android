@@ -78,7 +78,7 @@ There is no retry limit. A file keeps being retried until the problem is gone.
 | No account has been saved yet | No Drive call is made in the background. The app never lets Google pick an account for a transfer. |
 | Upload session expired (after about a week) | A new session is opened and that one file restarts. |
 | Phone file deleted before upload | The file is marked `FAILED`. Nothing else is affected. |
-| Photo access revoked, limited to selected photos, or media location denied | Treated as recoverable, not as the file being gone. The reason is shown and the file is retried until access is back. |
+| Photo access revoked, limited to photos only, videos only or selected items, or media location denied | Treated as recoverable, not as the file being gone. The reason is shown and the file is retried until access is back. |
 | App killed, phone restarted | On next start, unfinished rows are picked up automatically. |
 
 You can also pause and resume everything, cancel one file or all waiting files, and restrict
@@ -113,8 +113,9 @@ the count; this is a platform rule for any app deleting media it did not create,
 last safety check. After you confirm, the rows become `REMOVED`.
 
 A verified file that is no longer in the phone's media list is closed out as `REMOVED` without a
-prompt, but only while the app can see every photo. If access was revoked or limited to selected
-photos, "not visible" does not mean "gone", so those files go to Android's prompt instead.
+prompt, but only while the app can see every photo and every video. If access was revoked, or
+covers photos only, videos only or selected items, "not visible" does not mean "gone", so those
+files go to Android's prompt instead.
 
 ## Source map
 
