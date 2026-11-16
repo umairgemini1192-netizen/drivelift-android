@@ -73,6 +73,9 @@ There is no retry limit. A file keeps being retried until the problem is gone.
 | Connection drops mid-file | The job stops. Android restarts it when a connection returns, even after a reboot. The app asks Drive how many bytes it already has and **continues from that byte**. |
 | Any other error (timeout, Drive 5xx, rate limit, Drive storage full) | Shown on screen with the reason, retried after 2s, 4s, 8s ... up to 60s between tries, forever. |
 | Sign-in expired | One silent token refresh. If Google needs you, a notification asks you to open the app and reconnect; uploads continue by themselves afterwards. |
+| Reconnecting is cancelled or fails | The account connected before stays the saved one. Transfers keep going to it. |
+| Another Google account is chosen | Refused while any transfer is waiting, uploading, unverified or failed, because those belong to the first account's Drive. Once they are finished, cancelled or cleared, the switch is allowed and the pinned destinations of the first account are forgotten. |
+| No account has been saved yet | No Drive call is made in the background. The app never lets Google pick an account for a transfer. |
 | Upload session expired (after about a week) | A new session is opened and that one file restarts. |
 | Phone file deleted before upload | The file is marked `FAILED`. Nothing else is affected. |
 | Photo access revoked, limited to selected photos, or media location denied | Treated as recoverable, not as the file being gone. The reason is shown and the file is retried until access is back. |
