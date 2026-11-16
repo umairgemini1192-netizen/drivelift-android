@@ -20,7 +20,7 @@ class Graph(app: Application) {
         .build()
     val prefs = Prefs(app)
     val media = MediaRepository(app)
-    val drive = DriveClient(app)
+    val drive = DriveClient(app, prefs)
     val transfers = TransferRepository(app, db, prefs, media)
 
     companion object {

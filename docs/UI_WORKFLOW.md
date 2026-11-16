@@ -1,0 +1,52 @@
+# UI implementation and review workflow
+
+Authority: `docs/AI_CONTEXT.md`, section **Native design system**. This file explains how to
+carry out and prove a UI change. It does not add rules.
+
+## Before editing
+
+1. Read the design system section and the pull request.
+2. Name the comparable existing screen (Phone folder list, folder grid, Drive browser, Transfers,
+   destination sheet) and read its current source. An existing screen is an example, not
+   permission to copy a known defect.
+3. Reuse what is already shared: the theme in `ui/Theme.kt`, and the shared rows and status
+   components. Do not create a local variant of something that exists.
+
+## Prove the change
+
+- Render the real production composables with synthetic data. Never use real photos, file names
+  or account details.
+- Capture each affected screen in three conditions: standard, font scale 1.5, and a compact
+  320 dp wide phone. If the app ships more than one theme, capture each theme.
+- Cover the states the screen can be in: loading, empty, error, populated.
+- Say which checks were automated, which were done on an emulator or phone, and which were not
+  done. A still image does not verify animation, scrolling, or a system dialog.
+- Do not write a contrast ratio or "passes WCAG" unless it was measured, and say with what.
+
+## Screenshot tests
+
+Screenshots are rendered on the JVM with Roborazzi and Robolectric, in GitHub Actions, with no
+phone and no emulator. The tests arrive with the design-system pull request; from then on:
+
+- Tests live in `app/src/test/java/com/drivelift/app/ui/`.
+- Record with `./gradlew testDebugUnitTest -PrecordScreenshots`. Images are written to
+  `app/build/outputs/screenshots/`.
+- CI records them on every pull request, fails if an expected image is missing, and uploads them
+  as the `screenshots` artifact.
+- Never change a test or delete an image just to make a failure go away.
+
+## Evidence in the pull request
+
+A pull request that changes production UI carries exactly one fenced `ui-review` JSON block (see
+the pull request template). It records the full head SHA, HTTPS links for the three screenshot
+conditions, the reference screen, what was exercised, accessibility notes, the named reviewer,
+and any approved exceptions.
+
+Artifact links expire and need sign-in, so publish the images on the `evidence` branch in a
+folder named after the head SHA that produced them, and link to that commit. Do not add image
+commits to the implementation branch.
+
+A push makes the evidence stale: record again and update the block.
+
+The **UI contract** check (`.github/gate/ui_contract.py`) validates that the block exists, is
+complete, and names the current head. It cannot judge the images. The reviewer must open them.
