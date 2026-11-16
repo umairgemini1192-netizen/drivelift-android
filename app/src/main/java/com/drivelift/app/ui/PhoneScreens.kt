@@ -365,7 +365,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                "${entry.label}  ·  ${entry.ids.size}",
+                                "${entry.label}\u00A0\u00A0·\u00A0\u00A0${entry.ids.size}",
                                 style = MaterialTheme.typography.titleSmall,
                                 modifier = Modifier.weight(1f),
                             )
@@ -386,21 +386,38 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
         if (selection.isNotEmpty()) {
             Box(Modifier.fillMaxWidth().glassBar()) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            formatBytes(context, selectedBytes),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+                // With large text the two buttons would squeeze the count into a sliver, so the
+                // count goes on its own line above them.
+                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+                val summary: @Composable () -> Unit = {
+                    Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        formatBytes(context, selectedBytes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (stacked) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                        summary()
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                            Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
+                        }
                     }
-                    OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                    Spacer(Modifier.width(Tokens.Small))
-                    Button(onClick = onMove) { Text("Move to Drive") }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) { summary() }
+                        OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                        Spacer(Modifier.width(Tokens.Small))
+                        Button(onClick = onMove) { Text("Move to Drive") }
+                    }
                 }
             }
         }
