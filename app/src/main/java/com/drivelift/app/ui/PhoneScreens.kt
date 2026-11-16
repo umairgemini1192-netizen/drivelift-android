@@ -177,6 +177,8 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
                     )
                 }
             } else {
+                // With large text the button moves under the message instead of squeezing it.
+                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
                 Column(Modifier.weight(1f)) {
                     Text("Google Drive is not connected", style = MaterialTheme.typography.titleSmall)
                     Text(
@@ -184,15 +186,23 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (stacked) ConnectAction(conn, onConnect, Modifier.padding(top = Tokens.Medium))
                 }
-                Spacer(Modifier.width(Tokens.Medium))
-                if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
-                    CircularProgressIndicator(Modifier.size(Tokens.Icon), strokeWidth = Tokens.Stroke)
-                } else {
-                    Button(onClick = onConnect) { Text("Connect") }
+                if (!stacked) {
+                    Spacer(Modifier.width(Tokens.Medium))
+                    ConnectAction(conn, onConnect)
                 }
             }
         }
+    }
+}
+
+@Composable
+private fun ConnectAction(conn: DriveConn, onConnect: () -> Unit, modifier: Modifier = Modifier) {
+    if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
+        CircularProgressIndicator(modifier.size(Tokens.Icon), strokeWidth = Tokens.Stroke)
+    } else {
+        Button(onClick = onConnect, modifier = modifier) { Text("Connect") }
     }
 }
 

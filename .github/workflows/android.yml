@@ -34,8 +34,23 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest
+      # The same run renders the screens and writes the screenshots that UI review needs.
+      - name: Unit tests and screenshots
+        run: ./gradlew testDebugUnitTest -PrecordScreenshots
+      - name: Require every screenshot
+        run: |
+          expected=27
+          actual=$(ls app/build/outputs/screenshots/*.png 2>/dev/null | wc -l)
+          echo "screenshots: $actual of $expected"
+          test "$actual" -eq "$expected"
+      - name: Upload screenshots
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshots
+          path: app/build/outputs/screenshots/
+          if-no-files-found: error
+          retention-days: 14
       - name: Upload test report
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4

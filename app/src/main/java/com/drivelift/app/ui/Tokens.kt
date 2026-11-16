@@ -59,6 +59,9 @@ object Tokens {
     val TagShape = RoundedCornerShape(4.dp)
     val SelectedCorner = 8.dp
 
+    /** At this font scale and above, a row with text beside a button stacks them instead. */
+    const val STACK_AT_FONT_SCALE = 1.3f
+
     /** Durations in milliseconds. */
     object Motion {
         const val SELECTION = 160

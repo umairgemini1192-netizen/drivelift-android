@@ -110,7 +110,9 @@ fun DriveLiftTheme(content: @Composable () -> Unit) {
     }
 }
 
-fun formatBytes(context: Context, bytes: Long): String = Formatter.formatShortFileSize(context, bytes)
+/** A size such as "72 MB", with a non-breaking space so the unit never wraps away from the number. */
+fun formatBytes(context: Context, bytes: Long): String =
+    Formatter.formatShortFileSize(context, bytes).replace(' ', '\u00A0')
 
 fun formatEta(seconds: Long): String = when {
     seconds < 60 -> "under a minute"
