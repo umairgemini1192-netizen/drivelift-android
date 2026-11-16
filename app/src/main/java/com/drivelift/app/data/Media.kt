@@ -63,7 +63,53 @@ fun groupFolders(items: List<MediaItem>): List<MediaFolder> =
         )
     }.sortedByDescending { it.newestMs }
 
+/** The file is confirmed gone from the phone. No retry can bring it back. */
 class SourceMissingException(message: String) : Exception(message)
+
+/**
+ * The file may well still exist, but its original bytes cannot be read right now: access was
+ * revoked, is limited to selected photos, or Android refused the unredacted original.
+ * Recoverable, so the pipeline retries and never treats it as the file being gone.
+ */
+class SourceInaccessibleException(message: String) : Exception(message)
+
+/**
+ * Decides what a failed open means. "File not found" only proves absence while the app can see
+ * every photo and every video; with limited access Android reports unseen files the same way.
+ */
+fun classifyOpenFailure(error: Exception, visibility: MediaVisibility): Exception = when {
+    error is FileNotFoundException && visibility == MediaVisibility.FULL ->
+        SourceMissingException("The file is no longer on this phone")
+    error is FileNotFoundException ->
+        SourceInaccessibleException("This file is not visible with the current access. Allow access to all photos and videos")
+    error is SecurityException ->
+        SourceInaccessibleException("Photo access was taken away. Allow it in system settings to continue")
+    else ->
+        SourceInaccessibleException("Android would not open the original of this file (${error.javaClass.simpleName})")
+}
+
+/** How much of the phone's photo and video library the granted permissions let the app list. */
+enum class MediaVisibility { NONE, PARTIAL, FULL }
+
+/**
+ * Classifies the granted media permissions. Kept free of Android types so every combination can
+ * be tested. From Android 13 photos and videos are separate grants, and from Android 14 the user
+ * can grant a selection only. Anything short of both whole categories is [MediaVisibility.PARTIAL]:
+ * photos without videos, videos without photos, or a hand-picked selection. A partial view never
+ * proves that a file is gone from the phone, because the file may be one the app cannot see.
+ */
+fun mediaVisibility(
+    sdk: Int,
+    images: Boolean,
+    video: Boolean,
+    userSelected: Boolean,
+    legacyStorage: Boolean,
+): MediaVisibility = when {
+    sdk < 33 -> if (legacyStorage) MediaVisibility.FULL else MediaVisibility.NONE
+    images && video -> MediaVisibility.FULL
+    images || video || (sdk >= 34 && userSelected) -> MediaVisibility.PARTIAL
+    else -> MediaVisibility.NONE
+}
 
 object MediaAccess {
     /** Everything asked for in one system prompt, including notifications. */
@@ -82,14 +128,19 @@ object MediaAccess {
     private fun granted(context: Context, permission: String) =
         context.checkSelfPermission(permission) == PackageManager.PERMISSION_GRANTED
 
-    fun hasPermission(context: Context): Boolean = when {
-        Build.VERSION.SDK_INT >= 33 ->
-            granted(context, Manifest.permission.READ_MEDIA_IMAGES) ||
-                granted(context, Manifest.permission.READ_MEDIA_VIDEO) ||
-                (Build.VERSION.SDK_INT >= 34 &&
-                    granted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED))
-        else -> granted(context, Manifest.permission.READ_EXTERNAL_STORAGE)
+    fun visibility(context: Context): MediaVisibility {
+        val sdk = Build.VERSION.SDK_INT
+        return mediaVisibility(
+            sdk = sdk,
+            images = sdk >= 33 && granted(context, Manifest.permission.READ_MEDIA_IMAGES),
+            video = sdk >= 33 && granted(context, Manifest.permission.READ_MEDIA_VIDEO),
+            userSelected = sdk >= 34 && granted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED),
+            legacyStorage = sdk < 33 && granted(context, Manifest.permission.READ_EXTERNAL_STORAGE),
+        )
     }
+
+    /** True when at least some photos or videos can be listed. */
+    fun hasPermission(context: Context): Boolean = visibility(context) != MediaVisibility.NONE
 
     /** True when the user picked "selected photos only" on Android 14+. */
     fun isPartial(context: Context): Boolean =
@@ -97,28 +148,29 @@ object MediaAccess {
             !granted(context, Manifest.permission.READ_MEDIA_IMAGES) &&
             granted(context, Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
 
+
     /**
-     * Opens the original bytes of a media file. With ACCESS_MEDIA_LOCATION the
-     * unredacted original is requested so location EXIF survives the move.
+     * Opens the unredacted original of a media file, or throws. There is no fallback to the
+     * ordinary, possibly location-stripped stream: uploading that would break the promise that
+     * the Drive copy is the original, byte for byte.
+     *
+     * @throws SourceMissingException the file is confirmed gone
+     * @throws SourceInaccessibleException the original cannot be read right now (recoverable)
      */
     fun open(context: Context, uri: Uri): ParcelFileDescriptor {
-        val resolver = context.contentResolver
-        fun plain(): ParcelFileDescriptor = try {
-            resolver.openFileDescriptor(uri, "r")
-        } catch (e: FileNotFoundException) {
-            throw SourceMissingException("The file is no longer on this phone")
-        } catch (e: SecurityException) {
-            throw SourceMissingException("The app no longer has access to this file")
-        } ?: throw SourceMissingException("The file could not be opened")
-
-        if (!granted(context, Manifest.permission.ACCESS_MEDIA_LOCATION)) return plain()
-        return try {
-            resolver.openFileDescriptor(MediaStore.setRequireOriginal(uri), "r") ?: plain()
-        } catch (e: FileNotFoundException) {
-            throw SourceMissingException("The file is no longer on this phone")
-        } catch (e: Exception) {
-            plain()
+        if (!hasPermission(context)) {
+            throw SourceInaccessibleException("Photo access is off. Allow it in system settings to continue")
         }
+        if (!granted(context, Manifest.permission.ACCESS_MEDIA_LOCATION)) {
+            throw SourceInaccessibleException(
+                "Allow DriveLift to read photo locations so files are moved unchanged, with their location data"
+            )
+        }
+        return try {
+            context.contentResolver.openFileDescriptor(MediaStore.setRequireOriginal(uri), "r")
+        } catch (e: Exception) {
+            throw classifyOpenFailure(e, visibility(context))
+        } ?: throw SourceInaccessibleException("Android returned no data for the original of this file")
     }
 }
 

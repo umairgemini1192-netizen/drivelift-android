@@ -10,7 +10,6 @@ import androidx.work.ForegroundInfo
 import androidx.work.WorkerParameters
 import com.drivelift.app.Graph
 import com.drivelift.app.data.MediaAccess
-import com.drivelift.app.data.SourceMissingException
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
 import com.drivelift.app.drive.AuthRequiredException
@@ -75,47 +74,26 @@ class VerifyWorker(context: Context, params: WorkerParameters) : CoroutineWorker
         return Result.success()
     }
 
-    /** Returns true when the file had to be sent back to the upload queue. */
-    private suspend fun verify(item: TransferEntity): Boolean {
-        val remote = item.driveFileId?.let { drive.getFile(it) }
-        if (remote == null || remote.trashed) {
-            dao.requeue(item.id, "The uploaded copy was missing in Drive, uploading again")
-            return true
-        }
+    private val verifier = Verifier(
+        ledger = object : VerifyLedger {
+            override suspend fun setStatus(id: Long, status: TransferStatus, error: String?) =
+                dao.setStatus(id, status.name, error)
 
-        val local = try {
+            override suspend fun requeue(id: Long, error: String) = dao.requeue(id, error)
+        },
+        remote = object : RemoteCopies {
+            override suspend fun getFile(fileId: String) = drive.getFile(fileId)
+            override suspend fun trashFile(fileId: String) = drive.trashFile(fileId)
+        },
+        readLocal = { item ->
             MediaAccess.open(applicationContext, Uri.parse(item.mediaUri)).use { pfd ->
-                pfd.statSize to md5(pfd, item)
+                LocalCopy(size = pfd.statSize, md5 = md5(pfd, item))
             }
-        } catch (e: SourceMissingException) {
-            null
-        }
+        },
+    )
 
-        if (local == null) {
-            // The phone copy vanished before it could be compared. Nothing is left
-            // to remove; accept the Drive copy only if at least its size matches.
-            if (remote.size == item.size) {
-                dao.setStatus(item.id, TransferStatus.REMOVED.name, null)
-            } else {
-                dao.setStatus(
-                    item.id, TransferStatus.FAILED.name,
-                    "The phone copy disappeared before the Drive copy could be verified",
-                )
-            }
-            return false
-        }
-
-        val (localSize, localMd5) = local
-        val matches = remote.size == localSize && remote.md5 != null &&
-            remote.md5.equals(localMd5, ignoreCase = true)
-        if (matches) {
-            dao.setStatus(item.id, TransferStatus.VERIFIED.name, null)
-            return false
-        }
-        runCatching { drive.trashFile(remote.id) }
-        dao.requeue(item.id, "Checksum mismatch after upload, uploading again")
-        return true
-    }
+    /** Returns true when the file had to be sent back to the upload queue. */
+    private suspend fun verify(item: TransferEntity): Boolean = verifier.verify(item)
 
     private suspend fun md5(pfd: ParcelFileDescriptor, item: TransferEntity): String =
         withContext(Dispatchers.IO) {

@@ -59,6 +59,24 @@ fun nextOffsetFromRange(rangeHeader: String?): Long {
     return end + 1
 }
 
+/**
+ * Reads a paged listing to its end: [fetch] gets a page token (null for the first page) and
+ * returns that page with the token of the next one, or null when there is none. Nothing is cut
+ * off at a fixed count. A token that repeats would loop forever, so it is reported as an error.
+ */
+suspend fun <T> collectAllPages(fetch: suspend (pageToken: String?) -> Pair<List<T>, String?>): List<T> {
+    val out = ArrayList<T>()
+    val seen = HashSet<String>()
+    var token: String? = null
+    do {
+        val (items, next) = fetch(token)
+        out += items
+        if (next != null && !seen.add(next)) throw IOException("Drive repeated a page while listing a folder")
+        token = next
+    } while (token != null)
+    return out
+}
+
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
 class DriveClient(private val context: Context, private val prefs: Prefs) {
     private val http = OkHttpClient.Builder()
@@ -148,27 +166,25 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
         )
     }
 
+    /** Every child of a folder. Follows Drive's paging to the end, however long the folder is. */
     suspend fun listChildren(folderId: String, foldersOnly: Boolean): List<DriveFile> {
-        val out = ArrayList<DriveFile>()
-        var page: String? = null
-        do {
-            val query = buildString {
-                append("'").append(escape(folderId)).append("' in parents and trashed = false")
-                if (foldersOnly) append(" and mimeType = '").append(FOLDER_MIME).append("'")
-            }
+        val query = buildString {
+            append("'").append(escape(folderId)).append("' in parents and trashed = false")
+            if (foldersOnly) append(" and mimeType = '").append(FOLDER_MIME).append("'")
+        }
+        return collectAllPages { pageToken ->
             val url = "$API/files".toHttpUrl().newBuilder()
                 .addQueryParameter("q", query)
                 .addQueryParameter("fields", "nextPageToken,files($FILE_FIELDS)")
                 .addQueryParameter("orderBy", "folder,name_natural")
-                .addQueryParameter("pageSize", "200")
-                .apply { page?.let { addQueryParameter("pageToken", it) } }
+                .addQueryParameter("pageSize", PAGE_SIZE)
+                .apply { pageToken?.let { addQueryParameter("pageToken", it) } }
                 .build()
             val json = getJson(url)
             val files = json.optJSONArray("files") ?: JSONArray()
-            for (i in 0 until files.length()) out += parseFile(files.getJSONObject(i))
-            page = json.optString("nextPageToken").ifEmpty { null }
-        } while (page != null && out.size < MAX_LISTED)
-        return out
+            val page = List(files.length()) { parseFile(files.getJSONObject(it)) }
+            page to json.optString("nextPageToken").ifEmpty { null }
+        }
     }
 
     suspend fun createFolder(name: String, parentId: String): DriveFile {
@@ -331,7 +347,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
             .addQueryParameter("fields", "user(displayName,emailAddress),storageQuota(limit,usage)")
             .build()
         private const val FILE_FIELDS = "id,name,mimeType,size,md5Checksum,trashed"
-        private const val MAX_LISTED = 2000
+        private const val PAGE_SIZE = "1000"
         private val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }

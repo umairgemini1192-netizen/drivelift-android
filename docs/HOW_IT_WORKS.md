@@ -19,7 +19,7 @@ QUEUED -> UPLOADING -> UPLOADED -> VERIFIED -> REMOVED
 | `UPLOADED` | Drive accepted the whole file; not yet trusted |
 | `VERIFIED` | Drive's copy matches the phone's copy byte for byte |
 | `REMOVED` | Deleted from the phone after you confirmed |
-| `FAILED` | Cannot be moved by retrying (the phone file disappeared) |
+| `FAILED` | Cannot be finished by retrying: the phone file disappeared before it was uploaded or before its Drive copy could be checked |
 | `CANCELLED` | You cancelled it |
 
 ## 1. Seeing your files
@@ -28,7 +28,8 @@ QUEUED -> UPLOADING -> UPLOADED -> VERIFIED -> REMOVED
   by folder (Camera, Screenshots, WhatsApp Images and so on). A content observer refreshes the
   list when files change.
 - **Drive**: `ui/DriveBrowser.kt` lists folders and files through the Drive v3 REST API
-  (`drive/DriveClient.kt`). The same browser is the folder picker.
+  (`drive/DriveClient.kt`). A folder is listed to its end, however many entries it has. The same
+  browser is the folder picker.
 
 ## 2. Selecting in bulk
 
@@ -58,8 +59,10 @@ A WorkManager job, shown as an ongoing notification, uploads one file at a time 
    rolling speed, and from those the time remaining.
 3. When Drive answers with the finished file, the row becomes `UPLOADED`.
 
-The original bytes are uploaded unchanged. The photo's capture time and modified time are set on
-the Drive file, and location data inside the photo is preserved.
+Only the unredacted original is uploaded. The app asks Android for the original file, which needs
+the media-location permission; if that is not available the file waits and the reason is shown.
+It is never replaced by a location-stripped copy. The capture time and modified time are set on
+the Drive file.
 
 ### What happens when something goes wrong
 
@@ -75,6 +78,7 @@ There is no retry limit. A file keeps being retried until the problem is gone.
 | No account has been saved yet | No Drive call is made in the background. The app never lets Google pick an account for a transfer. |
 | Upload session expired (after about a week) | A new session is opened and that one file restarts. |
 | Phone file deleted before upload | The file is marked `FAILED`. Nothing else is affected. |
+| Photo access revoked, limited to photos only, videos only or selected items, or media location denied | Treated as recoverable, not as the file being gone. The reason is shown and the file is retried until access is back. |
 | App killed, phone restarted | On next start, unfinished rows are picked up automatically. |
 
 You can also pause and resume everything, cancel one file or all waiting files, and restrict
@@ -87,8 +91,16 @@ After the uploads, a second job checks every `UPLOADED` file:
 1. Fetch the Drive file's metadata: size, MD5 checksum, and whether it is in the trash.
 2. Read the phone file again from disk and compute its MD5.
 3. If size and MD5 both match, the file becomes `VERIFIED`.
-4. If they do not match, or the Drive file is missing or trashed, the bad copy is moved to Drive's
-   trash and the file goes back to `QUEUED` to be uploaded again.
+4. If they do not match, the bad copy is moved to Drive's trash first, and only then does the
+   file go back to `QUEUED`. If trashing fails, the file stays `UPLOADED` with its Drive reference
+   and the cleanup is retried, also after a restart, so a bad copy is never left behind unnoticed.
+5. If the Drive file is missing or already trashed, the file goes back to `QUEUED`.
+6. If the phone file is gone before it could be compared, nothing was proven: the file becomes
+   `FAILED` with that reason and the unchecked Drive copy is left alone. It is never shown as
+   verified or removed.
+
+The decisions live in `transfer/Verifier.kt`, separate from Android, and are covered by
+`TransferSafetyTest`.
 
 Verification errors (for example no network) are retried the same way uploads are.
 
@@ -99,6 +111,11 @@ Only `VERIFIED` rows are ever offered for removal. The Transfers screen shows a 
 finishes verifying while the app is open. Android then shows its own confirmation dialog listing
 the count; this is a platform rule for any app deleting media it did not create, and it is the
 last safety check. After you confirm, the rows become `REMOVED`.
+
+A verified file that is no longer in the phone's media list is closed out as `REMOVED` without a
+prompt, but only while the app can see every photo and every video. If access was revoked, or
+covers photos only, videos only or selected items, "not visible" does not mean "gone", so those
+files go to Android's prompt instead.
 
 ## Source map
 
@@ -112,7 +129,8 @@ last safety check. After you confirm, the rows become `REMOVED`.
 | `drive/DriveClient.kt` | Drive REST calls: list, create folder, resumable upload, metadata, trash |
 | `transfer/TransferRepository.kt` | Queueing, starting and stopping the jobs |
 | `transfer/TransferWorker.kt` | The upload job |
-| `transfer/VerifyWorker.kt` | The verification job |
+| `transfer/VerifyWorker.kt` | The verification job: reads the phone file, computes MD5, retries |
+| `transfer/Verifier.kt` | The verification decisions and the removal close-out rule |
 | `transfer/Backoff.kt` | Retry timing and speed measurement |
 | `transfer/LiveProgress.kt` | Live progress shared with the screens, error wording |
 | `transfer/Notifications.kt` | Progress and result notifications |
