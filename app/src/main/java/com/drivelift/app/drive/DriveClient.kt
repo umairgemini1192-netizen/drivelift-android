@@ -68,20 +68,21 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
         .retryOnConnectionFailure(true)
         .build()
 
+    /** Background and browsing calls are always pinned to the saved account. See [requirePinnedAccount]. */
     private suspend fun token(): String = try {
-        DriveAuth.tokenOrNull(context, prefs.accountEmail) ?: throw AuthRequiredException()
+        DriveAuth.tokenOrNull(context, requirePinnedAccount(prefs.accountEmail)) ?: throw AuthRequiredException()
     } catch (e: ApiException) {
         throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
     }
 
     private suspend fun <T> execute(request: () -> Request.Builder, handle: (Response) -> T): T {
         var token = token()
-        var response = http.newCall(request().header("Authorization", "Bearer $token").build()).await()
+        var response = send(request, token)
         if (response.code == 401) {
             response.close()
             DriveAuth.invalidate(context, token)
             token = token()
-            response = http.newCall(request().header("Authorization", "Bearer $token").build()).await()
+            response = send(request, token)
             if (response.code == 401) {
                 response.close()
                 throw AuthRequiredException()
@@ -89,6 +90,9 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
         }
         return withContext(Dispatchers.IO) { response.use(handle) }
     }
+
+    private suspend fun send(request: () -> Request.Builder, token: String): Response =
+        http.newCall(request().header("Authorization", "Bearer $token").build()).await()
 
     private fun fail(response: Response): Nothing {
         val body = runCatching { response.body?.string() }.getOrNull().orEmpty()
@@ -117,11 +121,23 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
             JSONObject(r.body!!.string())
         }
 
-    suspend fun about(): DriveAbout {
-        val url = "$API/about".toHttpUrl().newBuilder()
-            .addQueryParameter("fields", "user(displayName,emailAddress),storageQuota(limit,usage)")
-            .build()
-        val json = getJson(url)
+    /**
+     * The account [token] belongs to. This is the only call made with a token handed in instead
+     * of the pinned one: connecting uses it to learn which account to pin to.
+     */
+    suspend fun about(token: String): DriveAbout {
+        val response = send({ Request.Builder().url(ABOUT_URL) }, token)
+        return parseAbout(withContext(Dispatchers.IO) {
+            response.use { r ->
+                if (!r.isSuccessful) fail(r)
+                JSONObject(r.body!!.string())
+            }
+        })
+    }
+
+    suspend fun about(): DriveAbout = parseAbout(getJson(ABOUT_URL))
+
+    private fun parseAbout(json: JSONObject): DriveAbout {
         val user = json.optJSONObject("user") ?: JSONObject()
         val quota = json.optJSONObject("storageQuota") ?: JSONObject()
         return DriveAbout(
@@ -311,6 +327,9 @@ class DriveClient(private val context: Context, private val prefs: Prefs) {
         const val ROOT = "root"
         private const val API = "https://www.googleapis.com/drive/v3"
         private const val UPLOAD = "https://www.googleapis.com/upload/drive/v3"
+        private val ABOUT_URL = "$API/about".toHttpUrl().newBuilder()
+            .addQueryParameter("fields", "user(displayName,emailAddress),storageQuota(limit,usage)")
+            .build()
         private const val FILE_FIELDS = "id,name,mimeType,size,md5Checksum,trashed"
         private const val MAX_LISTED = 2000
         private val JSON = "application/json; charset=utf-8".toMediaType()

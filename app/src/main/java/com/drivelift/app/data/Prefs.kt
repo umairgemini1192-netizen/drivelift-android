@@ -1,10 +1,11 @@
 package com.drivelift.app.data
 
 import android.content.Context
+import com.drivelift.app.drive.AccountPinStore
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
-class Prefs(context: Context) {
+class Prefs(context: Context) : AccountPinStore {
     private val sp = context.getSharedPreferences("drivelift", Context.MODE_PRIVATE)
 
     private val _wifiOnly = MutableStateFlow(sp.getBoolean(KEY_WIFI, false))
@@ -16,8 +17,8 @@ class Prefs(context: Context) {
     private val _paused = MutableStateFlow(sp.getBoolean(KEY_PAUSED, false))
     val paused: StateFlow<Boolean> = _paused
 
-    /** Email of the connected Drive account. Only used to pin background token requests. */
-    var accountEmail: String?
+    /** Email of the connected Drive account. Only used to pin Drive token requests. */
+    override var accountEmail: String?
         get() = sp.getString(KEY_ACCOUNT, null)
         set(value) = sp.edit().putString(KEY_ACCOUNT, value).apply()
 
