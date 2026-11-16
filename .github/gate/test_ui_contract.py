@@ -36,6 +36,7 @@ class UiPathTest(unittest.TestCase):
         self.assertFalse(is_ui_path("app/src/main/java/com/drivelift/app/drive/DriveClient.kt"))
         self.assertFalse(is_ui_path("app/src/test/java/com/drivelift/app/ui/ScreenshotTest.kt"))
         self.assertFalse(is_ui_path("docs/UI_WORKFLOW.md"))
+        self.assertFalse(is_ui_path("app/src/main/java/com/drivelift/app/ui/AppViewModel.kt"))
 
 
 class EvidenceTest(unittest.TestCase):

@@ -16,6 +16,9 @@ ENTRY_POINTS = ("AGENTS.md", "CLAUDE.md")
 def is_ui_path(path):
     # Resources, activities and the manifest count as UI, so a resource-only redesign or a
     # renamed screen cannot skip review.
+    # A view model holds state and draws nothing, so it is reviewed as logic, not as UI.
+    if path.endswith("ViewModel.kt"):
+        return False
     return path.startswith("app/src/main/") and (
         "/ui/" in path or "/res/" in path or path.endswith("Activity.kt")
         or path.endswith("AndroidManifest.xml"))
