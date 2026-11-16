@@ -99,7 +99,8 @@ fun GlassPanel(
     ) { content() }
 }
 
-private const val GAUGE_RINGS = 5
+// Four rings leave the middle of the dome clear for the figure, up to "100%".
+private const val GAUGE_RINGS = 4
 private const val GAUGE_OUTER_DOTS = 31
 
 /**

@@ -59,6 +59,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
@@ -173,7 +174,7 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
                     if (label != null) Text(
                         label, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
             } else {
@@ -386,9 +387,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
         if (selection.isNotEmpty()) {
             Box(Modifier.fillMaxWidth().glassBar()) {
-                // With large text the two buttons would squeeze the count into a sliver, so the
-                // count goes on its own line above them.
-                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+                // With large text or a narrow phone the two buttons would squeeze the count into
+                // a sliver, so the count goes on its own line above them.
+                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                    LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
                 val summary: @Composable () -> Unit = {
                     Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
                     Text(

@@ -62,6 +62,9 @@ object Tokens {
     /** At this font scale and above, a row with text beside a button stacks them instead. */
     const val STACK_AT_FONT_SCALE = 1.3f
 
+    /** Below this screen width in dp, the same stacking applies. */
+    const val COMPACT_WIDTH_DP = 360
+
     /** Durations in milliseconds. */
     object Motion {
         const val SELECTION = 160

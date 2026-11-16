@@ -23,6 +23,7 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
 import com.drivelift.app.data.TransferEntity
@@ -32,6 +33,7 @@ import com.drivelift.app.transfer.LiveProgress
 import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Before
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -70,6 +72,13 @@ class ScreenshotTest {
         STANDARD("w360dp-h780dp-xhdpi", 1f),
         LARGE_FONT("w360dp-h780dp-xhdpi", 1.5f),
         COMPACT("w320dp-h640dp-xhdpi", 1f),
+    }
+
+    @Before
+    fun fakeWorkManager() {
+        // The app restarts unfinished transfers on launch. Here that must only queue a job in a
+        // test WorkManager, which never runs it: nothing may try to upload during a test.
+        WorkManagerTestInitHelper.initializeTestWorkManager(app)
     }
 
     @After
