@@ -88,6 +88,9 @@ object GlassPalette {
 
     /** Placeholder behind a thumbnail that has not loaded. */
     val Thumb = Color(0x1AFFFFFF)
+
+    /** Bottom gradient scrim over media tiles so white captions remain legible. */
+    val ThumbScrim = Color(0xCC070A1E)
 }
 
 private val AppTypography = Typography().let { base ->

@@ -298,9 +298,42 @@ class ScreenshotTest {
     @Test
     fun driveListing() {
         grantMedia()
-        eachVariant("drive-listing", expect = "DriveLift Backup", connected = true, tab = AppViewModel.TAB_DRIVE) { vm ->
-            AppRoot(vm)
-        }
+        eachVariant(
+            "drive-listing", expect = "Scan_0042.jpg", connected = true, tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Scan_0042.jpg")
+                pump(50)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveImageViewer() {
+        grantMedia()
+        eachVariant(
+            "drive-image-viewer", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Scan_0042.jpg")
+                compose.onNodeWithText("Scan_0042.jpg").performClick()
+                settle {
+                    compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isNotEmpty() &&
+                        compose.onAllNodesWithText("Loading image preview").fetchSemanticsNodes().isEmpty()
+                }
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveUnsupportedViewer() {
+        grantMedia()
+        eachVariant(
+            "drive-unsupported-viewer", expect = "Open in Google Drive", connected = true, tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Packing list.pdf")
+                compose.onNodeWithText("Packing list.pdf").performClick()
+                waitFor("Open in Google Drive")
+            },
+        ) { vm -> AppRoot(vm) }
     }
 
     @Test
@@ -875,21 +908,7 @@ class ScreenshotTest {
      * File 1 is coral and file 3 is near white, the two hardest cases for a coral selection frame;
      * the test selects exactly those two.
      */
-    private fun picture(id: Long): ByteArray {
-        val (top, bottom, disc) = PICTURES[(id - 1).toInt() % PICTURES.size]
-        val size = PICTURE_SIZE.toFloat()
-        val bitmap = Bitmap.createBitmap(PICTURE_SIZE, PICTURE_SIZE, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
-        paint.shader = LinearGradient(0f, 0f, 0f, size, opaque(top), opaque(bottom), Shader.TileMode.CLAMP)
-        canvas.drawRect(0f, 0f, size, size, paint)
-        paint.shader = null
-        paint.color = opaque(disc)
-        canvas.drawCircle(size * 0.66f, size * 0.36f, size / 6, paint)
-        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-    }
-
-    private fun opaque(rgb: Int) = rgb or 0xFF000000.toInt()
+    private fun picture(id: Long): ByteArray = pictureBytes(id)
 
     private fun seedPresets() = runBlocking {
         val presets = Graph.get(app).db.presets()
@@ -916,6 +935,27 @@ class ScreenshotTest {
         override suspend fun listChildren(folderId: String, foldersOnly: Boolean) = list(folderId, foldersOnly)
         override suspend fun createFolder(name: String, parentId: String) = create(name)
 
+        override suspend fun loadThumbnail(file: DriveFile, maxEdgePx: Int): ByteArray? = when (file.id) {
+            "d2" -> pictureBytes(2)
+            "d3" -> pictureBytes(4)
+            "d4" -> pictureBytes(1)
+            else -> null
+        }
+
+        override suspend fun loadPreviewBytes(
+            file: DriveFile,
+            maxBytes: Long,
+            onProgress: (Long, Long) -> Unit,
+        ): ByteArray {
+            val bytes = when (file.id) {
+                "d2" -> pictureBytes(2)
+                "d4" -> pictureBytes(1)
+                else -> pictureBytes(5)
+            }
+            onProgress(bytes.size.toLong(), bytes.size.toLong())
+            return bytes
+        }
+
         private companion object {
             fun folder(id: String, name: String) = DriveFile(id, name, DriveClient.FOLDER_MIME, 0, null, false)
             val FOLDERS = listOf(
@@ -927,7 +967,8 @@ class ScreenshotTest {
             val FILES = listOf(
                 DriveFile("d1", "Packing list.pdf", "application/pdf", 84_000, "00", false),
                 DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false),
-                DriveFile("d3", "Trip to the coast.mp4", "video/mp4", 182_000_000, "00", false),
+                DriveFile("d3", "Trip to the coast.mp4", "video/mp4", 182_000_000, "00", false, durationMillis = 83_000L),
+                DriveFile("d4", "Sunset_0019.jpg", "image/jpeg", 3_400_000, "00", false),
             )
         }
     }
@@ -1047,5 +1088,21 @@ class ScreenshotTest {
             Triple(0x5B3FA6, 0xC7A6F0, 0xFFD6E8), // dusk
             Triple(0x2E8C99, 0xA8E3E0, 0xFFFFFF), // sea
         )
+
+        private fun opaque(rgb: Int) = rgb or 0xFF000000.toInt()
+
+        private fun pictureBytes(id: Long): ByteArray {
+            val (top, bottom, disc) = PICTURES[(id - 1).toInt() % PICTURES.size]
+            val size = PICTURE_SIZE.toFloat()
+            val bitmap = Bitmap.createBitmap(PICTURE_SIZE, PICTURE_SIZE, Bitmap.Config.ARGB_8888)
+            val canvas = Canvas(bitmap)
+            val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+            paint.shader = LinearGradient(0f, 0f, 0f, size, opaque(top), opaque(bottom), Shader.TileMode.CLAMP)
+            canvas.drawRect(0f, 0f, size, size, paint)
+            paint.shader = null
+            paint.color = opaque(disc)
+            canvas.drawCircle(size * 0.66f, size * 0.36f, size / 6, paint)
+            return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+        }
     }
 }

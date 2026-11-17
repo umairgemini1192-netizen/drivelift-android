@@ -5,7 +5,11 @@ import android.os.ParcelFileDescriptor
 import com.drivelift.app.data.Prefs
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import okhttp3.Call
 import okhttp3.Callback
@@ -22,6 +26,8 @@ import okhttp3.Response
 import okio.BufferedSink
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.io.FileInputStream
 import java.io.IOException
 import java.nio.ByteBuffer
@@ -40,6 +46,9 @@ data class DriveFile(
     val size: Long,
     val md5: String?,
     val trashed: Boolean,
+    val thumbnailLink: String? = null,
+    val durationMillis: Long = 0L,
+    val modifiedTime: String? = null,
 ) {
     val isFolder: Boolean get() = mimeType == DriveClient.FOLDER_MIME
 }
@@ -78,13 +87,19 @@ suspend fun <T> collectAllPages(fetch: suspend (pageToken: String?) -> Pair<List
 }
 
 /**
- * The two Drive calls the folder browser makes. An interface so the browser, the folder picker
- * and the new-folder dialog can be rendered in screenshot tests with made-up folders and no
- * network. [DriveClient] is the only implementation in the app.
+ * Drive calls used by the browser, folder picker, and in-app media gallery. An interface so UI and
+ * screenshot tests can run against synthetic entries with no network. [DriveClient] is the only
+ * production implementation.
  */
 interface DriveFolders {
     suspend fun listChildren(folderId: String, foldersOnly: Boolean): List<DriveFile>
     suspend fun createFolder(name: String, parentId: String): DriveFile
+    suspend fun loadThumbnail(file: DriveFile, maxEdgePx: Int): ByteArray? = null
+    suspend fun loadPreviewBytes(
+        file: DriveFile,
+        maxBytes: Long,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): ByteArray = throw IOException("Preview not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -95,6 +110,20 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         .writeTimeout(2, TimeUnit.MINUTES)
         .retryOnConnectionFailure(true)
         .build()
+
+    // Media and thumbnail requests validate every redirect hop manually so an OAuth token is
+    // never forwarded to an untrusted host.
+    private val mediaHttp = http.newBuilder()
+        .followRedirects(false)
+        .followSslRedirects(false)
+        .build()
+
+    private val thumbSemaphore = Semaphore(MAX_CONCURRENT_THUMBNAILS)
+    private val previewCache = DrivePreviewCache(File(context.cacheDir, "drive_preview"))
+
+    fun clearPreviewCache() {
+        previewCache.clear()
+    }
 
     /** Background and browsing calls are always pinned to the saved account. See [requirePinnedAccount]. */
     private suspend fun token(): String = try {
@@ -141,6 +170,9 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         size = o.optString("size").toLongOrNull() ?: 0,
         md5 = o.optString("md5Checksum").ifEmpty { null },
         trashed = o.optBoolean("trashed", false),
+        thumbnailLink = o.optString("thumbnailLink").ifEmpty { null },
+        durationMillis = o.optJSONObject("videoMediaMetadata")?.optString("durationMillis")?.toLongOrNull() ?: 0L,
+        modifiedTime = o.optString("modifiedTime").ifEmpty { null },
     )
 
     private suspend fun getJson(url: HttpUrl): JSONObject =
@@ -220,6 +252,162 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
             .build()
         val existing = getJson(url).optJSONArray("files")?.optJSONObject(0)?.optString("id")
         return if (!existing.isNullOrEmpty()) existing else createFolder(name, parentId).id
+    }
+
+    override suspend fun loadThumbnail(file: DriveFile, maxEdgePx: Int): ByteArray? {
+        val email = requirePinnedAccount(prefs.accountEmail)
+        val variant = driveCacheVariant("thumb_$maxEdgePx", file)
+        previewCache.getBytes(email, file.id, variant)?.let { return it }
+        return thumbSemaphore.withPermit {
+            previewCache.getBytes(email, file.id, variant)?.let { return@withPermit it }
+            val bytes = fetchThumbnailBytes(file, maxEdgePx)
+            if (bytes != null && bytes.isNotEmpty()) {
+                previewCache.putBytes(email, file.id, variant, bytes)
+            }
+            bytes
+        }
+    }
+
+    private suspend fun fetchThumbnailBytes(file: DriveFile, maxEdgePx: Int): ByteArray? {
+        val initial = file.thumbnailLink?.let { upgradedThumbnailUrl(it, maxEdgePx) }
+        if (initial != null) {
+            val attempt = tryFetchBoundedBytes(initial, MAX_THUMB_BYTES)
+            if (attempt.bytes != null) return attempt.bytes
+            if (attempt.expiredLink) {
+                val refreshed = runCatching { getFile(file.id) }.getOrNull()
+                val freshUrl = refreshed?.thumbnailLink?.let { upgradedThumbnailUrl(it, maxEdgePx) }
+                if (freshUrl != null) {
+                    val retry = tryFetchBoundedBytes(freshUrl, MAX_THUMB_BYTES)
+                    if (retry.bytes != null) return retry.bytes
+                }
+            }
+        }
+        if (classifyDriveFile(file.mimeType) == DrivePreviewKind.IMAGE &&
+            file.size in 1L..MAX_THUMB_FALLBACK_BYTES
+        ) {
+            val mediaUrl = "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addQueryParameter("alt", "media")
+                .build()
+            return tryFetchBoundedBytes(mediaUrl, MAX_THUMB_FALLBACK_BYTES).bytes
+        }
+        return null
+    }
+
+    private data class MediaFetchAttempt(val bytes: ByteArray?, val expiredLink: Boolean = false)
+
+    private suspend fun tryFetchBoundedBytes(url: HttpUrl, maxBytes: Long): MediaFetchAttempt =
+        executeTrustedMedia(url) { r ->
+            when {
+                r.code == 403 || r.code == 404 || r.code == 410 -> MediaFetchAttempt(null, expiredLink = true)
+                !r.isSuccessful -> MediaFetchAttempt(null)
+                else -> MediaFetchAttempt(readBounded(r, maxBytes) { _, _ -> })
+            }
+        }
+
+    override suspend fun loadPreviewBytes(
+        file: DriveFile,
+        maxBytes: Long,
+        onProgress: (Long, Long) -> Unit,
+    ): ByteArray {
+        val email = requirePinnedAccount(prefs.accountEmail)
+        val kind = classifyDriveFile(file.mimeType)
+        val variant = driveCacheVariant("preview_${kind.name}_$maxBytes", file)
+        previewCache.getBytes(email, file.id, variant)?.let {
+            onProgress(it.size.toLong(), it.size.toLong())
+            return it
+        }
+        val url = if (kind == DrivePreviewKind.WORKSPACE_PDF_EXPORT) {
+            "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addPathSegment("export")
+                .addQueryParameter("mimeType", "application/pdf")
+                .build()
+        } else {
+            "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addQueryParameter("alt", "media")
+                .build()
+        }
+        val bytes = executeTrustedMedia(url) { r ->
+            if (!r.isSuccessful) fail(r)
+            readBounded(r, maxBytes, onProgress)
+        }
+        if (bytes.isNotEmpty()) previewCache.putBytes(email, file.id, variant, bytes)
+        return bytes
+    }
+
+    private suspend fun <T> executeTrustedMedia(initialUrl: HttpUrl, handle: suspend (Response) -> T): T {
+        var current = initialUrl
+        for (hop in 0 until MAX_REDIRECTS) {
+            if (!isTrustedDriveMediaUrl(current)) {
+                throw IOException("Blocked media request to untrusted host")
+            }
+            var token = token()
+            var response = mediaHttp.newCall(
+                Request.Builder().url(current).header("Authorization", "Bearer $token").build()
+            ).await()
+            if (response.code == 401) {
+                response.close()
+                DriveAuth.invalidate(context, token)
+                token = token()
+                response = mediaHttp.newCall(
+                    Request.Builder().url(current).header("Authorization", "Bearer $token").build()
+                ).await()
+                if (response.code == 401) {
+                    response.close()
+                    throw AuthRequiredException()
+                }
+            }
+            if (response.code in REDIRECT_CODES) {
+                val location = response.header("Location")
+                response.close()
+                val next = location?.let { current.resolve(it) }
+                    ?: throw IOException("Drive redirect did not include a destination")
+                if (!isTrustedDriveMediaUrl(next)) {
+                    throw IOException("Blocked redirect to untrusted host")
+                }
+                current = next
+                continue
+            }
+            return withContext(Dispatchers.IO) {
+                try {
+                    handle(response)
+                } finally {
+                    response.close()
+                }
+            }
+        }
+        throw IOException("Too many redirects while loading media")
+    }
+
+    private suspend fun readBounded(
+        response: Response,
+        maxBytes: Long,
+        onProgress: (Long, Long) -> Unit,
+    ): ByteArray {
+        val body = response.body ?: throw IOException("Empty media response")
+        val contentLength = body.contentLength()
+        if (contentLength > maxBytes) {
+            throw IOException("File is larger than the in-app preview limit")
+        }
+        val out = ByteArrayOutputStream(if (contentLength in 1..1_048_576) contentLength.toInt() else 16_384)
+        val buffer = ByteArray(16 * 1024)
+        var total = 0L
+        body.byteStream().use { stream ->
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val read = stream.read(buffer)
+                if (read < 0) break
+                total += read
+                if (total > maxBytes) {
+                    throw IOException("File is larger than the in-app preview limit")
+                }
+                out.write(buffer, 0, read)
+                onProgress(total, contentLength)
+            }
+        }
+        return out.toByteArray()
     }
 
     /** Null when the file does not exist any more. */
@@ -356,8 +544,14 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         private val ABOUT_URL = "$API/about".toHttpUrl().newBuilder()
             .addQueryParameter("fields", "user(displayName,emailAddress),storageQuota(limit,usage)")
             .build()
-        private const val FILE_FIELDS = "id,name,mimeType,size,md5Checksum,trashed"
+        private const val FILE_FIELDS =
+            "id,name,mimeType,size,md5Checksum,modifiedTime,trashed,thumbnailLink,videoMediaMetadata(durationMillis)"
         private const val PAGE_SIZE = "1000"
+        private const val MAX_CONCURRENT_THUMBNAILS = 4
+        private const val MAX_REDIRECTS = 5
+        private const val MAX_THUMB_BYTES = 2L * 1024L * 1024L
+        private const val MAX_THUMB_FALLBACK_BYTES = 8L * 1024L * 1024L
+        private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
         private val JSON = "application/json; charset=utf-8".toMediaType()
     }
 }
