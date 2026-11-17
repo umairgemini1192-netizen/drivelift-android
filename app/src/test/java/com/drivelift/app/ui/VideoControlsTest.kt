@@ -155,7 +155,7 @@ class VideoControlsTest {
         assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
         assertEquals(10_000L, frameStepTarget(9_990, 10_000, 30f, forward = true))
         // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
-        for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120)) {
+        for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120, 120f to 240, 240f to 480)) {
             var position = 0L
             repeat(taps) { i ->
                 position = frameStepTarget(position, 3_600_000, fps, forward = true)

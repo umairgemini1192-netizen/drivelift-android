@@ -70,8 +70,7 @@ internal const val DEFAULT_FRAME_RATE = 30f
 
 /**
  * Where one frame forward or back lands, clamped to the video. The frame on screen is read from
- * the position (with a small tolerance, so a position just before a frame's timestamp still
- * counts as that frame), the neighbouring frame number is taken, and the seek goes to that
+ * the position (allowing for the millisecond rounding of earlier steps), the neighbouring frame number is taken, and the seek goes to that
  * frame's timestamp rounded down. Media3 skips frames earlier than the seek position, so seeking
  * at or just before the timestamp shows exactly that frame; working from frame numbers means
  * repeated steps never drift.
@@ -84,12 +83,15 @@ internal fun frameStepTarget(position: Long, duration: Long, frameRate: Float, f
     return if (duration > 0) target.coerceAtMost(duration) else target
 }
 
-/** The frame shown at [position] ms, tolerant of a position rounded down from its timestamp. */
+/**
+ * The frame shown at [position] ms. Step targets are frame timestamps rounded down to whole
+ * milliseconds, so they sit less than 1 ms early; reading the frame at position + 1 ms (less a
+ * hair) recovers it exactly at any frame rate below 1000 fps.
+ */
 internal fun frameIndexAt(position: Long, fps: Double): Long =
-    Math.floor(position.coerceAtLeast(0) * fps / 1000.0 + FRAME_TOLERANCE).toLong()
+    Math.floor((position.coerceAtLeast(0) + 1.0 - MS_EPSILON) * fps / 1000.0).toLong()
 
-/** A tenth of a frame: covers rounding a timestamp down to whole milliseconds at up to 100 fps. */
-private const val FRAME_TOLERANCE = 0.1
+private const val MS_EPSILON = 1e-6
 
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
