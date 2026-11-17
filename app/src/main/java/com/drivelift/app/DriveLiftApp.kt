@@ -1,7 +1,11 @@
 package com.drivelift.app
 
 import android.app.Application
+import android.content.BroadcastReceiver
 import android.content.Context
+import android.content.Intent
+import android.content.IntentFilter
+import androidx.core.content.ContextCompat
 import androidx.room.Room
 import coil.ImageLoader
 import coil.ImageLoaderFactory
@@ -12,6 +16,9 @@ import com.drivelift.app.data.Prefs
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.transfer.Notifications
 import com.drivelift.app.transfer.TransferRepository
+import com.drivelift.app.ui.AppLock
+import com.drivelift.app.ui.Authenticator
+import com.drivelift.app.ui.BiometricAuthenticator
 
 /** Process-wide singletons. Small enough that a DI framework would be overhead. */
 class Graph(app: Application) {
@@ -22,6 +29,10 @@ class Graph(app: Application) {
     val media = MediaRepository(app)
     val drive = DriveClient(app, prefs)
     val transfers = TransferRepository(app, db, prefs, media)
+    /** In memory only, so a new process starts locked. */
+    val lock = AppLock()
+    /** Replaced by a fake in tests; the app uses Android's BiometricPrompt. */
+    var authenticator: Authenticator = BiometricAuthenticator(lock)
 
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
@@ -38,6 +49,15 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
         Notifications.ensureChannels(this)
         // Pick up anything a reboot, crash or force-stop left unfinished.
         graph.transfers.recover()
+        // Turning the screen off ends the unlocked session (owner decision on issue 19).
+        ContextCompat.registerReceiver(
+            this,
+            object : BroadcastReceiver() {
+                override fun onReceive(context: Context, intent: Intent) = graph.lock.lock()
+            },
+            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            ContextCompat.RECEIVER_NOT_EXPORTED,
+        )
     }
 
     override fun newImageLoader(): ImageLoader =
