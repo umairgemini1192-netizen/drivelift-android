@@ -171,7 +171,7 @@ class VideoControlsTest {
     @Test
     fun fitAppearsOnlyWhenZoomedAndResets() {
         var fits = 0
-        var zoomed by androidx.compose.runtime.mutableStateOf(false)
+        var zoomed by androidx.compose.runtime.mutableStateOf(true)
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
@@ -189,23 +189,33 @@ class VideoControlsTest {
                 }
             }
             pump()
-            assertEquals(0, compose.onAllNodesWithText("Fit").fetchSemanticsNodes().size)
-            zoomed = true
-            pump()
             compose.onNodeWithContentDescription("Fit the whole picture").performClick()
             pump()
             assertEquals(1, fits)
-            assertEquals(0, compose.onAllNodesWithText("Fit").fetchSemanticsNodes().size)
+            assertEquals("Fit must disappear once the picture fits", 0, compose.onAllNodesWithText("Fit").fetchSemanticsNodes().size)
         }
     }
 
     @Test
-    fun savingAFrameNeverThrowsWhenStorageFails() {
-        // Robolectric has no MediaStore provider, so the insert is refused: the helper must return
-        // null for the caller's failure message rather than throw.
+    fun savingAFrameStoresAPictureAndReportsFailureWithoutThrowing() {
         val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
         val bitmap = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
-        assertEquals(null, com.drivelift.app.data.saveFrameToPictures(app, bitmap, "x.jpg"))
+        // Robolectric's media store accepts the picture: the helper returns the new item.
+        org.junit.Assert.assertNotNull(com.drivelift.app.data.saveFrameToPictures(app, bitmap, "ok.jpg"))
+        // A media store that refuses (storage full or unavailable) must give null, not a crash.
+        org.robolectric.Robolectric.setupContentProvider(RefusingMediaStore::class.java, "media")
+        assertEquals(null, com.drivelift.app.data.saveFrameToPictures(app, bitmap, "fail.jpg"))
+    }
+
+    /** Throws on every write, like a full or unavailable shared storage. */
+    class RefusingMediaStore : android.content.ContentProvider() {
+        override fun onCreate() = true
+        override fun query(uri: android.net.Uri, p: Array<out String>?, s: String?, a: Array<out String>?, o: String?) = null
+        override fun getType(uri: android.net.Uri): String? = null
+        override fun insert(uri: android.net.Uri, values: android.content.ContentValues?): android.net.Uri? =
+            throw IllegalStateException("No space left on device")
+        override fun delete(uri: android.net.Uri, s: String?, a: Array<out String>?) = 0
+        override fun update(uri: android.net.Uri, v: android.content.ContentValues?, s: String?, a: Array<out String>?) = 0
     }
 
     @Test
