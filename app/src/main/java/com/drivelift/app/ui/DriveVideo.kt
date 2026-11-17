@@ -30,6 +30,8 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.media3.common.AudioAttributes
+import androidx.media3.common.C
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -103,7 +105,7 @@ internal fun VideoPreviewContent(
         stream = null
         problem = null
         try {
-            stream = vm.driveFolders.openVideoStream(file)
+            stream = vm.openVideoStream(file)
         } catch (e: CancellationException) {
             throw e
         } catch (_: AuthRequiredException) {
@@ -165,6 +167,16 @@ private fun VideoPlayer(stream: DriveVideoStream, onProblem: (VideoProblem) -> U
     val player = remember(stream) {
         ExoPlayer.Builder(context)
             .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(stream.callFactory)))
+            // Takes audio focus like any media app: other audio pauses or ducks, and a call or
+            // another player pauses this one. Unplugging headphones pauses instead of blaring.
+            .setAudioAttributes(
+                AudioAttributes.Builder()
+                    .setUsage(C.USAGE_MEDIA)
+                    .setContentType(C.AUDIO_CONTENT_TYPE_MOVIE)
+                    .build(),
+                /* handleAudioFocus = */ true,
+            )
+            .setHandleAudioBecomingNoisy(true)
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(stream.url))
