@@ -288,14 +288,22 @@ private fun VideoPlayer(
             position = player.currentPosition
             savedPosition = position
             if (player.duration > 0) duration = player.duration
-            delay(POSITION_REFRESH_MS)
+            delay(Tokens.Motion.VIDEO_POSITION_REFRESH.toLong())
         }
     }
     // Controls step aside after a few seconds of playback without a touch.
     LaunchedEffect(controlsVisible, playing, interaction, scrubbing) {
         if (controlsVisible && playing && !scrubbing) {
-            delay(CONTROLS_HIDE_MS)
+            delay(Tokens.Motion.VIDEO_CONTROLS_HIDE.toLong())
             controlsVisible = false
+        }
+    }
+    // A rotation or resize changes the fitted picture and the screen, so a restored pan offset is
+    // limited again at once; the zoom level itself is kept.
+    LaunchedEffect(viewport, videoAspect) {
+        if (viewport.width > 0 && viewport.height > 0) {
+            zoom.applyVideoGesture(Offset.Zero, 1f, fittedVideoSize(viewport, videoAspect), viewport)
+            rememberZoom()
         }
     }
     // No background playback: leaving the screen pauses, and the user resumes with play. A
@@ -446,7 +454,6 @@ private fun VideoPlayer(
     }
 }
 
-private const val POSITION_REFRESH_MS = 250L
 
 /** The size the video occupies when fitted inside [viewport] with its own shape. */
 internal fun fittedVideoSize(viewport: IntSize, aspect: Float): androidx.compose.ui.geometry.Size {
@@ -490,4 +497,3 @@ private tailrec fun android.content.Context.findActivity(): android.app.Activity
     is android.content.ContextWrapper -> baseContext.findActivity()
     else -> null
 }
-private const val CONTROLS_HIDE_MS = 3_500L

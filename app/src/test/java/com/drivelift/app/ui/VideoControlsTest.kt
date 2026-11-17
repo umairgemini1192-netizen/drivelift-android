@@ -187,6 +187,22 @@ class VideoControlsTest {
     }
 
     @Test
+    fun rotatingAZoomedVideoKeepsThePictureOnScreen() {
+        val landscape = androidx.compose.ui.unit.IntSize(640, 320)
+        val portrait = androidx.compose.ui.unit.IntSize(320, 640)
+        val zoom = ImageTransformState()
+        zoom.applyVideoGesture(
+            androidx.compose.ui.geometry.Offset(10_000f, 0f), 4f, fittedVideoSize(landscape, 16f / 9f), landscape,
+        )
+        val before = zoom.offset.x
+        // The re-clamp the player runs when the viewport changes: no movement, same zoom.
+        zoom.applyVideoGesture(androidx.compose.ui.geometry.Offset.Zero, 1f, fittedVideoSize(portrait, 16f / 9f), portrait)
+        assertEquals(4f, zoom.scale)
+        assertEquals("Offset must shrink to the portrait limit", 480f, zoom.offset.x)
+        org.junit.Assert.assertTrue(before > zoom.offset.x)
+    }
+
+    @Test
     fun zoomClampsSoThePictureNeverLeavesTheScreen() {
         val zoom = ImageTransformState()
         val bounds = androidx.compose.ui.unit.IntSize(1000, 500)

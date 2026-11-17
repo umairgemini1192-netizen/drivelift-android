@@ -75,6 +75,12 @@ object Tokens {
     object Motion {
         const val SELECTION = 160
         const val PROGRESS = 300
+
+        /** Video player controls step aside after this long of playback without a touch. */
+        const val VIDEO_CONTROLS_HIDE = 3_500
+
+        /** How often the video scrubber and times are refreshed (state feedback only). */
+        const val VIDEO_POSITION_REFRESH = 250
     }
 }
 
