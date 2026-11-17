@@ -73,6 +73,7 @@ import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DriveFolders
 import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.LiveProgress
+import com.drivelift.app.drive.AuthRequiredException
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.github.takahirom.roborazzi.captureScreenRoboImage
@@ -332,6 +333,23 @@ class ScreenshotTest {
                 waitFor("Packing list.pdf")
                 compose.onNodeWithText("Packing list.pdf").performClick()
                 waitFor("Open in Google Drive")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveViewerAuthExpired() {
+        grantMedia()
+        eachVariant(
+            "drive-viewer-auth-expired",
+            expect = "Google Drive authorization expired",
+            connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            drive = FakeDrive(failAuthOnPreview = true),
+            act = {
+                waitFor("Scan_0042.jpg")
+                compose.onNodeWithText("Scan_0042.jpg").performClick()
+                waitFor("Reconnect")
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -931,6 +949,7 @@ class ScreenshotTest {
             }
         },
         private val create: suspend (name: String) -> DriveFile = { name -> folder("new-folder", name) },
+        private val failAuthOnPreview: Boolean = false,
     ) : DriveFolders {
         override suspend fun listChildren(folderId: String, foldersOnly: Boolean) = list(folderId, foldersOnly)
         override suspend fun createFolder(name: String, parentId: String) = create(name)
@@ -947,6 +966,7 @@ class ScreenshotTest {
             maxBytes: Long,
             onProgress: (Long, Long) -> Unit,
         ): ByteArray {
+            if (failAuthOnPreview) throw AuthRequiredException()
             val bytes = when (file.id) {
                 "d2" -> pictureBytes(2)
                 "d4" -> pictureBytes(1)

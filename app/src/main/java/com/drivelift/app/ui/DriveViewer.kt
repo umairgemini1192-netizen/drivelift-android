@@ -23,6 +23,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
@@ -62,7 +64,9 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
@@ -210,10 +214,13 @@ fun DriveFileViewer(
 
     // Draw a dedicated backdrop so the underlying Drive grid does not bleed through the viewer.
     GlassBackdrop {
+        Box(Modifier.fillMaxSize()) {
+        // Place the background pointer barrier as a sibling behind viewer content and controls so
+        // empty-backdrop taps/drags never reach DriveBrowser beneath while child button taps stay
+        // tolerant of small finger jitter.
         Box(
             Modifier
                 .fillMaxSize()
-                // Modal pointer barrier so background taps/drags never hit DriveBrowser beneath.
                 .pointerInput(Unit) {
                     awaitEachGesture {
                         awaitFirstDown(requireUnconsumed = false)
@@ -224,7 +231,7 @@ fun DriveFileViewer(
                         }
                     }
                 },
-        ) {
+        )
         when (kind) {
             DrivePreviewKind.IMAGE -> ImagePreviewContent(
                 vm = vm,
@@ -462,9 +469,24 @@ private fun FileDetailsPreview(
             "This file format cannot be previewed inside DriveLift. Use the button below to open it externally."
     }
 
-    Box(Modifier.fillMaxSize().padding(Tokens.Edge), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .padding(
+                top = Tokens.ViewerTopClearance,
+                start = Tokens.Edge,
+                end = Tokens.Edge,
+                bottom = Tokens.Edge,
+            ),
+        contentAlignment = Alignment.Center,
+    ) {
         GlassPanel(modifier = Modifier.fillMaxWidth().widthIn(max = Tokens.ReadableWidth)) {
-            Column(Modifier.fillMaxWidth().padding(Tokens.Edge)) {
+            Column(
+                Modifier
+                    .fillMaxWidth()
+                    .verticalScroll(rememberScrollState())
+                    .padding(Tokens.Edge),
+            ) {
                 if (cachedThumb != null) {
                     Image(
                         bitmap = cachedThumb,
@@ -525,12 +547,19 @@ private fun ViewerNoticeCard(
     secondaryLabel: String,
     onSecondary: () -> Unit,
 ) {
+    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
     GlassPanel(
         modifier = Modifier
-            .padding(Tokens.Edge)
+            .padding(
+                top = Tokens.ViewerTopClearance,
+                start = Tokens.Edge,
+                end = Tokens.Edge,
+                bottom = Tokens.Edge,
+            )
             .widthIn(max = Tokens.ReadableWidth),
     ) {
-        Column(Modifier.padding(Tokens.Edge)) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(Tokens.Edge)) {
             Text(title, style = MaterialTheme.typography.titleMedium)
             Text(
                 body,
@@ -538,9 +567,16 @@ private fun ViewerNoticeCard(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Tokens.Tiny, bottom = Tokens.Gutter),
             )
-            Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                Button(onClick = onPrimary) { Text(primaryLabel) }
-                OutlinedButton(onClick = onSecondary) { Text(secondaryLabel) }
+            if (stacked) {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    Button(onClick = onPrimary, modifier = Modifier.fillMaxWidth()) { Text(primaryLabel) }
+                    OutlinedButton(onClick = onSecondary, modifier = Modifier.fillMaxWidth()) { Text(secondaryLabel) }
+                }
+            } else {
+                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    Button(onClick = onPrimary) { Text(primaryLabel) }
+                    OutlinedButton(onClick = onSecondary) { Text(secondaryLabel) }
+                }
             }
         }
     }

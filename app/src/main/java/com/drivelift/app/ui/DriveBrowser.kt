@@ -81,6 +81,7 @@ import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
@@ -269,18 +270,38 @@ fun DriveBrowser(
             )
 
             if (!pickMode && thumbAuthExpired && conn == DriveConn.CONNECTED) {
+                val stacked = density.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                    LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
                 GlassPanel(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny)) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Small),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Text(
-                            "Google Drive authorization expired for thumbnails.",
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.weight(1f).padding(end = Tokens.Small),
-                        )
-                        Button(onClick = { vm.connectDrive(interactive = true) }) {
-                            Text("Reconnect")
+                    if (stacked) {
+                        Column(
+                            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Small),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            Text(
+                                "Google Drive authorization expired for thumbnails.",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                            Button(
+                                onClick = { vm.connectDrive(interactive = true) },
+                                modifier = Modifier.fillMaxWidth(),
+                            ) {
+                                Text("Reconnect")
+                            }
+                        }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Small),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Text(
+                                "Google Drive authorization expired for thumbnails.",
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.weight(1f).padding(end = Tokens.Small),
+                            )
+                            Button(onClick = { vm.connectDrive(interactive = true) }) {
+                                Text("Reconnect")
+                            }
                         }
                     }
                 }

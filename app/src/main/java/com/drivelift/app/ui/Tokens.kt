@@ -42,6 +42,7 @@ object Tokens {
     val DriveGridGap = 8.dp
     val ViewerControl = 48.dp
     val ViewerProgressWidth = 220.dp
+    val ViewerTopClearance = 92.dp
     val ReadableWidth = 480.dp
     val GaugeWidth = 320.dp
     val GaugeHeight = 172.dp
