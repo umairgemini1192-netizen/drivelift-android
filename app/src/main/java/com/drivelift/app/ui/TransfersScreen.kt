@@ -261,7 +261,11 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
                         )
                     }
                     Text(
-                        "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm.",
+                        if (vm.textOnlyRemoval()) {
+                            "Only files whose Drive copy matched byte for byte are included. DriveLift lists them for you to confirm."
+                        } else {
+                            "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Snug),
