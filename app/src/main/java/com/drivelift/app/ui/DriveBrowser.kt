@@ -45,6 +45,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material.icons.outlined.Videocam
@@ -85,6 +86,7 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalView
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -135,6 +137,7 @@ fun DriveBrowser(
     val bottomInsetPx = safeDrawing.getBottom(density)
     val conn by vm.driveConn.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
+    val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var stack by remember { mutableStateOf(listOf(Crumb(DriveClient.ROOT, "My Drive"))) }
@@ -255,6 +258,17 @@ fun DriveBrowser(
                                     contentDescription = if (gridView) "Show as list" else "Show as grid",
                                 )
                             }
+                            if (gridView) {
+                                IconButton(
+                                    onClick = vm::cycleGridDensity,
+                                    modifier = Modifier.size(Tokens.TouchTarget),
+                                ) {
+                                    Icon(
+                                        Icons.Outlined.PhotoSizeSelectLarge,
+                                        contentDescription = "Thumbnail size: ${gridDensity.label}",
+                                    )
+                                }
+                            }
                         }
                         IconButton(onClick = { showNewFolder = true }) {
                             Icon(Icons.Outlined.CreateNewFolder, contentDescription = "New folder here")
@@ -336,12 +350,19 @@ fun DriveBrowser(
                     )
                     !pickMode && gridView -> {
                         LazyVerticalGrid(
-                            columns = GridCells.Adaptive(minSize = Tokens.DriveGridCell),
+                            columns = GridCells.Adaptive(minSize = gridDensity.driveMinCell),
                             state = gridState,
                             contentPadding = PaddingValues(horizontal = Tokens.Edge, vertical = Tokens.Small),
                             horizontalArrangement = Arrangement.spacedBy(Tokens.DriveGridGap),
                             verticalArrangement = Arrangement.spacedBy(Tokens.DriveGridGap),
-                            modifier = Modifier.fillMaxSize(),
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .testTag("drive-media-grid")
+                                .pinchGridDensity(
+                                    gridState = gridState,
+                                    density = gridDensity,
+                                    onDensityChange = vm::setGridDensity,
+                                ),
                         ) {
                             items(
                                 list,

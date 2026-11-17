@@ -144,6 +144,7 @@ class ScreenshotTest {
         // The app restarts unfinished transfers on launch. Here that must only queue a job in a
         // test WorkManager, which never runs it: nothing may try to upload during a test.
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
+        Graph.get(app).prefs.setGridDensity(GridDensity.MEDIUM)
     }
 
     @Before
@@ -169,6 +170,7 @@ class ScreenshotTest {
         FakeMediaStore.empty = false
         FakeMediaStore.gate?.countDown()
         FakeMediaStore.gate = null
+        Graph.get(app).prefs.setGridDensity(GridDensity.MEDIUM)
     }
 
     // ------------------------------------------------------------------ scenarios
@@ -201,6 +203,23 @@ class ScreenshotTest {
                 settle { compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty() }
                 compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
                 compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun folderLargeDensity() {
+        grantMedia()
+        Graph.get(app).prefs.setGridDensity(GridDensity.LARGE)
+        eachVariant(
+            "folder-large-density", expect = "Camera", connected = true,
+            act = {
+                settle { compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Camera").performClick()
+                settle {
+                    compose.onAllNodesWithContentDescription("Thumbnail size: Large thumbnails")
+                        .fetchSemanticsNodes().isNotEmpty()
+                }
             },
         ) { vm -> AppRoot(vm) }
     }
