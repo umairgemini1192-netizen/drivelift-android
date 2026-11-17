@@ -303,7 +303,8 @@ class ScreenshotTest {
                 waitFor("Remove 3 verified files from phone")
                 compose.onNodeWithText("Remove 3 verified files from phone").performClick()
                 waitFor("Remove 3 files from this phone?")
-                compose.onNodeWithText("IMG_0004.jpg", substring = true).assertExists()
+                // The dialog line ("name  ·  size"); the file list behind it also shows the name alone.
+                compose.onNodeWithText("IMG_0004.jpg  ·  ", substring = true).assertExists()
                 compose.onNodeWithText("Each Drive copy matched", substring = true).assertExists()
             },
         ) { vm -> AppRoot(vm) }
