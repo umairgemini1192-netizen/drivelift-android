@@ -233,6 +233,14 @@ fun DriveFileViewer(
                 },
         )
         when (kind) {
+            DrivePreviewKind.VIDEO -> VideoPreviewContent(
+                vm = vm,
+                file = file,
+                conn = conn,
+                cachedThumb = cachedThumb,
+                onOpenExternally = onOpenExternally,
+            )
+
             DrivePreviewKind.IMAGE -> ImagePreviewContent(
                 vm = vm,
                 file = file,
@@ -551,7 +559,7 @@ private fun FileDetailsPreview(
 }
 
 @Composable
-private fun ViewerNoticeCard(
+internal fun ViewerNoticeCard(
     title: String,
     body: String,
     primaryLabel: String,

@@ -156,3 +156,16 @@ class DrivePreviewCache(
         root.listFiles()?.forEach { it.deleteRecursively() }
     }
 }
+
+/** What the in-app player needs to stream one Drive video. */
+class DriveVideoStream(val url: String, val callFactory: okhttp3.Call.Factory)
+
+/**
+ * Adds the Drive token to a video request only when the request goes to a trusted Google media
+ * host, and refuses any other host. Run as a network interceptor, it sees every redirect hop
+ * before anything is sent, so the token never reaches another host.
+ */
+fun authorizedMediaRequest(request: okhttp3.Request, token: String): okhttp3.Request {
+    if (!isTrustedDriveMediaUrl(request.url)) throw java.io.IOException("Blocked media request to untrusted host")
+    return request.newBuilder().header("Authorization", "Bearer $token").build()
+}

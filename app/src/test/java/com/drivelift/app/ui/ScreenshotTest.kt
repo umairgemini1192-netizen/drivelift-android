@@ -364,6 +364,22 @@ class ScreenshotTest {
     }
 
     @Test
+    fun driveVideoError() {
+        grantMedia()
+        eachVariant(
+            "drive-video-error",
+            expect = "Could not play video",
+            connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Trip to the coast.mp4")
+                compose.onNodeWithText("Trip to the coast.mp4").performClick()
+                waitFor("Could not play video")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
     fun driveViewerAuthExpired() {
         grantMedia()
         eachVariant(

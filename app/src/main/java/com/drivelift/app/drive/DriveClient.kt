@@ -100,6 +100,10 @@ interface DriveFolders {
         maxBytes: Long,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ): ByteArray = throw IOException("Preview not available")
+
+    /** A stream for the in-app video player, authorised for the connected account. */
+    suspend fun openVideoStream(file: DriveFile): DriveVideoStream =
+        throw IOException("Video playback is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -335,6 +339,21 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         }
         if (bytes.isNotEmpty()) previewCache.putBytes(email, file.id, variant, bytes)
         return bytes
+    }
+
+    override suspend fun openVideoStream(file: DriveFile): DriveVideoStream {
+        val token = token()
+        val url = "$API/files".toHttpUrl().newBuilder()
+            .addPathSegment(file.id)
+            .addQueryParameter("alt", "media")
+            .build()
+        // Redirects are followed by OkHttp, and every hop passes the trusted-host check before the
+        // token is attached.
+        val client = http.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            .addNetworkInterceptor { chain -> chain.proceed(authorizedMediaRequest(chain.request(), token)) }
+            .build()
+        return DriveVideoStream(url.toString(), client)
     }
 
     private suspend fun <T> executeTrustedMedia(initialUrl: HttpUrl, handle: suspend (Response) -> T): T {
