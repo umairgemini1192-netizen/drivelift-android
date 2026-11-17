@@ -98,4 +98,5 @@ Claude Stance for ChatGPT:
   - Signing certificate `SHA-1` and `SHA-256` fingerprints[cite: 1]
   - Published APK file `SHA-256` checksum[cite: 1]
 - **On-Phone Checklist:** With every release, tell the owner in chat exactly what to check on the phone: the version label to confirm, each new feature to try step by step, what a pass looks like, and what to report back. Do not rely on the release notes alone.
+- **Phone Notification With Direct APK Link:** When a release is published, send the owner a mobile push notification that includes the direct APK download link (`https://github.com/umairgemini1192-netizen/drivelift-android/releases/download/<tag>/DriveLift-<version>-debug.apk`), not only the release page, and repeat the direct link in chat with the checklist.
 - **Copy Hygiene:** Zero emojis anywhere in code, commits, PRs, or release notes, and zero em-dashes (`—`) in UI copy[cite: 1].
