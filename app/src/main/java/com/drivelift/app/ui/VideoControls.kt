@@ -68,12 +68,21 @@ internal fun qualityLabel(width: Int, height: Int, frameRate: Float): String {
 /** Frames per second assumed when the video does not say. */
 internal const val DEFAULT_FRAME_RATE = 30f
 
-/** Where one frame forward or back lands, clamped to the video. */
+/**
+ * Where one frame forward or back lands, clamped to the video. The current frame number is read
+ * from the position, the neighbouring frame number is taken, and only its start time is turned
+ * into milliseconds (rounded up, so the seek lands inside that frame). Repeated steps therefore
+ * visit every frame in turn without the drift that adding a rounded interval would cause.
+ */
 internal fun frameStepTarget(position: Long, duration: Long, frameRate: Float, forward: Boolean): Long {
-    val fps = if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE
-    val frameMs = Math.round(1000f / fps).toLong().coerceAtLeast(1)
-    return skipTarget(position, duration, if (forward) frameMs else -frameMs)
+    val fps = (if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE).toDouble()
+    val frame = Math.floor(position.coerceAtLeast(0) * fps / 1000.0 + FRAME_EPSILON).toLong()
+    val next = (if (forward) frame + 1 else frame - 1).coerceAtLeast(0)
+    val target = Math.ceil(next * 1000.0 / fps).toLong()
+    return if (duration > 0) target.coerceAtMost(duration) else target
 }
+
+private const val FRAME_EPSILON = 1e-6
 
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
