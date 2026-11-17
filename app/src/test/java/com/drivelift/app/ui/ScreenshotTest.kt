@@ -287,10 +287,12 @@ class ScreenshotTest {
         grantMedia()
         Graph.get(app).prefs.setAutoRemove(false)
         Graph.get(app).canManageMedia = { true }
+        // Rows whose address is really in the fake media store; a missing one would correctly be
+        // closed out as already gone before the confirmation.
         seedTransfers(
             row(1, "IMG_0001.jpg", TransferStatus.VERIFIED),
             row(2, "IMG_0002.jpg", TransferStatus.VERIFIED),
-            row(3, "VID_0003.mp4", TransferStatus.VERIFIED, size = 48_000_000),
+            row(4, "IMG_0004.jpg", TransferStatus.VERIFIED, size = 48_000_000),
         )
         eachVariant(
             "removal-text-only", expect = "Remove 3 files from this phone?", tab = AppViewModel.TAB_TRANSFERS,
@@ -299,7 +301,7 @@ class ScreenshotTest {
                 waitFor("Remove 3 verified files from phone")
                 compose.onNodeWithText("Remove 3 verified files from phone").performClick()
                 waitFor("Remove 3 files from this phone?")
-                compose.onNodeWithText("VID_0003.mp4", substring = true).assertExists()
+                compose.onNodeWithText("IMG_0004.jpg", substring = true).assertExists()
                 compose.onNodeWithText("Each Drive copy matched", substring = true).assertExists()
             },
         ) { vm -> AppRoot(vm) }
