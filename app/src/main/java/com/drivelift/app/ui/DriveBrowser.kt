@@ -71,6 +71,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.saveable.listSaver
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -107,6 +108,36 @@ import kotlin.math.roundToInt
 
 private data class Crumb(val id: String, val name: String)
 
+/** Keeps the folder path across rotation and process recreation. */
+private val CrumbStackSaver = listSaver<List<Crumb>, String>(
+    save = { stack -> stack.flatMap { listOf(it.id, it.name) } },
+    restore = { flat -> flat.chunked(2).map { Crumb(it[0], it[1]) } },
+)
+
+/**
+ * Keeps the file open in the viewer across rotation, so a playing video or zoomed photo is not
+ * closed by turning the phone. The thumbnail link is left out; it is fetched again when needed.
+ */
+internal val OpenDriveFileSaver = listSaver<DriveFile?, Any?>(
+    save = { f ->
+        if (f == null) emptyList()
+        else listOf(f.id, f.name, f.mimeType, f.size, f.md5, f.trashed, f.durationMillis, f.modifiedTime)
+    },
+    restore = { v ->
+        if (v.isEmpty()) null
+        else DriveFile(
+            id = v[0] as String,
+            name = v[1] as String,
+            mimeType = v[2] as String,
+            size = v[3] as Long,
+            md5 = v[4] as String?,
+            trashed = v[5] as Boolean,
+            durationMillis = v[6] as Long,
+            modifiedTime = v[7] as String?,
+        )
+    },
+)
+
 private sealed interface ThumbState {
     data object Loading : ThumbState
     data class Ready(val bitmap: ImageBitmap) : ThumbState
@@ -140,14 +171,16 @@ fun DriveBrowser(
     val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
-    var stack by remember { mutableStateOf(listOf(Crumb(DriveClient.ROOT, "My Drive"))) }
+    var stack by rememberSaveable(stateSaver = CrumbStackSaver) {
+        mutableStateOf(listOf(Crumb(DriveClient.ROOT, "My Drive")))
+    }
     var entries by remember { mutableStateOf<List<DriveFile>?>(null) }
     var error by remember { mutableStateOf<String?>(null) }
     var reload by remember { mutableIntStateOf(0) }
     var showNewFolder by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf(false) }
     var gridView by rememberSaveable { mutableStateOf(true) }
-    var viewerFile by remember { mutableStateOf<DriveFile?>(null) }
+    var viewerFile by rememberSaveable(stateSaver = OpenDriveFileSaver) { mutableStateOf<DriveFile?>(null) }
     var thumbAuthExpired by remember { mutableStateOf(false) }
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
