@@ -232,6 +232,9 @@ private fun VideoPlayer(
     var scrubbing by remember(player) { mutableStateOf(false) }
     var textureView by remember(player) { mutableStateOf<TextureView?>(null) }
     var videoAspect by remember(player) { mutableFloatStateOf(DEFAULT_ASPECT) }
+    // False until the player reports the real picture size; until then the default shape is only
+    // a placeholder and must not be used to limit a restored zoom position.
+    var aspectKnown by remember(player) { mutableStateOf(false) }
     var viewport by remember(player) { mutableStateOf(IntSize.Zero) }
     // Zoom stays exactly where the user leaves it (through hiding controls, seeking, pausing and
     // rotation) until they pinch again or tap Fit.
@@ -273,6 +276,7 @@ private fun VideoPlayer(
                 quality = qualityLabel(videoSize.width, videoSize.height, player.videoFormat?.frameRate ?: -1f)
                 if (videoSize.width > 0 && videoSize.height > 0) {
                     videoAspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
+                    aspectKnown = true
                 }
             }
         }
@@ -300,8 +304,8 @@ private fun VideoPlayer(
     }
     // A rotation or resize changes the fitted picture and the screen, so a restored pan offset is
     // limited again at once; the zoom level itself is kept.
-    LaunchedEffect(viewport, videoAspect) {
-        if (viewport.width > 0 && viewport.height > 0) {
+    LaunchedEffect(viewport, videoAspect, aspectKnown) {
+        if (aspectKnown && viewport.width > 0 && viewport.height > 0) {
             zoom.applyVideoGesture(Offset.Zero, 1f, fittedVideoSize(viewport, videoAspect), viewport)
             rememberZoom()
         }
