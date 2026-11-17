@@ -71,6 +71,7 @@ import com.drivelift.app.drive.DriveAbout
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DriveFolders
+import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.LiveProgress
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -575,6 +576,28 @@ class ScreenshotTest {
             assertEquals("Move here did not queue restored selection after recreation", 2, queued)
         }
         currentActivity = null
+    }
+
+    @Test
+    fun startTransferWaitsForInFlightMediaScan() {
+        grantMedia()
+        val gate = CountDownLatch(1)
+        FakeMediaStore.gate = gate
+        val vm = AppViewModel(app)
+        pump(12)
+        // Media scan is still blocked on the gate, so mediaLoaded is false and media is empty.
+        assertTrue(vm.media.value.isEmpty())
+        vm.setSelected(listOf(1L, 3L), true)
+        vm.startTransfer(Destination.Auto)
+        pump(6)
+
+        // Release the media scan gate and verify the deferred transfer enqueues both files.
+        gate.countDown()
+        settle {
+            runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) } == 2
+        }
+        val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
+        assertEquals(2, queued)
     }
 
     // ------------------------------------------------------------------ steps

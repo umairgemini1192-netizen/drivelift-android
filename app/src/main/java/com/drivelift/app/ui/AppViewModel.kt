@@ -8,6 +8,7 @@ import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.drivelift.app.Graph
+import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaFolder
 import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.StatusCount
@@ -29,6 +30,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
@@ -214,10 +216,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Transfers
     fun startTransfer(dest: Destination) {
         val ids = selection.value
-        val items = media.value.filter { it.id in ids }
-        if (items.isEmpty()) return
+        if (ids.isEmpty()) return
         selection.value = emptySet()
         viewModelScope.launch {
+            if (!mediaLoaded.value && MediaAccess.hasPermission(getApplication())) {
+                mediaLoaded.first { it }
+            }
+            val items = media.value.filter { it.id in ids }
+            if (items.isEmpty()) return@launch
             val added = graph.transfers.enqueue(items, dest)
             val skipped = items.size - added
             messages.emit(
