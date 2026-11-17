@@ -204,7 +204,15 @@ private fun VideoPlayer(stream: DriveVideoStream, onProblem: (VideoProblem) -> U
                 useController = true
                 setShowNextButton(false)
                 setShowPreviousButton(false)
-                keepScreenOn = true
+                // The screen stays on only while the video is actually playing; paused, ended or
+                // failed playback lets the phone time out as usual.
+                keepScreenOn = player.isPlaying
+                val view = this
+                player.addListener(object : Player.Listener {
+                    override fun onIsPlayingChanged(isPlaying: Boolean) {
+                        view.keepScreenOn = isPlaying
+                    }
+                })
             }
         },
         modifier = Modifier
