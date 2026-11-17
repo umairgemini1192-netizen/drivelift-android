@@ -89,7 +89,8 @@ class VideoControlsTest {
             compose.onNodeWithText("Original  ·  3840x2160  ·  60 fps").assertExists()
             compose.onNodeWithText("0:30").assertExists()
             compose.onNodeWithText("-1:30").assertExists()
-            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo")) {
+            // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
+            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Playback speed 1x")) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)

@@ -4,6 +4,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
@@ -159,12 +160,12 @@ internal fun VideoControls(
                 if (state.zoomed) {
                     TextButton(
                         onClick = onFit,
-                        modifier = Modifier.semantics { contentDescription = "Fit the whole picture" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Fit the whole picture" },
                     ) { Text("Fit") }
                 }
                 TextButton(
                     onClick = onSpeed,
-                    modifier = Modifier.semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
                 ) { Text(speedLabel(state.speed)) }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -224,14 +225,14 @@ internal fun VideoControls(
                 ) {
                     TextButton(
                         onClick = { onStepFrame(false) },
-                        modifier = Modifier.semantics { contentDescription = "Previous frame" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Previous frame" },
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
                         Text("Frame")
                     }
                     TextButton(
                         onClick = { onStepFrame(true) },
-                        modifier = Modifier.semantics { contentDescription = "Next frame" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Next frame" },
                     ) {
                         Text("Frame")
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
