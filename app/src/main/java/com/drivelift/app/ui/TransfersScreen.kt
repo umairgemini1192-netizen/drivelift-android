@@ -7,6 +7,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -132,7 +133,7 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
 
     if (tracked + failed + count(TransferStatus.CANCELLED) == 0) {
         Column(Modifier.fillMaxSize()) {
-        SettingsAction(onOpenSettings)
+        SettingsAction(onOpenSettings, Modifier.align(Alignment.End))
         Column(
             Modifier.fillMaxSize().padding(horizontal = Tokens.Section),
             verticalArrangement = Arrangement.Center,
@@ -166,9 +167,11 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
     }
 
     LazyColumn(Modifier.fillMaxSize()) {
-        item(key = "settings") { SettingsAction(onOpenSettings) }
         item(key = "lead") {
-            Column(Modifier.padding(horizontal = Tokens.Edge)) {
+            // The gear sits in the empty top corner beside the gauge, so moving the preferences
+            // out adds no height and the rest of Transfers keeps its place.
+            Box(Modifier.fillMaxWidth()) {
+            Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header)) {
                 DotArcGauge(
                     fraction = fraction,
                     label = "${(fraction * 100).toInt()}%",
@@ -208,6 +211,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
                     if (failed > 0) Stat("Failed", failed)
                 }
                 }
+            }
+            SettingsAction(onOpenSettings, Modifier.align(Alignment.TopEnd))
             }
         }
 
@@ -282,11 +287,12 @@ private fun Stat(label: String, value: Int) {
 
 /** The labelled gear that opens Settings, at the top end of the Transfers content. */
 @Composable
-private fun SettingsAction(onOpenSettings: () -> Unit) {
-    Row(Modifier.fillMaxWidth().padding(horizontal = Tokens.Tiny), horizontalArrangement = Arrangement.End) {
-        IconButton(onClick = onOpenSettings, modifier = Modifier.size(Tokens.TouchTarget)) {
-            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
-        }
+private fun SettingsAction(onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(
+        onClick = onOpenSettings,
+        modifier = modifier.padding(horizontal = Tokens.Tiny).size(Tokens.TouchTarget),
+    ) {
+        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
     }
 }
 
