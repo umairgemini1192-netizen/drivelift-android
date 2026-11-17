@@ -114,6 +114,7 @@ fun AppRoot(vm: AppViewModel) {
     var pickingDestination by rememberSaveable { mutableStateOf(false) }
     var savedSelectionIds by rememberSaveable { mutableStateOf(LongArray(0)) }
     var selectionSynced by remember { mutableStateOf(false) }
+    var viewingDriveFile by remember { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
 
     LaunchedEffect(selection) {
@@ -145,7 +146,7 @@ fun AppRoot(vm: AppViewModel) {
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!inFolder && !pickingDestination) {
+            if (!inFolder && !pickingDestination && !viewingDriveFile) {
                 NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                     NavigationBarItem(
                         selected = tab == AppViewModel.TAB_PHONE,
@@ -217,7 +218,11 @@ fun AppRoot(vm: AppViewModel) {
                         },
                     )
                 }
-                tab == AppViewModel.TAB_DRIVE -> DriveBrowser(vm = vm, pickMode = false)
+                tab == AppViewModel.TAB_DRIVE -> DriveBrowser(
+                    vm = vm,
+                    pickMode = false,
+                    onViewingFileChange = { viewingDriveFile = it },
+                )
                 else -> TransfersScreen(vm)
             }
         }

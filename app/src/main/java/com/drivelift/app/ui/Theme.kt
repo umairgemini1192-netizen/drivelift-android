@@ -88,6 +88,9 @@ object GlassPalette {
 
     /** Placeholder behind a thumbnail that has not loaded. */
     val Thumb = Color(0x1AFFFFFF)
+
+    /** Bottom gradient scrim over media tiles so white captions remain legible. */
+    val ThumbScrim = Color(0xCC070A1E)
 }
 
 private val AppTypography = Typography().let { base ->
@@ -141,7 +144,7 @@ fun appVersionLabel(context: Context): String {
             context.packageManager.getPackageInfo(context.packageName, 0)
         }
     }.getOrNull()
-    val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.3"
-    val code = info?.longVersionCode ?: 2L
+    val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.4"
+    val code = info?.longVersionCode ?: 3L
     return "DriveLift $name (build $code)"
 }

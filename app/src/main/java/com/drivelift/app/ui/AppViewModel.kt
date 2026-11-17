@@ -124,7 +124,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         pin = prefs,
         identify = { token -> drive.about(token) },
         openTransfers = { dao.count(ACCOUNT_BOUND_STATUSES) },
-        forgetDestinations = { graph.db.presets().clear() },
+        forgetDestinations = {
+            graph.db.presets().clear()
+            drive.clearPreviewCache()
+        },
     )
 
     fun connectDrive(interactive: Boolean) {

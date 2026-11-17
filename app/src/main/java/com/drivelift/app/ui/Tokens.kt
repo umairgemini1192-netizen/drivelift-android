@@ -37,7 +37,12 @@ object Tokens {
     val BadgePadding = 3.dp
     val FolderThumb = 60.dp
     val GridCell = 104.dp
+    val DriveGridCell = 132.dp
     val GridGap = 2.dp
+    val DriveGridGap = 8.dp
+    val ViewerControl = 48.dp
+    val ViewerProgressWidth = 220.dp
+    val ViewerTopClearance = 92.dp
     val ReadableWidth = 480.dp
     val GaugeWidth = 320.dp
     val GaugeHeight = 172.dp
