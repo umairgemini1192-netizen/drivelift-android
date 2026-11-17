@@ -573,7 +573,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleOnTransfers() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.4 (build 3)",
+            "build-id", expect = "DriveLift 1.0.0-preview.5 (build 4)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
         ) { vm -> AppRoot(vm) }
     }
