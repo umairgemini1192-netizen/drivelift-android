@@ -2,38 +2,69 @@ package com.drivelift.app.ui
 
 import android.Manifest
 import android.content.ContentProvider
+import android.content.ContentUris
 import android.content.ContentValues
 import android.database.Cursor
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Looper
+import android.os.SystemClock
+import android.provider.MediaStore
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import android.provider.MediaStore.Files.FileColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onFirst
+import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.unit.Density
+import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
+import coil.Coil
+import coil.EventListener
+import coil.ImageLoader
+import coil.request.ErrorResult
+import coil.request.ImageRequest
+import coil.request.SuccessResult
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
+import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
 import com.drivelift.app.drive.DriveAbout
+import com.drivelift.app.drive.DriveClient
+import com.drivelift.app.drive.DriveFile
+import com.drivelift.app.drive.DriveFolders
 import com.drivelift.app.transfer.LiveProgress
+import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
+import com.github.takahirom.roborazzi.captureScreenRoboImage
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -44,15 +75,25 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowDialog
+import java.io.ByteArrayInputStream
+import java.io.ByteArrayOutputStream
+import java.io.IOException
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Renders the real screens, with the real view model, database and theme, on the JVM. No phone
  * or emulator is involved. Every name, size and account below is made up.
  *
- * What these images do not show: thumbnails (the fake media store has no picture data, so cells
- * are placeholders), the Drive folder listing (it needs the network), animation, and system
- * dialogs. Each scenario is captured at a standard phone size, at font scale 1.5, and on a
- * compact 320 dp wide phone.
+ * Thumbnails are small generated pictures (gradients, no photographs), so the selection frame
+ * is seen over picture data, including a coral one and a near-white one. The Drive browser, the
+ * folder picker and the new-folder dialog are fed by a fake [DriveFolders] with made-up entries.
+ *
+ * What these images do not show: real photographs, video frames, the real Drive service,
+ * animation, scrolling, and Android's own dialogs (permission, Google consent, removal). Each
+ * scenario is captured at a standard phone size, at font scale 1.5, and on a compact 320 dp
+ * wide phone.
  *
  * Images are written only with -PrecordScreenshots. Without it the tests still run the screens
  * and their assertions.
@@ -74,6 +115,10 @@ class ScreenshotTest {
         COMPACT("w320dp-h640dp-xhdpi", 1f),
     }
 
+    private val imagesStarted = AtomicInteger()
+    private val imagesFinished = AtomicInteger()
+    private val createCalls = AtomicInteger()
+
     @Before
     fun fakeWorkManager() {
         // The app restarts unfinished transfers on launch. Here that must only queue a job in a
@@ -81,9 +126,29 @@ class ScreenshotTest {
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
     }
 
+    @Before
+    fun countingImageLoader() {
+        // Same loader as the app, minus the crossfade (the clock is frozen, so a fade would never
+        // finish) and hardware bitmaps (they cannot be drawn into a screenshot). The listener
+        // lets a capture wait until every thumbnail has loaded or failed.
+        Coil.setImageLoader(
+            ImageLoader.Builder(app).crossfade(false).allowHardware(false)
+                .eventListener(object : EventListener {
+                    override fun onStart(request: ImageRequest) { imagesStarted.incrementAndGet() }
+                    override fun onSuccess(request: ImageRequest, result: SuccessResult) { imagesFinished.incrementAndGet() }
+                    override fun onError(request: ImageRequest, result: ErrorResult) { imagesFinished.incrementAndGet() }
+                    override fun onCancel(request: ImageRequest) { imagesFinished.incrementAndGet() }
+                })
+                .build()
+        )
+    }
+
     @After
     fun reset() {
         LiveProgress.state.value = LiveProgress.State()
+        FakeMediaStore.empty = false
+        FakeMediaStore.gate?.countDown()
+        FakeMediaStore.gate = null
     }
 
     // ------------------------------------------------------------------ scenarios
@@ -188,18 +253,226 @@ class ScreenshotTest {
         eachVariant("drive-not-connected", expect = "My Drive", tab = AppViewModel.TAB_DRIVE) { vm -> AppRoot(vm) }
     }
 
+    @Test
+    fun phoneFoldersLoading() {
+        // The media query is held open, so the folder list stays in its loading state.
+        FakeMediaStore.gate = CountDownLatch(1)
+        grantMedia()
+        eachVariant("phone-loading", expect = "Folders", connected = true) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun phoneFoldersEmpty() {
+        FakeMediaStore.empty = true
+        grantMedia()
+        eachVariant("phone-empty", expect = "No photos or videos found on this phone.", connected = true) { vm ->
+            AppRoot(vm)
+        }
+    }
+
+    @Test
+    fun phoneFoldersDriveConnecting() {
+        grantMedia()
+        eachVariant("phone-connecting", expect = "Screenshots", connecting = true) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveListing() {
+        grantMedia()
+        eachVariant("drive-listing", expect = "DriveLift Backup", connected = true, tab = AppViewModel.TAB_DRIVE) { vm ->
+            AppRoot(vm)
+        }
+    }
+
+    @Test
+    fun driveLoading() {
+        grantMedia()
+        eachVariant(
+            "drive-loading", expect = "My Drive", connected = true, tab = AppViewModel.TAB_DRIVE,
+            drive = FakeDrive(list = { _, _ -> awaitCancellation() }),
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveEmpty() {
+        grantMedia()
+        eachVariant(
+            "drive-empty", expect = "This folder is empty.", connected = true, tab = AppViewModel.TAB_DRIVE,
+            drive = FakeDrive(list = { _, _ -> emptyList() }),
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveError() {
+        grantMedia()
+        eachVariant(
+            "drive-error", expect = "Could not load this folder", connected = true, tab = AppViewModel.TAB_DRIVE,
+            drive = FakeDrive(list = { _, _ -> throw IOException("network unavailable") }),
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun destinationSheet() {
+        grantMedia()
+        seedPresets()
+        eachVariant(
+            "destination-sheet", expect = "Auto-organize by phone folder", connected = true, overlay = true,
+            act = { openDestinationSheet() },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun destinationSheetDriveNotConnected() {
+        grantMedia()
+        eachVariant(
+            "destination-sheet-not-connected", expect = "Move 2 items to Drive", overlay = true,
+            act = { openDestinationSheet() },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun folderPicker() {
+        grantMedia()
+        eachVariant(
+            "folder-picker", expect = "Move here: My Drive", connected = true, overlay = true, ownWindow = true,
+            act = {
+                openDestinationSheet()
+                tap("Choose a Drive folder")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun folderPickerEmptyFolder() {
+        grantMedia()
+        eachVariant(
+            "folder-picker-empty", expect = "Move here: Archive 2024", connected = true, overlay = true, ownWindow = true,
+            act = {
+                openDestinationSheet()
+                tap("Choose a Drive folder")
+                tap("Archive 2024")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun newFolderDialog() {
+        grantMedia()
+        eachVariant(
+            "new-folder", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
+            act = { openNewFolderDialog() },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun newFolderDialogError() {
+        grantMedia()
+        eachVariant(
+            "new-folder-error", expect = null, connected = true,
+            tab = AppViewModel.TAB_DRIVE, overlay = true,
+            drive = FakeDrive(create = {
+                createCalls.incrementAndGet()
+                throw IOException("network unavailable")
+            }),
+            act = {
+                val create = openNewFolderDialog()
+                val before = createCalls.get()
+                touchLatestDialog(create)
+                pump(DIALOG_FRAMES)
+                assertEquals("Create was not pressed", before + 1, createCalls.get())
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    // ------------------------------------------------------------------ steps
+
+    private fun waitFor(text: String) =
+        settle { compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty() }
+
+    /**
+     * Invokes the click action of a node. Used for nodes inside a sheet or dialog, where a
+     * pointer click can miss a control that sits below the fold of a half-open sheet.
+     */
+    private fun SemanticsNodeInteraction.press() = performSemanticsAction(SemanticsActions.OnClick)
+
+    private fun tap(text: String) {
+        waitFor(text)
+        compose.onNodeWithText(text).press()
+    }
+
+    /** Opens the Camera folder, selects a photo and a video, and asks to move them. */
+    private fun openDestinationSheet() {
+        waitFor("Camera")
+        compose.onNodeWithText("Camera").performClick()
+        waitFor("Select all")
+        compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+        compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+        tap("Move to Drive")
+        waitFor("Move 2 items to Drive")
+    }
+
+    /**
+     * Opens the new-folder dialog and fills in a name. Returns where the Create button is.
+     *
+     * Once the text of a field inside a dialog window has changed, the Compose test framework
+     * never reports idle again under Robolectric, so every query or action that waits for idle
+     * times out. The dialog itself keeps working. So from that point the test uses no Compose
+     * test call: it runs frames, touches the window directly, and captures the screen.
+     */
+    private fun openNewFolderDialog(): Offset {
+        waitFor("DriveLift Backup")
+        compose.onNodeWithContentDescription("New folder here").press()
+        pump(DIALOG_FRAMES)
+        waitFor("New folder in My Drive")
+        val create = compose.onNodeWithText("Create").fetchSemanticsNode().boundsInRoot.center
+        compose.onNodeWithText("Folder name")
+            .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("Holiday 2026")) }
+        pump(DIALOG_FRAMES)
+        return create
+    }
+
+    /** A tap at [at] inside the dialog opened last, sent to its view without the test framework. */
+    private fun touchLatestDialog(at: Offset) {
+        fun composeView(view: View): View? = when {
+            view.javaClass.name.endsWith("AndroidComposeView") -> view
+            view is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { composeView(view.getChildAt(it)) }
+            else -> null
+        }
+        val target = checkNotNull(composeView(ShadowDialog.getLatestDialog().window!!.decorView)) { "No dialog is open" }
+        val now = SystemClock.uptimeMillis()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+            val event = MotionEvent.obtain(now, now, action, at.x, at.y, 0)
+            target.dispatchTouchEvent(event)
+            event.recycle()
+            pump(2)
+        }
+    }
+
     // ------------------------------------------------------------------ harness
 
     private fun eachVariant(
         name: String,
-        expect: String,
+        /** Text that must be on screen before the capture. Null when [act] has checked the state itself. */
+        expect: String?,
         connected: Boolean = false,
+        connecting: Boolean = false,
         tab: Int = AppViewModel.TAB_PHONE,
+        /** True when a sheet or dialog is open: those are separate windows, so the whole screen is captured. */
+        overlay: Boolean = false,
+        /**
+         * True for the full-screen folder picker: only the window that shows [expect] is
+         * captured. A whole-screen capture draws the sheet under it on top of it.
+         */
+        ownWindow: Boolean = false,
+        drive: DriveFolders = FakeDrive(),
         act: (() -> Unit)? = null,
         content: @Composable (AppViewModel) -> Unit,
     ) {
         for (variant in Variant.entries) {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
+            // Set on the device, not on one composition: a sheet or dialog is its own window and
+            // takes its text size from the system, as it does on a phone.
+            RuntimeEnvironment.setFontScale(variant.fontScale)
             // Frozen clock: an indeterminate spinner or a ticking countdown never blocks a capture.
             compose.mainClock.autoAdvance = false
             val vm = AppViewModel(app)
@@ -208,7 +481,13 @@ class ScreenshotTest {
             pump(12)
             vm.tab.value = tab
             vm.clearSelection()
-            vm.driveConn.value = if (connected) DriveConn.CONNECTED else DriveConn.DISCONNECTED
+            // No scenario may reach the real Drive service.
+            vm.driveFolders = drive
+            vm.driveConn.value = when {
+                connected -> DriveConn.CONNECTED
+                connecting -> DriveConn.CONNECTING
+                else -> DriveConn.DISCONNECTED
+            }
             vm.account.value = if (connected) {
                 DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
             } else null
@@ -216,22 +495,37 @@ class ScreenshotTest {
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     activity.setContent {
-                        val density = LocalDensity.current
-                        CompositionLocalProvider(
-                            LocalDensity provides Density(density.density, variant.fontScale),
-                        ) {
-                            DriveLiftTheme { GlassBackdrop { content(vm) } }
-                        }
+                        DriveLiftTheme { GlassBackdrop { content(vm) } }
                     }
                 }
                 act?.invoke()
-                settle { compose.onAllNodesWithText(expect).fetchSemanticsNodes().isNotEmpty() }
+                if (expect != null) waitFor(expect) else pump(DIALOG_FRAMES)
+                settleImages()
+                // Lets a sheet finish sliding in before it is captured.
+                if (overlay) pump(40)
                 if (record) {
-                    compose.onRoot().captureRoboImage(
-                        "build/outputs/screenshots/$name-${variant.name.lowercase()}.png"
-                    )
+                    val path = "build/outputs/screenshots/$name-${variant.name.lowercase()}.png"
+                    when {
+                        ownWindow -> compose.onNode(isRoot() and hasAnyDescendant(hasText(expect!!))).captureRoboImage(path)
+                        overlay -> captureScreen(path)
+                        else -> compose.onRoot().captureRoboImage(path)
+                    }
                 }
             }
+        }
+    }
+
+    @OptIn(ExperimentalRoborazziApi::class)
+    private fun captureScreen(path: String) = captureScreenRoboImage(path)
+
+    /** Runs the UI until every thumbnail request that started has loaded or failed. */
+    private fun settleImages() {
+        val deadline = System.currentTimeMillis() + 15_000
+        var quiet = 0
+        while (quiet < 6) {
+            pump(1)
+            quiet = if (imagesStarted.get() == imagesFinished.get()) quiet + 1 else 0
+            assertTrue("Thumbnails never finished loading", System.currentTimeMillis() < deadline)
         }
     }
 
@@ -261,6 +555,74 @@ class ScreenshotTest {
             Manifest.permission.ACCESS_MEDIA_LOCATION,
         )
         Robolectric.setupContentProvider(FakeMediaStore::class.java, "media")
+        // Picture data for each file, so thumbnails are drawn instead of placeholders.
+        val resolver = shadowOf(app.contentResolver)
+        for (file in FakeMediaStore.files) {
+            val bytes = picture(file.id)
+            resolver.registerInputStreamSupplier(file.uri) { ByteArrayInputStream(bytes) }
+        }
+    }
+
+    /**
+     * A small generated picture: a two-colour gradient with a disc. No photograph is involved.
+     * File 1 is coral and file 3 is near white, the two hardest cases for a coral selection frame;
+     * the test selects exactly those two.
+     */
+    private fun picture(id: Long): ByteArray {
+        val (top, bottom, disc) = PICTURES[(id - 1).toInt() % PICTURES.size]
+        val size = PICTURE_SIZE.toFloat()
+        val bitmap = Bitmap.createBitmap(PICTURE_SIZE, PICTURE_SIZE, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint(Paint.ANTI_ALIAS_FLAG)
+        paint.shader = LinearGradient(0f, 0f, 0f, size, opaque(top), opaque(bottom), Shader.TileMode.CLAMP)
+        canvas.drawRect(0f, 0f, size, size, paint)
+        paint.shader = null
+        paint.color = opaque(disc)
+        canvas.drawCircle(size * 0.66f, size * 0.36f, size / 6, paint)
+        return ByteArrayOutputStream().also { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
+    }
+
+    private fun opaque(rgb: Int) = rgb or 0xFF000000.toInt()
+
+    private fun seedPresets() = runBlocking {
+        val presets = Graph.get(app).db.presets()
+        presets.upsert(PresetEntity("folder-holiday", "Holiday 2025", "My Drive / Photos / Holiday 2025", createdAt = 1))
+        presets.upsert(
+            PresetEntity(
+                "folder-family", "Family photos shared with everyone",
+                "My Drive / Photos / Family photos shared with everyone", createdAt = 2,
+            )
+        )
+    }
+
+    /** Stands in for Google Drive: made-up folders and files, no network. */
+    private class FakeDrive(
+        private val list: suspend (folderId: String, foldersOnly: Boolean) -> List<DriveFile> = { id, foldersOnly ->
+            when {
+                id != DriveClient.ROOT -> emptyList()
+                foldersOnly -> FOLDERS
+                else -> FOLDERS + FILES
+            }
+        },
+        private val create: suspend (name: String) -> DriveFile = { name -> folder("new-folder", name) },
+    ) : DriveFolders {
+        override suspend fun listChildren(folderId: String, foldersOnly: Boolean) = list(folderId, foldersOnly)
+        override suspend fun createFolder(name: String, parentId: String) = create(name)
+
+        private companion object {
+            fun folder(id: String, name: String) = DriveFile(id, name, DriveClient.FOLDER_MIME, 0, null, false)
+            val FOLDERS = listOf(
+                folder("f1", "Archive 2024"),
+                folder("f2", "Documents"),
+                folder("f3", "DriveLift Backup"),
+                folder("f4", "Family photos shared with everyone since 2019"),
+            )
+            val FILES = listOf(
+                DriveFile("d1", "Packing list.pdf", "application/pdf", 84_000, "00", false),
+                DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false),
+                DriveFile("d3", "Trip to the coast.mp4", "video/mp4", 182_000_000, "00", false),
+            )
+        }
     }
 
     private fun seedTransfers(vararg rows: TransferEntity) = runBlocking {
@@ -279,23 +641,38 @@ class ScreenshotTest {
         attempts = attempts, lastError = error,
     )
 
+    data class Fake(
+        val id: Long, val name: String, val size: Long, val takenMs: Long,
+        val bucketId: Long, val bucket: String, val video: Boolean,
+    ) {
+        /** The address the app builds for this file, which is where its picture is served. */
+        val uri: Uri
+            get() = ContentUris.withAppendedId(
+                if (video) MediaStore.Video.Media.EXTERNAL_CONTENT_URI else MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
+                id,
+            )
+    }
+
     /** Answers the app's media query with thirteen made-up files in three folders. */
     class FakeMediaStore : ContentProvider() {
-        private data class Fake(
-            val id: Long, val name: String, val size: Long, val takenMs: Long,
-            val bucketId: Long, val bucket: String, val video: Boolean,
-        )
-
-        private val files = buildList {
-            for (i in 1..8) add(
-                Fake(
-                    i.toLong(), if (i == 3) "VID_0003.mp4" else "IMG_%04d.jpg".format(i),
-                    if (i == 3) 48_000_000 else 3_400_000 + i * 10_000L,
-                    if (i <= 5) DAY_TWO else DAY_ONE, 100, "Camera", video = i == 3,
+        companion object {
+            val files = buildList {
+                for (i in 1..8) add(
+                    Fake(
+                        i.toLong(), if (i == 3) "VID_0003.mp4" else "IMG_%04d.jpg".format(i),
+                        if (i == 3) 48_000_000 else 3_400_000 + i * 10_000L,
+                        if (i <= 5) DAY_TWO else DAY_ONE, 100, "Camera", video = i == 3,
+                    )
                 )
-            )
-            for (i in 9..11) add(Fake(i.toLong(), "Screenshot_$i.png", 900_000, DAY_ONE, 200, "Screenshots", false))
-            for (i in 12..13) add(Fake(i.toLong(), "IMG-WA$i.jpg", 240_000, DAY_ONE, 300, "WhatsApp Images", false))
+                for (i in 9..11) add(Fake(i.toLong(), "Screenshot_$i.png", 900_000, DAY_ONE, 200, "Screenshots", false))
+                for (i in 12..13) add(Fake(i.toLong(), "IMG-WA$i.jpg", 240_000, DAY_ONE, 300, "WhatsApp Images", false))
+            }
+
+            /** True makes the phone look as if it holds no photos or videos. */
+            @Volatile var empty = false
+
+            /** While set and not released, the media query does not return: the loading state. */
+            @Volatile var gate: CountDownLatch? = null
         }
 
         override fun onCreate() = true
@@ -306,7 +683,8 @@ class ScreenshotTest {
         ): Cursor {
             val columns = projection ?: emptyArray()
             val cursor = MatrixCursor(columns)
-            for (f in files) {
+            gate?.await()
+            for (f in if (empty) emptyList() else files) {
                 cursor.addRow(columns.map { column ->
                     when (column) {
                         FileColumns._ID -> f.id
@@ -339,5 +717,22 @@ class ScreenshotTest {
         // Fixed dates, so day headers are the same on every run: 14 and 15 March 2026, noon UTC.
         const val DAY_ONE = 1_773_489_600_000L
         const val DAY_TWO = 1_773_576_000_000L
+
+        const val PICTURE_SIZE = 256
+
+        /** Frames run after a change in the new-folder dialog, enough for it to settle. */
+        const val DIALOG_FRAMES = 20
+
+        /** Top colour, bottom colour and disc colour of each generated picture, as 0xRRGGBB. */
+        val PICTURES = listOf(
+            Triple(0xFF7A59, 0xFFC48A, 0xFFE9C9), // coral sunset
+            Triple(0x4A90D9, 0xBFE0FF, 0xFFFFFF), // blue sky
+            Triple(0xFFFFFF, 0xECEFF4, 0xDDE3EC), // snow, near white
+            Triple(0x1F7A4D, 0x9BD6A3, 0xF4E285), // meadow
+            Triple(0x0E1220, 0x2B2145, 0xE6E6F0), // night
+            Triple(0x7A4A2B, 0xD9B38C, 0xF2E3CF), // sand
+            Triple(0x5B3FA6, 0xC7A6F0, 0xFFD6E8), // dusk
+            Triple(0x2E8C99, 0xA8E3E0, 0xFFFFFF), // sea
+        )
     }
 }

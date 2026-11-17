@@ -125,7 +125,7 @@ class TransferRepository(
     /**
      * Verified files that are still on the phone, ready for the system delete
      * prompt. Rows whose file is already gone are closed out as removed, but only
-     * while the app can see every photo: otherwise "not visible" is not "gone".
+     * while the app can see every photo and video: otherwise "not visible" is not "gone".
      */
     suspend fun verifiedForRemoval(limit: Int): List<String> {
         media.refresh()
@@ -134,7 +134,7 @@ class TransferRepository(
         val (onPhone, gone) = splitForRemoval(
             verified = rows.map { it.mediaUri },
             present = present,
-            fullAccess = MediaAccess.hasFullAccess(context),
+            visibility = MediaAccess.visibility(context),
         )
         markRemoved(gone)
         return onPhone

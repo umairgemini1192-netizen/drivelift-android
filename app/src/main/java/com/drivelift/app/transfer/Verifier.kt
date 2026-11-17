@@ -1,5 +1,6 @@
 package com.drivelift.app.transfer
 
+import com.drivelift.app.data.MediaVisibility
 import com.drivelift.app.data.SourceMissingException
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
@@ -86,13 +87,14 @@ class Verifier(
  * Splits verified files into those to put in Android's removal prompt and those that can be
  * closed out because they are already gone from the phone.
  *
- * A file missing from [present] only proves absence when the app can see every photo. With
- * access revoked or limited to selected photos, an unseen file may still exist, so nothing is
- * closed out and every file goes to the prompt, where Android itself decides.
+ * A file missing from [present] only proves absence when the app can see every photo and every
+ * video. With access revoked, limited to photos only, videos only or selected items, an unseen
+ * file may still exist, so nothing is closed out and every file goes to the prompt, where
+ * Android itself decides.
  */
 fun splitForRemoval(
     verified: List<String>,
     present: Set<String>,
-    fullAccess: Boolean,
+    visibility: MediaVisibility,
 ): Pair<List<String>, List<String>> =
-    if (fullAccess) verified.partition { it in present } else verified to emptyList()
+    if (visibility == MediaVisibility.FULL) verified.partition { it in present } else verified to emptyList()

@@ -13,8 +13,13 @@ import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.StatusCount
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.groupFolders
+import com.drivelift.app.drive.ACCOUNT_BOUND_STATUSES
+import com.drivelift.app.drive.AccountConnector
+import com.drivelift.app.drive.ConnectOutcome
 import com.drivelift.app.drive.DriveAbout
 import com.drivelift.app.drive.DriveAuth
+import com.drivelift.app.drive.DriveFolders
+import com.drivelift.app.drive.stillConnected
 import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.LiveProgress
 import kotlinx.coroutines.Dispatchers
@@ -35,6 +40,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = Graph.get(app)
     private val dao = graph.db.transfers()
     val drive get() = graph.drive
+
+    /** What the Drive browser lists and creates folders through. Replaced only in screenshot tests. */
+    var driveFolders: DriveFolders = graph.drive
     val prefs get() = graph.prefs
 
     val tab = MutableStateFlow(0)
@@ -92,22 +100,41 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { graph.media.refresh() }
     }
 
+    /** Account this session has a working authorization for. Null until a connection succeeds. */
+    private var provenEmail: String? = null
+
+    private val connector = AccountConnector(
+        pin = prefs,
+        identify = { token -> drive.about(token) },
+        openTransfers = { dao.count(ACCOUNT_BOUND_STATUSES) },
+        forgetDestinations = { graph.db.presets().clear() },
+    )
+
     fun connectDrive(interactive: Boolean) {
         if (driveConn.value == DriveConn.CONNECTING) return
         driveConn.value = DriveConn.CONNECTING
         viewModelScope.launch {
             try {
-                // A tap on Connect may be a switch of account, so it must not be pinned to the old one.
-                if (interactive) prefs.accountEmail = null
-                val result = DriveAuth.authorize(getApplication(), prefs.accountEmail)
+                // A tap on Connect may be a switch of account, so that request is not pinned.
+                // The saved pin itself is left alone until another account has been proven.
+                val pinned = if (interactive) null else prefs.accountEmail?.takeIf { it.isNotBlank() }
+                val result = DriveAuth.authorize(getApplication(), pinned)
                 if (result.hasResolution()) {
-                    driveConn.value = DriveConn.DISCONNECTED
+                    settleUnchanged()
                     if (interactive) result.pendingIntent?.let { consentRequests.emit(it) }
+                } else if (pinned != null) {
+                    // Google answered for the saved account itself, so the pin already holds.
+                    // The profile is only for display and may be missing while offline.
+                    provenEmail = pinned
+                    driveConn.value = DriveConn.CONNECTED
+                    runCatching { drive.about() }
+                        .onSuccess { account.value = it }
+                        .onFailure { messages.emit("Connected, but Drive did not answer: ${it.message}") }
                 } else {
-                    loadAccount()
+                    finish(connector.establish(result.accessToken))
                 }
             } catch (e: Exception) {
-                driveConn.value = DriveConn.DISCONNECTED
+                settleUnchanged()
                 if (interactive) messages.emit(
                     "Could not reach Google sign-in (${e.message}). See docs/GOOGLE_SETUP.md."
                 )
@@ -118,29 +145,38 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun onConsentResult(data: Intent?) {
         viewModelScope.launch {
             try {
-                if (DriveAuth.tokenFromConsent(getApplication(), data) != null) {
-                    prefs.accountEmail = null
-                    loadAccount()
-                    graph.transfers.recover()
-                } else {
-                    driveConn.value = DriveConn.DISCONNECTED
-                }
+                finish(connector.establish(DriveAuth.tokenFromConsent(getApplication(), data)))
             } catch (e: Exception) {
-                driveConn.value = DriveConn.DISCONNECTED
+                settleUnchanged()
                 messages.emit("Google Drive was not connected (${e.message}). See docs/GOOGLE_SETUP.md.")
             }
         }
     }
 
-    private suspend fun loadAccount() {
-        // Having a token is what makes the connection usable; the profile is a nicety.
-        driveConn.value = DriveConn.CONNECTED
-        runCatching { drive.about() }
-            .onSuccess {
-                account.value = it
-                prefs.accountEmail = it.email
+    private suspend fun finish(outcome: ConnectOutcome) {
+        when (outcome) {
+            is ConnectOutcome.Connected -> {
+                // The pin is saved by now, so work started from here runs on the proven account.
+                account.value = outcome.about
+                provenEmail = outcome.about.email
+                driveConn.value = DriveConn.CONNECTED
+                graph.transfers.recover()
             }
-            .onFailure { messages.emit("Connected, but Drive did not answer: ${it.message}") }
+            ConnectOutcome.Cancelled -> settleUnchanged()
+            is ConnectOutcome.SwitchRefused -> {
+                settleUnchanged()
+                messages.emit(
+                    "Still using ${outcome.current}. Finish, cancel or clear its transfers " +
+                        "before switching to ${outcome.requested}."
+                )
+            }
+        }
+    }
+
+    /** Nothing new was proven: connected only if the account connected before is still the saved pin. */
+    private fun settleUnchanged() {
+        driveConn.value =
+            if (stillConnected(provenEmail, prefs.accountEmail)) DriveConn.CONNECTED else DriveConn.DISCONNECTED
     }
 
     // Selection

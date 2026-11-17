@@ -1,10 +1,12 @@
 package com.drivelift.app
 
+import com.drivelift.app.data.MediaVisibility
 import com.drivelift.app.data.SourceInaccessibleException
 import com.drivelift.app.data.SourceMissingException
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
 import com.drivelift.app.data.classifyOpenFailure
+import com.drivelift.app.data.mediaVisibility
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.collectAllPages
@@ -148,10 +150,12 @@ class TransferSafetyTest {
 
     @Test
     fun openFailuresAreClassifiedHonestly() {
-        assertTrue(classifyOpenFailure(FileNotFoundException(), fullAccess = true) is SourceMissingException)
-        assertTrue(classifyOpenFailure(FileNotFoundException(), fullAccess = false) is SourceInaccessibleException)
-        assertTrue(classifyOpenFailure(SecurityException(), fullAccess = true) is SourceInaccessibleException)
-        assertTrue(classifyOpenFailure(UnsupportedOperationException(), fullAccess = true) is SourceInaccessibleException)
+        val full = MediaVisibility.FULL
+        assertTrue(classifyOpenFailure(FileNotFoundException(), full) is SourceMissingException)
+        assertTrue(classifyOpenFailure(FileNotFoundException(), MediaVisibility.PARTIAL) is SourceInaccessibleException)
+        assertTrue(classifyOpenFailure(FileNotFoundException(), MediaVisibility.NONE) is SourceInaccessibleException)
+        assertTrue(classifyOpenFailure(SecurityException(), full) is SourceInaccessibleException)
+        assertTrue(classifyOpenFailure(UnsupportedOperationException(), full) is SourceInaccessibleException)
     }
 
     // --- Finding 2: a bad Drive copy is never orphaned -----------------------------------------
@@ -196,13 +200,81 @@ class TransferSafetyTest {
     @Test
     fun unseenFilesAreClosedOutOnlyWithFullAccess() {
         val verified = listOf("a", "b", "c")
-        val (onPhone, gone) = splitForRemoval(verified, present = setOf("a"), fullAccess = true)
+        val (onPhone, gone) = splitForRemoval(verified, present = setOf("a"), visibility = MediaVisibility.FULL)
         assertEquals(listOf("a"), onPhone)
         assertEquals(listOf("b", "c"), gone)
 
-        val (askAndroid, closed) = splitForRemoval(verified, present = emptySet(), fullAccess = false)
-        assertEquals(verified, askAndroid)
-        assertTrue(closed.isEmpty())
+        for (limited in listOf(MediaVisibility.PARTIAL, MediaVisibility.NONE)) {
+            val (askAndroid, closed) = splitForRemoval(verified, present = emptySet(), visibility = limited)
+            assertEquals(verified, askAndroid)
+            assertTrue(closed.isEmpty())
+        }
+    }
+
+    /** One row of the permission matrix: what Android granted, and what that lets the app see. */
+    private data class Grant(
+        val label: String,
+        val sdk: Int,
+        val images: Boolean = false,
+        val video: Boolean = false,
+        val selected: Boolean = false,
+        val legacy: Boolean = false,
+        val expected: MediaVisibility,
+    ) {
+        fun classify() = mediaVisibility(sdk, images, video, selected, legacy)
+    }
+
+    private val grants = listOf(
+        Grant("Android 12, storage granted", sdk = 32, legacy = true, expected = MediaVisibility.FULL),
+        Grant("Android 12, storage denied", sdk = 32, expected = MediaVisibility.NONE),
+        Grant("Android 12 ignores the newer grants", sdk = 32, images = true, video = true, expected = MediaVisibility.NONE),
+        Grant("Android 13, both", sdk = 33, images = true, video = true, expected = MediaVisibility.FULL),
+        Grant("Android 13, images only", sdk = 33, images = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 13, videos only", sdk = 33, video = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 13, neither", sdk = 33, expected = MediaVisibility.NONE),
+        Grant("Android 13 ignores old storage grant", sdk = 33, legacy = true, expected = MediaVisibility.NONE),
+        Grant("Android 13 has no selected-only grant", sdk = 33, selected = true, expected = MediaVisibility.NONE),
+        Grant("Android 14, both", sdk = 34, images = true, video = true, expected = MediaVisibility.FULL),
+        Grant("Android 14, both plus selected", sdk = 34, images = true, video = true, selected = true, expected = MediaVisibility.FULL),
+        Grant("Android 14, images only", sdk = 34, images = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 14, images plus selected", sdk = 34, images = true, selected = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 14, videos only", sdk = 34, video = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 14, videos plus selected", sdk = 34, video = true, selected = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 14, selected only", sdk = 34, selected = true, expected = MediaVisibility.PARTIAL),
+        Grant("Android 14, neither", sdk = 34, expected = MediaVisibility.NONE),
+    )
+
+    @Test
+    fun onlyBothWholeCategoriesCountAsSeeingEverything() {
+        for (grant in grants) assertEquals(grant.label, grant.expected, grant.classify())
+    }
+
+    @Test
+    fun verifiedVideoHiddenByAnImagesOnlyGrantIsNeverClosedOutAsRemoved() {
+        // The media list holds the photo but not the video: the video is on the phone, unseen.
+        val verified = listOf("content://media/images/1", "content://media/video/2")
+        val present = setOf("content://media/images/1")
+        for (grant in grants) {
+            val (toPrompt, closedOut) = splitForRemoval(verified, present, grant.classify())
+            if (grant.expected == MediaVisibility.FULL) {
+                assertEquals(grant.label, listOf("content://media/video/2"), closedOut)
+            } else {
+                assertTrue(grant.label, closedOut.isEmpty())
+                assertEquals(grant.label, verified, toPrompt)
+            }
+        }
+    }
+
+    @Test
+    fun fileNotFoundMeansGoneOnlyWhenEverythingIsVisible() {
+        for (grant in grants) {
+            val result = classifyOpenFailure(FileNotFoundException(), grant.classify())
+            if (grant.expected == MediaVisibility.FULL) {
+                assertTrue(grant.label, result is SourceMissingException)
+            } else {
+                assertTrue(grant.label, result is SourceInaccessibleException)
+            }
+        }
     }
 
     // --- Finding 4: listings are never cut short -----------------------------------------------
