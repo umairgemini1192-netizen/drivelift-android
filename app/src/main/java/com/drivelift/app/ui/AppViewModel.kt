@@ -284,6 +284,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun verifiedForRemoval(limit: Int): List<String> = graph.transfers.verifiedForRemoval(limit)
 
+    /** Name and size of each verified file in [uris], for the text-only removal confirmation. */
+    suspend fun describeForRemoval(uris: List<String>): List<RemovalItem> {
+        val wanted = uris.toHashSet()
+        return graph.db.transfers().byStatus(com.drivelift.app.data.TransferStatus.VERIFIED.name, uris.size.coerceAtLeast(1))
+            .filter { it.mediaUri in wanted }
+            .map { RemovalItem(it.name, it.size) }
+    }
+
+    /** Whether removal can use DriveLift's text-only confirmation instead of Android's preview. */
+    fun textOnlyRemoval(): Boolean = graph.canManageMedia(getApplication())
+
     fun confirmRemoved(uris: List<String>) {
         viewModelScope.launch {
             graph.transfers.markRemoved(uris)

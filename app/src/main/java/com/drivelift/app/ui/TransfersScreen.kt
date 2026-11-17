@@ -100,6 +100,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
 
     // Removal from the phone always goes through Android's own confirmation dialog.
     var awaitingConfirm by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Set while DriveLift's text-only confirmation is open (Media management granted).
+    var textOnlyBatch by remember { mutableStateOf<Pair<List<String>, List<RemovalItem>>?>(null) }
     var removeRequest by remember { mutableIntStateOf(0) }
     var lastAutoPrompt by rememberSaveable { mutableIntStateOf(-1) }
     val removeLauncher = rememberLauncherForActivityResult(
@@ -115,6 +117,11 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
         if (removeRequest == 0) return@LaunchedEffect
         val uris = vm.verifiedForRemoval(REMOVE_BATCH)
         if (uris.isEmpty()) return@LaunchedEffect
+        if (vm.textOnlyRemoval()) {
+            // DriveLift asks first, in text; Android then completes the request without a preview.
+            textOnlyBatch = uris to vm.describeForRemoval(uris)
+            return@LaunchedEffect
+        }
         awaitingConfirm = uris
         runCatching {
             val request = MediaStore.createDeleteRequest(context.contentResolver, uris.map(Uri::parse))
@@ -123,6 +130,23 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             awaitingConfirm = emptyList()
             vm.messages.tryEmit("Android could not open the removal prompt: ${it.message}")
         }
+    }
+    textOnlyBatch?.let { (uris, items) ->
+        TextOnlyRemovalDialog(
+            items = items,
+            onRemove = {
+                textOnlyBatch = null
+                awaitingConfirm = uris
+                runCatching {
+                    val request = MediaStore.createDeleteRequest(context.contentResolver, uris.map(Uri::parse))
+                    removeLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                }.onFailure {
+                    awaitingConfirm = emptyList()
+                    vm.messages.tryEmit("Android could not remove the files: ${it.message}")
+                }
+            },
+            onCancel = { textOnlyBatch = null },
+        )
     }
     LaunchedEffect(idle, verified, autoRemove) {
         if (autoRemove && idle && verified > 0 && verified != lastAutoPrompt) {
