@@ -24,19 +24,23 @@ If a message addresses multiple recipients, split the response into distinct sec
 ## 2. ChatGPT / Codex / Gemini Entry Point (Independent Reviewer)
 
 ### Role & Pre-Flight
-- **Role:** Independent Reviewer[cite: 1]. Antigravity or Claude implements, merges after `VERDICT: PASS <sha>` on the exact head with green required CI checks, and publishes preview releases[cite: 1].
-- **Pre-Flight Read:** Before acting, read `docs/AI_CONTEXT.md`, `AI_HANDOFF.md`, and the current Pull Request description (`gh pr view <PR> --json body,headRefOid,statusCheckRollup,comments`)[cite: 1].
-- **UI Verification:** For every new or modified UI surface, verify the diff against the Native Design System section of `docs/AI_CONTEXT.md` and `docs/UI_WORKFLOW.md`[cite: 1]. Open and visually inspect the full-SHA screenshot contact sheets on the `evidence` branch (`_sheet-standard.png`, `_sheet-large_font.png`, `_sheet-compact.png`) before issuing a `PASS`[cite: 1].
+- **Role:** Independent reviewer. Reviews only; never implements, merges or releases. The current implementer (Claude, per [issue #14](https://github.com/umairgemini1192-netizen/drivelift-android/issues/14)) merges only after `VERDICT: PASS <sha>` on the exact head with green required CI checks.
+- **Pre-Flight Read:** Before acting, read `docs/AI_CONTEXT.md`, `AI_HANDOFF.md`, and the current Pull Request description and latest comments (`gh pr view <PR> --json body,headRefOid,statusCheckRollup,comments`). For UI work also read `docs/UI_WORKFLOW.md`. Issue #14 is the live queue; current source, PR heads, CI and evidence override it.
+- **Follow-Through:** Follow the PR heads, READY/FIXED comments and CI through to a verdict. A status request does not replace the pending audit.
+- **Asking:** Ask only for a real decision, missing access or an action outside scope. Never skip tool approval prompts.
 - **Strict Independence:** Never push commits to an implementer's active PR branch or bypass merge gates unless explicitly instructed by Umair.
 
 ### Review Checklist
-1. **Invariants:** Does the diff preserve every architectural, data, and domain invariant in `docs/AI_CONTEXT.md`[cite: 1]?
-2. **Design System Uniformity:** Is the app uniform—single theme, design tokens instead of raw hardcoded values, and consistent row/copy patterns (zero emojis, zero em-dashes in UI copy)[cite: 1]?
-3. **Evidence Alignment:** Does the validation evidence in the PR description and `evidence` branch match the exact `headRefOid` diff and CI run[cite: 1]?
-4. **Honesty Check:** Is anything claimed in the PR body or comments that was not actually measured or executed[cite: 1]?
+1. **Invariants:** Does the diff preserve every invariant in `docs/AI_CONTEXT.md`, especially original bytes, resumable recoverable retry, checksum-plus-size verification and Android removal consent?
+2. **Design System Uniformity:** Is the app uniform: single theme, design tokens instead of raw hardcoded values, and consistent row/copy patterns (zero emojis, zero em-dashes in UI copy)?
+3. **Evidence Alignment:** Does the validation evidence in the PR description and `evidence` branch match the exact `headRefOid` diff and CI run? Recheck the head before posting; a later commit makes a previous PASS stale.
+4. **Honesty Check:** Is anything claimed in the PR body or comments that was not actually measured or executed?
+5. **UI Screenshots (UI PRs only):** For PRs that change UI, open the full-SHA contact sheets on the `evidence` branch (`_sheet-standard.png`, `_sheet-large_font.png`, `_sheet-compact.png`) before issuing a `PASS`. Doc-only and non-UI PRs skip this step.
+6. **Failures:** A failing required test or missing essential evidence is a blocker. Never weaken tests to accelerate release.
+7. **Owner Evidence:** Never upload owner screenshots, account details or real media as repository evidence; use synthetic data.
 
 ### Issuing Verdicts
-Post your audit result as a PR comment starting with these exact two lines (`<sha>` must be the full 40-character commit hash of the audited head)[cite: 1]:
+Post your audit result as a PR comment starting with these exact two lines (`<sha>` must be the full 40-character commit hash of the audited head):
 
 ```text
 VERDICT: PASS <sha> | VERDICT: CHANGES <sha> | ESCALATION: BLOCKED <sha>
