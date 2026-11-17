@@ -140,6 +140,8 @@ Keep this list honest and update it when it changes.
 
 - The app has not been run on a physical phone or against a real Google account.
 - Colour contrast and touch-target sizes have not been measured.
-- Screenshot tests render on the JVM. They show layout, not thumbnails loaded from real media,
-  not the Drive folder listing, not animation smoothness, and not system dialogs.
+- Screenshot tests render on the JVM. Thumbnails are generated gradient pictures and the Drive
+  listing is made-up entries from a fake. They do not show real photographs or video frames,
+  the real Drive service, animation, scrolling, or Android's own dialogs (permission, Google
+  consent, removal).
 - Glass here is a translucent fill with a lit edge. There is no live blur of what is behind it.

@@ -13,13 +13,16 @@ import android.graphics.Shader
 import android.database.MatrixCursor
 import android.net.Uri
 import android.os.Looper
+import android.os.SystemClock
 import android.provider.MediaStore
+import android.view.MotionEvent
+import android.view.View
+import android.view.ViewGroup
 import android.provider.MediaStore.Files.FileColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasAnyDescendant
@@ -35,7 +38,6 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.text.AnnotatedString
-import androidx.compose.ui.unit.Density
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -62,6 +64,7 @@ import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -72,6 +75,7 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import org.robolectric.shadows.ShadowDialog
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -113,6 +117,7 @@ class ScreenshotTest {
 
     private val imagesStarted = AtomicInteger()
     private val imagesFinished = AtomicInteger()
+    private val createCalls = AtomicInteger()
 
     @Before
     fun fakeWorkManager() {
@@ -354,7 +359,7 @@ class ScreenshotTest {
     fun newFolderDialog() {
         grantMedia()
         eachVariant(
-            "new-folder", expect = "Holiday 2026", connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
+            "new-folder", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
             act = { openNewFolderDialog() },
         ) { vm -> AppRoot(vm) }
     }
@@ -363,12 +368,18 @@ class ScreenshotTest {
     fun newFolderDialogError() {
         grantMedia()
         eachVariant(
-            "new-folder-error", expect = "Connection problem: network unavailable", connected = true,
+            "new-folder-error", expect = null, connected = true,
             tab = AppViewModel.TAB_DRIVE, overlay = true,
-            drive = FakeDrive(create = { throw IOException("network unavailable") }),
+            drive = FakeDrive(create = {
+                createCalls.incrementAndGet()
+                throw IOException("network unavailable")
+            }),
             act = {
-                openNewFolderDialog()
-                tap("Create")
+                val create = openNewFolderDialog()
+                val before = createCalls.get()
+                touchLatestDialog(create)
+                pump(DIALOG_FRAMES)
+                assertEquals("Create was not pressed", before + 1, createCalls.get())
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -400,25 +411,49 @@ class ScreenshotTest {
         waitFor("Move 2 items to Drive")
     }
 
-    private fun openNewFolderDialog() {
+    /**
+     * Opens the new-folder dialog and fills in a name. Returns where the Create button is.
+     *
+     * Once the text of a field inside a dialog window has changed, the Compose test framework
+     * never reports idle again under Robolectric, so every query or action that waits for idle
+     * times out. The dialog itself keeps working. So from that point the test uses no Compose
+     * test call: it runs frames, touches the window directly, and captures the screen.
+     */
+    private fun openNewFolderDialog(): Offset {
         waitFor("DriveLift Backup")
         compose.onNodeWithContentDescription("New folder here").press()
-        // The dialog needs several frames to open. Asking the test to go idle before they have
-        // run never returns under the frozen clock, so the frames are run first.
-        pump(20)
+        pump(DIALOG_FRAMES)
         waitFor("New folder in My Drive")
-        // The name is set without focusing the field: a focused field keeps the test from
-        // ever going idle, and a blinking cursor would differ between runs.
+        val create = compose.onNodeWithText("Create").fetchSemanticsNode().boundsInRoot.center
         compose.onNodeWithText("Folder name")
             .performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString("Holiday 2026")) }
-        waitFor("Holiday 2026")
+        pump(DIALOG_FRAMES)
+        return create
+    }
+
+    /** A tap at [at] inside the dialog opened last, sent to its view without the test framework. */
+    private fun touchLatestDialog(at: Offset) {
+        fun composeView(view: View): View? = when {
+            view.javaClass.name.endsWith("AndroidComposeView") -> view
+            view is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { composeView(view.getChildAt(it)) }
+            else -> null
+        }
+        val target = checkNotNull(composeView(ShadowDialog.getLatestDialog().window!!.decorView)) { "No dialog is open" }
+        val now = SystemClock.uptimeMillis()
+        for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
+            val event = MotionEvent.obtain(now, now, action, at.x, at.y, 0)
+            target.dispatchTouchEvent(event)
+            event.recycle()
+            pump(2)
+        }
     }
 
     // ------------------------------------------------------------------ harness
 
     private fun eachVariant(
         name: String,
-        expect: String,
+        /** Text that must be on screen before the capture. Null when [act] has checked the state itself. */
+        expect: String?,
         connected: Boolean = false,
         connecting: Boolean = false,
         tab: Int = AppViewModel.TAB_PHONE,
@@ -435,6 +470,9 @@ class ScreenshotTest {
     ) {
         for (variant in Variant.entries) {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
+            // Set on the device, not on one composition: a sheet or dialog is its own window and
+            // takes its text size from the system, as it does on a phone.
+            RuntimeEnvironment.setFontScale(variant.fontScale)
             // Frozen clock: an indeterminate spinner or a ticking countdown never blocks a capture.
             compose.mainClock.autoAdvance = false
             val vm = AppViewModel(app)
@@ -457,23 +495,18 @@ class ScreenshotTest {
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     activity.setContent {
-                        val density = LocalDensity.current
-                        CompositionLocalProvider(
-                            LocalDensity provides Density(density.density, variant.fontScale),
-                        ) {
-                            DriveLiftTheme { GlassBackdrop { content(vm) } }
-                        }
+                        DriveLiftTheme { GlassBackdrop { content(vm) } }
                     }
                 }
                 act?.invoke()
-                waitFor(expect)
+                if (expect != null) waitFor(expect) else pump(DIALOG_FRAMES)
                 settleImages()
                 // Lets a sheet finish sliding in before it is captured.
                 if (overlay) pump(40)
                 if (record) {
                     val path = "build/outputs/screenshots/$name-${variant.name.lowercase()}.png"
                     when {
-                        ownWindow -> compose.onNode(isRoot() and hasAnyDescendant(hasText(expect))).captureRoboImage(path)
+                        ownWindow -> compose.onNode(isRoot() and hasAnyDescendant(hasText(expect!!))).captureRoboImage(path)
                         overlay -> captureScreen(path)
                         else -> compose.onRoot().captureRoboImage(path)
                     }
@@ -686,6 +719,9 @@ class ScreenshotTest {
         const val DAY_TWO = 1_773_576_000_000L
 
         const val PICTURE_SIZE = 256
+
+        /** Frames run after a change in the new-folder dialog, enough for it to settle. */
+        const val DIALOG_FRAMES = 20
 
         /** Top colour, bottom colour and disc colour of each generated picture, as 0xRRGGBB. */
         val PICTURES = listOf(

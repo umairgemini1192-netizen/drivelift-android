@@ -28,12 +28,20 @@ carry out and prove a UI change. It does not add rules.
 
 Screenshots are rendered on the JVM with Roborazzi and Robolectric, in GitHub Actions, with no
 phone and no emulator. `ScreenshotTest` drives the real `AppRoot`, view model, Room database and
-theme, fed by a fake media store and seeded transfer rows.
+theme, fed by a fake media store with generated pictures, seeded transfer rows, and a fake
+`DriveFolders` that stands in for Google Drive.
 
 - Tests live in `app/src/test/java/com/drivelift/app/ui/`.
 - Add a scenario as one `@Test` that calls `eachVariant`; it is captured at standard size, font
   scale 1.5 and 320 dp wide. Raise `expected` in `.github/workflows/android.yml` by three.
-- A local run needs about 2 GB of free memory. If it cannot start, let CI record instead.
+- A sheet or dialog is its own window. Pass `overlay = true` so the whole screen is captured,
+  or `ownWindow = true` for a full-screen dialog opened over a sheet. Font scale is set on the
+  device (`RuntimeEnvironment.setFontScale`), so those windows scale too.
+- After the text of a field inside a dialog changes, Compose test calls that wait for idle never
+  return under Robolectric. Run frames with `pump`, touch the window directly and capture; see
+  `openNewFolderDialog`.
+- A local run needs about 2 GB of free memory. One scenario at a time
+  (`--tests "*ScreenshotTest.driveListing"`) needs less. If it cannot start, let CI record instead.
 - Record with `./gradlew testDebugUnitTest -PrecordScreenshots`. Images are written to
   `app/build/outputs/screenshots/`.
 - CI records them on every pull request, fails if an expected image is missing, and uploads them
