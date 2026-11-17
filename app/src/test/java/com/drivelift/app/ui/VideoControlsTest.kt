@@ -147,18 +147,24 @@ class VideoControlsTest {
 
     @Test
     fun frameStepMovesOneFrameAndIsOfferedOnlyWhilePaused() {
-        // Single steps from a frame start (frame 60 at 60 fps is 1000 ms).
-        assertEquals(1_017L, frameStepTarget(1_000, 10_000, 60f, forward = true))
-        assertEquals(984L, frameStepTarget(1_000, 10_000, 60f, forward = false))
-        assertEquals(1_034L, frameStepTarget(1_000, 10_000, -1f, forward = true))
+        // Single steps from a frame start (frame 60 at 60 fps is 1000 ms). Targets are at or just
+        // before the frame's timestamp (1016.67 ms and 983.33 ms), never after it.
+        assertEquals(1_016L, frameStepTarget(1_000, 10_000, 60f, forward = true))
+        assertEquals(983L, frameStepTarget(1_000, 10_000, 60f, forward = false))
+        assertEquals(1_033L, frameStepTarget(1_000, 10_000, -1f, forward = true))
         assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
         assertEquals(10_000L, frameStepTarget(9_990, 10_000, 30f, forward = true))
-        // Repeated steps visit every frame exactly once, with no drift.
-        for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240)) {
+        // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
+        for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120)) {
             var position = 0L
             repeat(taps) { i ->
                 position = frameStepTarget(position, 3_600_000, fps, forward = true)
-                assertEquals("frame after ${i + 1} taps at $fps fps", (i + 1).toLong(), Math.floor(position * fps / 1000.0 + 1e-6).toLong())
+                val expected = (i + 1).toLong()
+                assertEquals("frame after ${i + 1} taps at $fps fps", expected, frameIndexAt(position, fps.toDouble()))
+                org.junit.Assert.assertTrue(
+                    "seek $position ms must not pass frame $expected at $fps fps",
+                    position <= expected * 1000.0 / fps,
+                )
             }
             repeat(taps) { position = frameStepTarget(position, 3_600_000, fps, forward = false) }
             assertEquals("back to the first frame at $fps fps", 0L, position)
