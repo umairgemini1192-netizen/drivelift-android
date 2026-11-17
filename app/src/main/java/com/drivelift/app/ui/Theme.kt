@@ -1,6 +1,8 @@
 package com.drivelift.app.ui
 
 import android.content.Context
+import android.content.pm.PackageManager
+import android.os.Build
 import android.provider.Settings
 import android.text.format.Formatter
 import androidx.compose.material3.MaterialTheme
@@ -124,4 +126,22 @@ fun formatDuration(ms: Long): String {
     val s = ms / 1000
     return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s % 3600) / 60, s % 60)
     else "%d:%02d".format(s / 60, s % 60)
+}
+
+/** Human-readable app version and numeric build code for diagnostics and preview verification. */
+fun appVersionLabel(context: Context): String {
+    val info = runCatching {
+        if (Build.VERSION.SDK_INT >= 33) {
+            context.packageManager.getPackageInfo(
+                context.packageName,
+                PackageManager.PackageInfoFlags.of(0),
+            )
+        } else {
+            @Suppress("DEPRECATION")
+            context.packageManager.getPackageInfo(context.packageName, 0)
+        }
+    }.getOrNull()
+    val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.3"
+    val code = info?.longVersionCode ?: 2L
+    return "DriveLift $name (build $code)"
 }

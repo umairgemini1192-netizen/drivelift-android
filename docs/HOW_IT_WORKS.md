@@ -50,7 +50,7 @@ In a folder (`ui/PhoneScreens.kt`):
 
 - **Auto-organize**: creates `DriveLift Backup` in My Drive with one sub-folder per phone folder.
 - **Presets**: Drive folders you pinned earlier. Tick "Keep this folder as a preset" when picking.
-- **Choose a Drive folder**: browse anywhere in My Drive, create a folder, and move there.
+- **Choose a Drive folder**: opens the full-screen folder picker at the app root to browse anywhere in My Drive, create a folder, and move there.
 
 ## 4. Uploading (`transfer/TransferWorker.kt`)
 

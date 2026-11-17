@@ -4,6 +4,7 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.util.Log
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
@@ -15,6 +16,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
@@ -55,7 +57,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -63,6 +69,7 @@ import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.describeError
+import kotlin.math.roundToInt
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
@@ -81,6 +88,11 @@ fun DriveBrowser(
     onPick: ((dest: Destination, pin: Boolean) -> Unit)? = null,
 ) {
     val context = LocalContext.current
+    val view = LocalView.current
+    val density = LocalDensity.current
+    val safeDrawing = WindowInsets.safeDrawing
+    val topInsetPx = safeDrawing.getTop(density)
+    val bottomInsetPx = safeDrawing.getBottom(density)
     val conn by vm.driveConn.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -91,8 +103,33 @@ fun DriveBrowser(
     var reload by remember { mutableIntStateOf(0) }
     var showNewFolder by remember { mutableStateOf(false) }
     var pin by remember { mutableStateOf(false) }
+    val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
     val here = stack.last()
     val path = stack.joinToString(" / ") { it.name }
+
+    fun recordPickerBounds(update: PickerWindowMetrics.() -> PickerWindowMetrics) {
+        if (!pickMode) return
+        val next = vm.pickerMetrics.value.update().copy(
+            windowWidthPx = view.width,
+            windowHeightPx = view.height,
+            topInsetPx = topInsetPx,
+            bottomInsetPx = bottomInsetPx,
+        )
+        vm.pickerMetrics.value = next
+        if (next.moveHereHeightPx > 0 && next != lastLoggedMetrics[0]) {
+            lastLoggedMetrics[0] = next
+            runCatching {
+                Log.d(
+                    "DriveLiftPicker",
+                    "window=${next.windowWidthPx}x${next.windowHeightPx} " +
+                        "insets=(${next.topInsetPx},${next.bottomInsetPx}) " +
+                        "rootBottom=${next.rootBottomPx} " +
+                        "footer=(${next.footerTopPx}..${next.footerBottomPx}) " +
+                        "button=(${next.moveHereTopPx}..${next.moveHereBottomPx},h=${next.moveHereHeightPx})",
+                )
+            }
+        }
+    }
 
     LaunchedEffect(here.id, reload, conn) {
         if (conn != DriveConn.CONNECTED) return@LaunchedEffect
@@ -107,13 +144,21 @@ fun DriveBrowser(
         }
     }
 
-    BackHandler(enabled = stack.size > 1) { stack = stack.dropLast(1) }
+    BackHandler(enabled = stack.size > 1 || onClose != null) {
+        if (stack.size > 1) stack = stack.dropLast(1) else onClose?.invoke()
+    }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(
+        Modifier.fillMaxSize().then(
+            if (pickMode) Modifier.onGloballyPositioned { coords ->
+                recordPickerBounds { copy(rootBottomPx = coords.boundsInWindow().bottom.roundToInt()) }
+            } else Modifier
+        )
+    ) {
         TopAppBar(
-            // As a tab, the screen around it already keeps clear of the status bar. As the
-            // picker it fills its own full-screen window and must do that itself.
-            windowInsets = if (pickMode) TopAppBarDefaults.windowInsets else WindowInsets(0),
+            // Consumed when hosted inside AppRoot's Scaffold; still clears the status bar if
+            // DriveBrowser is hosted directly without a Scaffold.
+            windowInsets = TopAppBarDefaults.windowInsets,
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = Color.Transparent,
                 scrolledContainerColor = Color.Transparent,
@@ -196,9 +241,19 @@ fun DriveBrowser(
         }
 
         if (pickMode && onPick != null && conn == DriveConn.CONNECTED) {
-            Box(Modifier.fillMaxWidth().glassBar()) {
-                // The picker's window reaches the bottom edge of the screen, so the bar keeps its
-                // controls above the gesture handle or the navigation buttons.
+            Box(
+                Modifier.fillMaxWidth().glassBar().onGloballyPositioned { coords ->
+                    val bounds = coords.boundsInWindow()
+                    recordPickerBounds {
+                        copy(
+                            footerTopPx = bounds.top.roundToInt(),
+                            footerBottomPx = bounds.bottom.roundToInt(),
+                        )
+                    }
+                },
+            ) {
+                // Keep the footer controls above system navigation even if DriveBrowser is hosted
+                // outside AppRoot's Scaffold; inside AppRoot, Scaffold already consumes it.
                 Column(
                     Modifier.fillMaxWidth().navigationBarsPadding()
                         .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
@@ -216,7 +271,16 @@ fun DriveBrowser(
                     }
                     Button(
                         onClick = { onPick(Destination(here.id, path), pin) },
-                        modifier = Modifier.fillMaxWidth().padding(top = Tokens.Tiny),
+                        modifier = Modifier.fillMaxWidth().padding(top = Tokens.Tiny).onGloballyPositioned { coords ->
+                            val bounds = coords.boundsInWindow()
+                            recordPickerBounds {
+                                copy(
+                                    moveHereTopPx = bounds.top.roundToInt(),
+                                    moveHereBottomPx = bounds.bottom.roundToInt(),
+                                    moveHereHeightPx = bounds.height.roundToInt(),
+                                )
+                            }
+                        },
                     ) {
                         Text("Move here: ${here.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }

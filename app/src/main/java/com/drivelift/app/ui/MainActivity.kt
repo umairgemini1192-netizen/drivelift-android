@@ -14,8 +14,11 @@ import androidx.activity.viewModels
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
@@ -48,6 +51,7 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.MediaAccess
+import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.TransferStatus
 import com.drivelift.app.transfer.Notifications
 
@@ -106,10 +110,11 @@ fun AppRoot(vm: AppViewModel) {
     val selection by vm.selection.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
     var openBucket by rememberSaveable { mutableLongStateOf(NO_BUCKET) }
-    var showDestination by remember { mutableStateOf(false) }
+    var showDestination by rememberSaveable { mutableStateOf(false) }
+    var pickingDestination by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
 
-    BackHandler(enabled = inFolder) {
+    BackHandler(enabled = inFolder && !pickingDestination) {
         if (selection.isNotEmpty()) vm.clearSelection() else openBucket = NO_BUCKET
     }
 
@@ -120,9 +125,10 @@ fun AppRoot(vm: AppViewModel) {
         // Transparent, so the backdrop drawn at the root shows through the glass.
         containerColor = Color.Transparent,
         contentColor = MaterialTheme.colorScheme.onSurface,
+        contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!inFolder) {
+            if (!inFolder && !pickingDestination) {
                 NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                     NavigationBarItem(
                         selected = tab == AppViewModel.TAB_PHONE,
@@ -150,9 +156,29 @@ fun AppRoot(vm: AppViewModel) {
             }
         },
     ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding)) {
-            when (tab) {
-                AppViewModel.TAB_PHONE -> when {
+        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+            when {
+                // Render the folder picker directly inside the root Activity window instead of a
+                // nested Dialog above the bottom sheet, so edge-to-edge system bars and display
+                // cutouts are measured and respected consistently across Android versions.
+                pickingDestination -> DriveBrowser(
+                    vm = vm,
+                    pickMode = true,
+                    onClose = {
+                        pickingDestination = false
+                        showDestination = true
+                    },
+                    onPick = { dest, pin ->
+                        if (pin && dest.folderId != null) {
+                            vm.pin(PresetEntity(dest.folderId, dest.label.substringAfterLast(" / "), dest.label))
+                        }
+                        pickingDestination = false
+                        showDestination = false
+                        openBucket = NO_BUCKET
+                        vm.startTransfer(dest)
+                    },
+                )
+                tab == AppViewModel.TAB_PHONE -> when {
                     !hasPermission -> PermissionGate(
                         onGrant = { permissionLauncher.launch(MediaAccess.runtimePermissions()) }
                     )
@@ -174,19 +200,23 @@ fun AppRoot(vm: AppViewModel) {
                         },
                     )
                 }
-                AppViewModel.TAB_DRIVE -> DriveBrowser(vm = vm, pickMode = false)
+                tab == AppViewModel.TAB_DRIVE -> DriveBrowser(vm = vm, pickMode = false)
                 else -> TransfersScreen(vm)
             }
         }
     }
 
-    if (showDestination) {
+    if (showDestination && !pickingDestination) {
         DestinationSheet(
             vm = vm,
             onDismiss = {
                 showDestination = false
                 // A whole-folder move started from the list has no visible selection to keep.
                 if (!inFolder) vm.clearSelection()
+            },
+            onBrowseFolders = {
+                showDestination = false
+                pickingDestination = true
             },
             onChosen = { dest ->
                 showDestination = false

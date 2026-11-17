@@ -281,6 +281,7 @@ private fun Stat(label: String, value: Int) {
 
 @Composable
 private fun SettingRows(wifiOnly: Boolean, autoRemove: Boolean, vm: AppViewModel, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     Column(modifier) {
         SwitchRow(
             "Upload on Wi-Fi only", "Mobile data is never used for uploads.",
@@ -290,6 +291,12 @@ private fun SettingRows(wifiOnly: Boolean, autoRemove: Boolean, vm: AppViewModel
             "Offer removal when verified",
             "Opens Android's confirmation as soon as a batch is fully verified.",
             autoRemove, vm.prefs::setAutoRemove,
+        )
+        Text(
+            appVersionLabel(context),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = Tokens.Small),
         )
     }
 }

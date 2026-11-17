@@ -36,6 +36,20 @@ import kotlinx.coroutines.launch
 
 enum class DriveConn { UNKNOWN, CONNECTING, CONNECTED, DISCONNECTED }
 
+/** Non-PII layout and window inset measurements recorded by the destination folder picker. */
+data class PickerWindowMetrics(
+    val windowWidthPx: Int = 0,
+    val windowHeightPx: Int = 0,
+    val topInsetPx: Int = 0,
+    val bottomInsetPx: Int = 0,
+    val rootBottomPx: Int = 0,
+    val footerTopPx: Int = 0,
+    val footerBottomPx: Int = 0,
+    val moveHereTopPx: Int = 0,
+    val moveHereBottomPx: Int = 0,
+    val moveHereHeightPx: Int = 0,
+)
+
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = Graph.get(app)
     private val dao = graph.db.transfers()
@@ -74,6 +88,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val presets: StateFlow<List<PresetEntity>> = graph.db.presets().observe()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val live = LiveProgress.state
+    val pickerMetrics = MutableStateFlow(PickerWindowMetrics())
 
     val online: StateFlow<Boolean> = callbackFlow {
         val manager = app.getSystemService(ConnectivityManager::class.java)
