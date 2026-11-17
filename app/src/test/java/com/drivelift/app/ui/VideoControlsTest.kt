@@ -211,13 +211,13 @@ class VideoControlsTest {
                 }
             }
             pump()
-            for (label in listOf("Previous frame", "Next frame")) {
+            for (label in listOf("Step back about one frame", "Step forward about one frame")) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
             }
-            compose.onNodeWithContentDescription("Previous frame").performClick()
-            compose.onNodeWithContentDescription("Next frame").performClick()
+            compose.onNodeWithContentDescription("Step back about one frame").performClick()
+            compose.onNodeWithContentDescription("Step forward about one frame").performClick()
             pump()
             assertEquals(listOf(false, true), steps)
         }
@@ -242,7 +242,7 @@ class VideoControlsTest {
                 }
             }
             pump()
-            assertEquals(0, compose.onAllNodesWithText("Frame").fetchSemanticsNodes().size)
+            assertEquals(0, compose.onAllNodesWithText("Step").fetchSemanticsNodes().size)
         }
     }
 

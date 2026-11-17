@@ -216,7 +216,9 @@ internal fun VideoControls(
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
             }
-            // Frame by frame, on its own row so the transport buttons keep 48 dp on any phone.
+            // Small steps of about one frame, on their own row so the transport buttons keep 48 dp.
+            // Exact for constant frame rate; variable-rate or unknown-rate files can occasionally
+            // repeat or skip a frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
             if (!state.playing) {
                 Row(
                     Modifier.fillMaxWidth().testTag("frame-step"),
@@ -225,16 +227,16 @@ internal fun VideoControls(
                 ) {
                     TextButton(
                         onClick = { onStepFrame(false) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Previous frame" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
                     ) {
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                        Text("Frame")
+                        Text("Step")
                     }
                     TextButton(
                         onClick = { onStepFrame(true) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Next frame" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
                     ) {
-                        Text("Frame")
+                        Text("Step")
                         Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                     }
                 }
