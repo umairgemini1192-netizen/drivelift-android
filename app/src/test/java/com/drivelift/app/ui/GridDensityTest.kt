@@ -160,14 +160,22 @@ class GridDensityTest {
         Thread.sleep(25)
     }
 
-    /** The grid cell under the centre of [gridTag], where the test pinches, and its bounds. */
-    private fun focalCell(gridTag: String, cells: SemanticsMatcher): Pair<String, Rect> {
-        val focal = compose.onNodeWithTag(gridTag).fetchSemanticsNode().boundsInRoot.center
-        val node = compose.onAllNodes(cells).fetchSemanticsNodes().minBy { n ->
-            val c = n.boundsInRoot.center
-            if (n.boundsInRoot.contains(focal)) -1f else (c - focal).getDistance()
-        }
-        return node.config[SemanticsProperties.ContentDescription].first() to node.boundsInRoot
+    /**
+     * The fully visible grid cell nearest the centre of [gridTag], its bounds, and its centre in the
+     * grid's own coordinates. The test pinches on that centre so the fingers are over one cell and
+     * never in the gap between two columns, where the focal cell would be ambiguous.
+     */
+    private fun focalCell(gridTag: String, cells: SemanticsMatcher): Triple<String, Rect, Offset> {
+        val grid = compose.onNodeWithTag(gridTag).fetchSemanticsNode().boundsInRoot
+        val node = compose.onAllNodes(cells).fetchSemanticsNodes()
+            .filter { it.boundsInRoot.height >= it.size.height - 1f }
+            .minBy { (it.boundsInRoot.center - grid.center).getDistance() }
+        val bounds = node.boundsInRoot
+        return Triple(
+            node.config[SemanticsProperties.ContentDescription].first(),
+            bounds,
+            bounds.center - grid.topLeft,
+        )
     }
 
     /**
@@ -352,10 +360,10 @@ class GridDensityTest {
             "Expected top item IMG_0001.jpg to be scrolled offscreen before pinch",
             compose.onAllNodesWithContentDescription("IMG_0001.jpg").fetchSemanticsNodes().isEmpty(),
         )
-        val (focalLabel, focalBefore) = focalCell("phone-media-grid", hasContentDescription("IMG_", substring = true))
+        val (focalLabel, focalBefore, focalPoint) = focalCell("phone-media-grid", hasContentDescription("IMG_", substring = true))
 
         compose.onNodeWithTag("phone-media-grid").performTouchInput {
-            val c = center
+            val c = focalPoint
             pinch(
                 start0 = Offset(c.x - 50f, c.y),
                 end0 = Offset(c.x - 75f, c.y),
@@ -389,10 +397,10 @@ class GridDensityTest {
             "Expected Photo_01.jpg scrolled offscreen before Drive pinch",
             compose.onAllNodesWithText("Photo_01.jpg").fetchSemanticsNodes().isEmpty(),
         )
-        val (focalLabel, focalBefore) = focalCell("drive-media-grid", hasContentDescription("Photo_", substring = true))
+        val (focalLabel, focalBefore, focalPoint) = focalCell("drive-media-grid", hasContentDescription("Photo_", substring = true))
 
         compose.onNodeWithTag("drive-media-grid").performTouchInput {
-            val c = center
+            val c = focalPoint
             pinch(
                 start0 = Offset(c.x - 50f, c.y),
                 end0 = Offset(c.x - 75f, c.y),
