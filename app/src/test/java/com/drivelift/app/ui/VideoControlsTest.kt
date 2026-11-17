@@ -160,6 +160,15 @@ class VideoControlsTest {
     }
 
     @Test
+    fun savingAFrameNeverThrowsWhenStorageFails() {
+        // Robolectric has no MediaStore provider, so the insert is refused: the helper must return
+        // null for the caller's failure message rather than throw.
+        val app = androidx.test.core.app.ApplicationProvider.getApplicationContext<android.content.Context>()
+        val bitmap = android.graphics.Bitmap.createBitmap(4, 4, android.graphics.Bitmap.Config.ARGB_8888)
+        assertEquals(null, com.drivelift.app.data.saveFrameToPictures(app, bitmap, "x.jpg"))
+    }
+
+    @Test
     fun zoomClampsSoThePictureNeverLeavesTheScreen() {
         val zoom = ImageTransformState()
         val bounds = androidx.compose.ui.unit.IntSize(1000, 500)

@@ -225,6 +225,8 @@ private fun VideoPlayer(
     var capturing by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var interaction by remember(player) { mutableIntStateOf(0) }
+    // While a finger is on the scrubber the controls never hide, so the seek is not lost.
+    var scrubbing by remember(player) { mutableStateOf(false) }
     var textureView by remember(player) { mutableStateOf<TextureView?>(null) }
     var videoAspect by remember(player) { mutableFloatStateOf(DEFAULT_ASPECT) }
     var viewport by remember(player) { mutableStateOf(IntSize.Zero) }
@@ -282,8 +284,8 @@ private fun VideoPlayer(
         }
     }
     // Controls step aside after a few seconds of playback without a touch.
-    LaunchedEffect(controlsVisible, playing, interaction) {
-        if (controlsVisible && playing) {
+    LaunchedEffect(controlsVisible, playing, interaction, scrubbing) {
+        if (controlsVisible && playing && !scrubbing) {
             delay(CONTROLS_HIDE_MS)
             controlsVisible = false
         }
@@ -397,7 +399,13 @@ private fun VideoPlayer(
                     zoomed = zoom.scale > ZOOMED_THRESHOLD,
                 ),
                 onPlayPause = {
-                    if (player.isPlaying) player.pause() else player.play()
+                    if (player.isPlaying) {
+                        player.pause()
+                    } else {
+                        // After the end, Play starts the video again from the beginning.
+                        if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+                        player.play()
+                    }
                     touched()
                 },
                 onSeek = {
@@ -412,6 +420,10 @@ private fun VideoPlayer(
                 },
                 onCapture = {
                     captureFrame()
+                    touched()
+                },
+                onScrubbingChange = { active ->
+                    scrubbing = active
                     touched()
                 },
                 onFit = {

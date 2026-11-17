@@ -30,21 +30,28 @@ fun frameFileName(videoName: String, positionMs: Long): String {
  */
 fun saveFrameToPictures(context: Context, bitmap: Bitmap, displayName: String): Uri? {
     val resolver = context.contentResolver
-    val values = ContentValues().apply {
-        put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
-        put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
-        put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$FRAME_FOLDER")
-        put(MediaStore.Images.Media.IS_PENDING, 1)
+    var pending: Uri? = null
+    return try {
+        val values = ContentValues().apply {
+            put(MediaStore.Images.Media.DISPLAY_NAME, displayName)
+            put(MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(MediaStore.Images.Media.RELATIVE_PATH, "${Environment.DIRECTORY_PICTURES}/$FRAME_FOLDER")
+            put(MediaStore.Images.Media.IS_PENDING, 1)
+        }
+        val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
+        val uri = resolver.insert(collection, values) ?: return null
+        pending = uri
+        val written = resolver.openOutputStream(uri)?.use {
+            bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it)
+        } == true
+        if (!written) throw java.io.IOException("The picture could not be written")
+        resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
+        pending = null
+        uri
+    } catch (_: Exception) {
+        // Storage full, unavailable or refused: remove the half-made item if there is one, and
+        // let the caller say the save failed.
+        pending?.let { runCatching { resolver.delete(it, null, null) } }
+        null
     }
-    val collection = MediaStore.Images.Media.getContentUri(MediaStore.VOLUME_EXTERNAL_PRIMARY)
-    val uri = resolver.insert(collection, values) ?: return null
-    val written = runCatching {
-        resolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.JPEG, 95, it) } == true
-    }.getOrDefault(false)
-    if (!written) {
-        resolver.delete(uri, null, null)
-        return null
-    }
-    resolver.update(uri, ContentValues().apply { put(MediaStore.Images.Media.IS_PENDING, 0) }, null, null)
-    return uri
 }

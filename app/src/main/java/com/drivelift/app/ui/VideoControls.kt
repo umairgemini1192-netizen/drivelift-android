@@ -91,6 +91,8 @@ internal fun VideoControls(
     onCapture: () -> Unit,
     modifier: Modifier = Modifier,
     onFit: () -> Unit = {},
+    /** True while a finger is dragging the scrubber, false when it lifts. */
+    onScrubbingChange: (Boolean) -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
     var dragTarget by remember { mutableStateOf<Long?>(null) }
@@ -117,10 +119,14 @@ internal fun VideoControls(
             }
             Slider(
                 value = if (duration > 0) (shown.toFloat() / duration).coerceIn(0f, 1f) else 0f,
-                onValueChange = { dragTarget = (it * duration).toLong() },
+                onValueChange = {
+                    if (dragTarget == null) onScrubbingChange(true)
+                    dragTarget = (it * duration).toLong()
+                },
                 onValueChangeFinished = {
                     dragTarget?.let(onSeek)
                     dragTarget = null
+                    onScrubbingChange(false)
                 },
                 enabled = duration > 0,
                 modifier = Modifier
