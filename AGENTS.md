@@ -4,7 +4,7 @@ Before acting, read `docs/AI_CONTEXT.md` and the current pull request descriptio
 `AI_HANDOFF.md` defines the review protocol; live status belongs in the pull request.
 For every new or changed UI, check the work against the Native design system section of
 `docs/AI_CONTEXT.md` and `docs/UI_WORKFLOW.md`, and open the screenshot evidence before a PASS.
-Role in this repository: reviewer. Claude implements. Only the owner merges.
+Role in this repository: independent reviewer. Antigravity implements, merges after `VERDICT: PASS <sha>` on the exact head with green required CI checks, and publishes preview releases.
 
 Review checklist:
 

@@ -15,16 +15,16 @@ line of a comment. `<sha>` is the commit it refers to (7 to 40 hex characters).
 
 | Marker | Who | Meaning |
 |---|---|---|
-| `IMPLEMENTER: READY <sha>` | Claude | This commit is ready for review |
+| `IMPLEMENTER: READY <sha>` | Antigravity (or Claude) | This commit is ready for review |
 | `VERDICT: CHANGES <sha>` | ChatGPT | Reviewed this commit; changes are required (listed below the marker) |
-| `IMPLEMENTER: FIXED <sha>` | Claude | This commit answers the last `CHANGES` |
+| `IMPLEMENTER: FIXED <sha>` | Antigravity (or Claude) | This commit answers the last `CHANGES` |
 | `VERDICT: PASS <sha>` | ChatGPT | Reviewed this commit; no blocking findings |
 
 Rules:
 
 - A verdict applies only to the commit it names. Any later push makes an older `PASS` stale.
 - A `CHANGES` stays open until a later `PASS` for the current head.
-- A `PASS` is the reviewer's audit result. It is not a merge. Only the owner merges.
+- A `PASS` is the reviewer's audit result. It is not a merge. Merging requires `VERDICT: PASS <sha>` for the exact current head and green required CI checks, and is performed by the implementer under the owner's authorization (or by the owner).
 - Findings under `CHANGES` cite the file and line, the rule in `docs/AI_CONTEXT.md` they rest on,
   and what would resolve them.
 

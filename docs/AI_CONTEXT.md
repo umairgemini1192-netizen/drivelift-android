@@ -10,11 +10,9 @@ file, the pull request you are working on, and the relevant source before planni
 
 ## Roles
 
-- **Implementer: Claude.** Writes code, tests and docs on a branch and opens the pull request.
-- **Reviewer: ChatGPT.** Audits the pull request against this file and keeps the app uniform.
-  Reviewers inspect, test and comment. They do not push code unless the owner reassigns the work
-  in the pull request.
-- **Owner.** Decides anything the two disagree on, and is the only one who merges.
+- **Implementer: Antigravity** (temporary/active takeover from Claude). Writes code, tests and docs on a branch, opens the pull request, merges only after ChatGPT posts `VERDICT: PASS <sha>` for the exact current head and required CI checks pass, and publishes preview releases.
+- **Reviewer: ChatGPT.** Performs independent audit and review against this file and keeps the app uniform. Does not push code or merge.
+- **Owner.** Decides anything the two disagree on, and sets merge and release rules.
 
 The protocol they use to talk to each other is in `AI_HANDOFF.md`.
 
@@ -120,8 +118,7 @@ How to build and prove a UI change is in `docs/UI_WORKFLOW.md`.
 ## Engineering rules
 
 - One concern per pull request. No unrelated refactors.
-- Every change goes through a branch and a pull request. `main` is only changed by the owner
-  merging a pull request.
+- Every change goes through a branch and a pull request. `main` is updated by merging a pull request only after ChatGPT posts `VERDICT: PASS <sha>` for the exact current head and required CI checks pass.
 - Pin dependency versions. State deliberate upgrades in the pull request.
 - Do not claim something works without evidence: a test, a build, a screenshot, or a device run.
   State plainly what was not checked.

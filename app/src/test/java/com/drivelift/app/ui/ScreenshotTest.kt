@@ -24,6 +24,13 @@ import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
+import androidx.compose.runtime.saveable.SaveableStateRegistry
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -498,6 +505,76 @@ class ScreenshotTest {
             "build-id", expect = "DriveLift 1.0.0-preview.3 (build 2)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
         ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun pickerRestoresSelectionAfterProcessRecreation() {
+        grantMedia()
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+
+        val initialVm = AppViewModel(app).apply {
+            pump(12)
+            driveFolders = FakeDrive()
+            driveConn.value = DriveConn.CONNECTED
+            account.value = DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
+        }
+        fun <T> launchWithRegistry(
+            vm: AppViewModel,
+            registry: SaveableStateRegistry,
+            block: () -> T,
+        ): T = ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                currentActivity = activity
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CompositionLocalProvider(LocalSaveableStateRegistry provides registry) {
+                                AppRoot(vm)
+                            }
+                        }
+                    }
+                }
+            }
+            block()
+        }
+
+        val initialRegistry = SaveableStateRegistry(restoredValues = null) { true }
+        val saved = launchWithRegistry(initialVm, initialRegistry) {
+            openDestinationSheet()
+            tap("Choose a Drive folder")
+            waitFor("Move here: My Drive")
+            assertEquals(2, initialVm.selection.value.size)
+            initialRegistry.performSave()
+        }
+
+        // Simulate process death: create a fresh ViewModel (empty selection) and restore only the
+        // saved state bundle into a newly launched Activity composition.
+        val restoredVm = AppViewModel(app).apply {
+            pump(12)
+            driveFolders = FakeDrive()
+            driveConn.value = DriveConn.CONNECTED
+            account.value = DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
+        }
+        assertTrue(restoredVm.selection.value.isEmpty())
+        val restoredRegistry = SaveableStateRegistry(restoredValues = saved) { true }
+
+        launchWithRegistry(restoredVm, restoredRegistry) {
+            waitFor("Move here: My Drive")
+            assertEquals(
+                "Selection was not restored alongside saved picker navigation",
+                2,
+                restoredVm.selection.value.size,
+            )
+            compose.onNode(hasText("Move here: My Drive") and hasClickAction()).performClick()
+            pump(DIALOG_FRAMES)
+            val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
+            assertEquals("Move here did not queue restored selection after recreation", 2, queued)
+        }
+        currentActivity = null
     }
 
     // ------------------------------------------------------------------ steps

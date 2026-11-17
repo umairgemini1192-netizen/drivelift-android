@@ -112,7 +112,24 @@ fun AppRoot(vm: AppViewModel) {
     var openBucket by rememberSaveable { mutableLongStateOf(NO_BUCKET) }
     var showDestination by rememberSaveable { mutableStateOf(false) }
     var pickingDestination by rememberSaveable { mutableStateOf(false) }
+    var savedSelectionIds by rememberSaveable { mutableStateOf(LongArray(0)) }
+    var selectionSynced by remember { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
+
+    LaunchedEffect(selection) {
+        if (!selectionSynced) {
+            selectionSynced = true
+            if (selection.isEmpty() && savedSelectionIds.isNotEmpty()) {
+                vm.setSelected(savedSelectionIds.toList(), true)
+                return@LaunchedEffect
+            }
+        }
+        savedSelectionIds = selection.toLongArray()
+        if (selection.isEmpty()) {
+            showDestination = false
+            pickingDestination = false
+        }
+    }
 
     BackHandler(enabled = inFolder && !pickingDestination) {
         if (selection.isNotEmpty()) vm.clearSelection() else openBucket = NO_BUCKET
@@ -206,7 +223,7 @@ fun AppRoot(vm: AppViewModel) {
         }
     }
 
-    if (showDestination && !pickingDestination) {
+    if (showDestination && !pickingDestination && selection.isNotEmpty()) {
         DestinationSheet(
             vm = vm,
             onDismiss = {
