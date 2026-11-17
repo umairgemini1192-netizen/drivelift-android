@@ -14,6 +14,11 @@ import android.provider.MediaStore.Files.FileColumns
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.test.SemanticsMatcher
+import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
@@ -155,6 +160,32 @@ class GridDensityTest {
         Thread.sleep(25)
     }
 
+    /** The grid cell under the centre of [gridTag], where the test pinches, and its bounds. */
+    private fun focalCell(gridTag: String, cells: SemanticsMatcher): Pair<String, Rect> {
+        val focal = compose.onNodeWithTag(gridTag).fetchSemanticsNode().boundsInRoot.center
+        val node = compose.onAllNodes(cells).fetchSemanticsNodes().minBy { n ->
+            val c = n.boundsInRoot.center
+            if (n.boundsInRoot.contains(focal)) -1f else (c - focal).getDistance()
+        }
+        return node.config[SemanticsProperties.ContentDescription].first() to node.boundsInRoot
+    }
+
+    /**
+     * Asserts the cell that was under the pinch is still on screen at the height where the fingers
+     * were: the grid re-anchored it rather than only avoiding a jump to the top.
+     */
+    private fun assertFocalCellAnchored(label: String, before: Rect) {
+        val after = compose.onAllNodesWithContentDescription(label).fetchSemanticsNodes()
+            .map { it.boundsInRoot }.filter { it.height > 0f }
+        assertTrue("Focal cell $label scrolled off screen after the density change", after.isNotEmpty())
+        val focalY = before.center.y
+        val tolerance = before.height / 2f
+        assertTrue(
+            "Focal cell $label moved away from the pinch point (before $before, after $after)",
+            after.any { it.top <= focalY + tolerance && it.bottom >= focalY - tolerance },
+        )
+    }
+
     private fun launchPhoneFolder(test: (AppViewModel) -> Unit) {
         val vm = AppViewModel(app)
         compose.mainClock.autoAdvance = false
@@ -284,6 +315,9 @@ class GridDensityTest {
 
     @Test
     fun phoneGridAccessibleSizeControlCyclesAndPersists() = launchPhoneFolder { _ ->
+        compose.onNodeWithContentDescription("Thumbnail size: Medium thumbnails")
+            .assertWidthIsAtLeast(Tokens.TouchTarget)
+            .assertHeightIsAtLeast(Tokens.TouchTarget)
         compose.onNodeWithContentDescription("Thumbnail size: Medium thumbnails").performClick()
         compose.waitUntil(5_000) {
             pump(1)
@@ -318,6 +352,7 @@ class GridDensityTest {
             "Expected top item IMG_0001.jpg to be scrolled offscreen before pinch",
             compose.onAllNodesWithContentDescription("IMG_0001.jpg").fetchSemanticsNodes().isEmpty(),
         )
+        val (focalLabel, focalBefore) = focalCell("phone-media-grid", hasContentDescription("IMG_", substring = true))
 
         compose.onNodeWithTag("phone-media-grid").performTouchInput {
             val c = center
@@ -338,6 +373,7 @@ class GridDensityTest {
             "Pinch density change jumped back to top of grid",
             compose.onAllNodesWithContentDescription("IMG_0001.jpg").fetchSemanticsNodes().isEmpty(),
         )
+        assertFocalCellAnchored(focalLabel, focalBefore)
     }
 
     @Test
@@ -353,6 +389,7 @@ class GridDensityTest {
             "Expected Photo_01.jpg scrolled offscreen before Drive pinch",
             compose.onAllNodesWithText("Photo_01.jpg").fetchSemanticsNodes().isEmpty(),
         )
+        val (focalLabel, focalBefore) = focalCell("drive-media-grid", hasContentDescription("Photo_", substring = true))
 
         compose.onNodeWithTag("drive-media-grid").performTouchInput {
             val c = center
@@ -377,6 +414,10 @@ class GridDensityTest {
             "Pinching Drive grid jumped back to top of folder",
             compose.onAllNodesWithText("Photo_01.jpg").fetchSemanticsNodes().isEmpty(),
         )
+        assertFocalCellAnchored(focalLabel, focalBefore)
+        compose.onNodeWithContentDescription("Thumbnail size: Large thumbnails")
+            .assertWidthIsAtLeast(Tokens.TouchTarget)
+            .assertHeightIsAtLeast(Tokens.TouchTarget)
 
         compose.onNodeWithContentDescription("Thumbnail size: Large thumbnails").performClick()
         compose.waitUntil(5_000) {
