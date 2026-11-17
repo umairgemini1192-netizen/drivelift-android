@@ -22,7 +22,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 
 /** One verified file in a removal batch, described by text only. */
-data class RemovalItem(val name: String, val size: Long)
+data class RemovalItem(val name: String, val size: Long, val uri: String = "")
 
 private const val NAMES_SHOWN = 8
 

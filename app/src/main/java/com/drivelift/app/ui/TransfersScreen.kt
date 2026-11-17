@@ -101,7 +101,7 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
     // Removal from the phone always goes through Android's own confirmation dialog.
     var awaitingConfirm by remember { mutableStateOf<List<String>>(emptyList()) }
     // Set while DriveLift's text-only confirmation is open (Media management granted).
-    var textOnlyBatch by remember { mutableStateOf<Pair<List<String>, List<RemovalItem>>?>(null) }
+    var textOnlyBatch by remember { mutableStateOf<List<RemovalItem>?>(null) }
     var removeRequest by remember { mutableIntStateOf(0) }
     var lastAutoPrompt by rememberSaveable { mutableIntStateOf(-1) }
     val removeLauncher = rememberLauncherForActivityResult(
@@ -119,7 +119,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
         if (uris.isEmpty()) return@LaunchedEffect
         if (vm.textOnlyRemoval()) {
             // DriveLift asks first, in text; Android then completes the request without a preview.
-            textOnlyBatch = uris to vm.describeForRemoval(uris)
+            // Removal is limited to exactly the files the dialog will list.
+            textOnlyBatch = vm.describeForRemoval(uris).takeIf { it.isNotEmpty() }
             return@LaunchedEffect
         }
         awaitingConfirm = uris
@@ -131,11 +132,12 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             vm.messages.tryEmit("Android could not open the removal prompt: ${it.message}")
         }
     }
-    textOnlyBatch?.let { (uris, items) ->
+    textOnlyBatch?.let { items ->
         TextOnlyRemovalDialog(
             items = items,
             onRemove = {
                 textOnlyBatch = null
+                val uris = items.map { it.uri }
                 awaitingConfirm = uris
                 runCatching {
                     val request = MediaStore.createDeleteRequest(context.contentResolver, uris.map(Uri::parse))
