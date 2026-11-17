@@ -143,6 +143,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun openVideoStream(file: com.drivelift.app.drive.DriveFile): com.drivelift.app.drive.DriveVideoStream =
         driveFolders.openVideoStream(file)
 
+    /** Saves a frame captured from a video into Pictures/DriveLift and says how it went. */
+    suspend fun saveVideoFrame(bitmap: android.graphics.Bitmap, videoName: String, positionMs: Long) {
+        val name = com.drivelift.app.data.frameFileName(videoName, positionMs)
+        val saved = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            com.drivelift.app.data.saveFrameToPictures(getApplication(), bitmap, name)
+        }
+        messages.emit(
+            if (saved != null) "Saved $name to Pictures/${com.drivelift.app.data.FRAME_FOLDER}"
+            else "Couldn't save the frame. Check that the phone has free space.",
+        )
+    }
+
     fun connectDrive(interactive: Boolean) {
         if (driveConn.value == DriveConn.CONNECTING) return
         driveConn.value = DriveConn.CONNECTING
