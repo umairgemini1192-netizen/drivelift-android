@@ -3,7 +3,9 @@
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-    <!-- Keep the mark inside the adaptive icon safe zone. -->
+    <!-- Keep the mark inside the adaptive icon safe zone (a 66 unit circle at the centre).
+         Colours repeat ui/Theme.kt: secondary, onBackground, primary, tertiary.
+         LauncherIconTest checks both. -->
     <path
         android:fillColor="#00000000"
         android:strokeColor="#A596FF"
