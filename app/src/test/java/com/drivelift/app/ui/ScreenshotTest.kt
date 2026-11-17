@@ -42,6 +42,8 @@ import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
@@ -447,6 +449,24 @@ class ScreenshotTest {
                 waitFor("Open in Google Drive")
             },
         ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun videoControls() {
+        eachVariant("video-controls", expect = "Original  ·  3840x2160  ·  60 fps") { _ ->
+            androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
+                VideoControls(
+                    state = VideoUiState(
+                        playing = true, position = 83_000, duration = 754_000,
+                        speed = 1.25f, quality = qualityLabel(3840, 2160, 60f),
+                    ),
+                    onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                    modifier = androidx.compose.ui.Modifier
+                        .align(androidx.compose.ui.Alignment.BottomCenter)
+                        .padding(Tokens.Edge),
+                )
+            }
+        }
     }
 
     @Test

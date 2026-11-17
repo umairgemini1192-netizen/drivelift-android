@@ -211,6 +211,8 @@ fun DriveFileViewer(
     BackHandler(onBack = onClose)
 
     val transform = remember(file.id) { ImageTransformState() }
+    // For videos the top bar hides together with the player controls, for a clear picture.
+    var chromeVisible by remember(file.id) { mutableStateOf(true) }
 
     // Draw a dedicated backdrop so the underlying Drive grid does not bleed through the viewer.
     GlassBackdrop {
@@ -239,6 +241,7 @@ fun DriveFileViewer(
                 conn = conn,
                 cachedThumb = cachedThumb,
                 onOpenExternally = onOpenExternally,
+                onChromeVisibleChange = { chromeVisible = it },
             )
 
             DrivePreviewKind.IMAGE -> ImagePreviewContent(
@@ -260,7 +263,7 @@ fun DriveFileViewer(
         }
 
         // Top overlay control bar stays clear and accessible at >= 48 dp touch targets.
-        GlassPanel(
+        if (chromeVisible) GlassPanel(
             modifier = Modifier
                 .align(Alignment.TopCenter)
                 .fillMaxWidth()

@@ -93,7 +93,6 @@ dependencies {
     implementation("io.coil-kt:coil-video:2.7.0")
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")
-    implementation("androidx.media3:media3-ui:1.4.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
 
     testImplementation("junit:junit:4.13.2")
