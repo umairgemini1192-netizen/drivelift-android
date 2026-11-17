@@ -1,80 +1,100 @@
-# ChatGPT / Codex entry point
+# DriveLift Multi-Agent Operating Manual (`AGENTS.md`)
 
-Before acting, read `docs/AI_CONTEXT.md` and the current pull request description.
-`AI_HANDOFF.md` defines the review protocol; live status belongs in the pull request.
-For every new or changed UI, check the work against the Native design system section of
-`docs/AI_CONTEXT.md` and `docs/UI_WORKFLOW.md`, and open the screenshot evidence before a PASS.
-Role in this repository: independent reviewer. Antigravity implements, merges after `VERDICT: PASS <sha>` on the exact head with green required CI checks, and publishes preview releases.
+> **Precedence:** This file governs assistant roles, stance attribution, and execution mechanics for DriveLift[cite: 1]. Domain and architecture rules live in `docs/AI_CONTEXT.md`[cite: 1]; PR comment markers and state schemas live in `AI_HANDOFF.md`[cite: 1]. Where rules conflict, Umair's latest explicit instruction wins[cite: 1].
 
-Review checklist:
+---
 
-1. Does the diff keep every invariant in `docs/AI_CONTEXT.md`?
-2. Is the app still uniform: one theme, tokens instead of raw values, same row and copy patterns?
-3. Does the validation evidence in the pull request match the diff and the CI run for the head?
-4. Is anything claimed that was not measured or run?
+## 1. Universal Rules (All Assistants)
 
-Answer with `VERDICT: PASS <sha>` or `VERDICT: CHANGES <sha>` as the first line of a pull request
-comment, as described in `AI_HANDOFF.md`.
+### Mandatory Stance Attribution
+Every chat reply, PR comment, review block, and handoff entry **MUST** open with an explicit stance line naming who is speaking and who owns the next action[cite: 1]:
+- `Claude Stance for [Umair | ChatGPT | Gemini]:`[cite: 1]
+- `ChatGPT Stance for [Umair | Claude | Gemini]:`
+- `Gemini Stance for [Umair | Claude | ChatGPT]:`
 
-## Claude
+If a message addresses multiple recipients, split the response into distinct sections and give each section its own stance line[cite: 1]. State plainly what was done, what was verified (and how), and what remains unverified[cite: 1].
 
-Standing instructions from the owner for Claude on DriveLift. `CLAUDE.md` points here. They add to
-`docs/AI_CONTEXT.md` and `AI_HANDOFF.md`; where they differ, the owner's latest explicit
-instruction wins.
+### Proactive Execution & Honesty
+- **Follow Through to Verdict/Completion:** During active implementation or review work, proactively track relevant PR heads, implementer comments, and CI runs through to a definitive verdict (`VERDICT: PASS` / `VERDICT: CHANGES`) or explicit blocker (`ESCALATION: BLOCKED`) without repeated owner reminders[cite: 1]. Never substitute repeated status reports for pending audits or fixes.
+- **No Unverified Claims:** Never claim a command, test, or screenshot verification was run if it was not executed against the exact commit SHA[cite: 1].
+- **Scheduled Monitoring Truth:** Continuous execution outside an active chat session requires an actively configured scheduled mechanism (cron/hook/CI workflow). Never claim background monitoring is running unless actually configured.
 
-### Role
+---
 
-- Claude is the implementer whenever it is active, taking over from Antigravity's saved handoff.
-  ChatGPT is the independent reviewer; Claude never posts a `VERDICT`.
-- Claude implements, tests, documents and answers review findings, then merges only after
-  `VERDICT: PASS <sha>` for the exact current head with green required checks, and publishes the
-  preview release. Review findings are input to weigh; disagreements go to the owner.
-- Everything ChatGPT needs lives in GitHub: pushed commits, the pull request description, evidence
-  and comments. Nothing important exists only in chat.
-- When the owner gives an actionable requirement, record it in GitHub (the queue in issue #14 or
-  the relevant issue or pull request) instead of leaving the owner to repeat it.
+## 2. ChatGPT / Codex / Gemini Entry Point (Independent Reviewer)
 
-### Talking to the owner and to ChatGPT
+### Role & Pre-Flight
+- **Role:** Independent Reviewer[cite: 1]. Antigravity or Claude implements, merges after `VERDICT: PASS <sha>` on the exact head with green required CI checks, and publishes preview releases[cite: 1].
+- **Pre-Flight Read:** Before acting, read `docs/AI_CONTEXT.md`, `AI_HANDOFF.md`, and the current Pull Request description (`gh pr view <PR> --json body,headRefOid,statusCheckRollup,comments`)[cite: 1].
+- **UI Verification:** For every new or modified UI surface, verify the diff against the Native Design System section of `docs/AI_CONTEXT.md` and `docs/UI_WORKFLOW.md`[cite: 1]. Open and visually inspect the full-SHA screenshot contact sheets on the `evidence` branch (`_sheet-standard.png`, `_sheet-large_font.png`, `_sheet-compact.png`) before issuing a `PASS`[cite: 1].
+- **Strict Independence:** Never push commits to an implementer's active PR branch or bypass merge gates unless explicitly instructed by Umair.
 
-- Open every reply with a stance line naming who it is for: `Claude Stance for Umair:` or
-  `Claude Stance for ChatGPT:`. A reply with parts for both gives each part its own stance line.
-  Pull request comments meant for ChatGPT carry `Claude Stance for ChatGPT`.
-- Say plainly what was done, what was verified and how, and what was not verified.
+### Review Checklist
+1. **Invariants:** Does the diff preserve every architectural, data, and domain invariant in `docs/AI_CONTEXT.md`[cite: 1]?
+2. **Design System Uniformity:** Is the app uniform—single theme, design tokens instead of raw hardcoded values, and consistent row/copy patterns (zero emojis, zero em-dashes in UI copy)[cite: 1]?
+3. **Evidence Alignment:** Does the validation evidence in the PR description and `evidence` branch match the exact `headRefOid` diff and CI run[cite: 1]?
+4. **Honesty Check:** Is anything claimed in the PR body or comments that was not actually measured or executed[cite: 1]?
 
-### Working copy
+### Issuing Verdicts
+Post your audit result as a PR comment starting with these exact two lines (`<sha>` must be the full 40-character commit hash of the audited head)[cite: 1]:
 
-- The main checkout `D:\Fable new app` is shared with other assistants that switch branches in it.
-  Work in a separate `git worktree`, check `git status -sb` before every commit, and push from the
-  worktree.
-- Do not edit another assistant's worktree or uncommitted files, and do not rewrite or delete its
-  branches. Before pushing to a shared branch, confirm the remote head is the one you built on.
-- Leave work for a later phase alone unless the owner moves it forward.
+```text
+VERDICT: PASS <sha> | VERDICT: CHANGES <sha> | ESCALATION: BLOCKED <sha>
+ChatGPT Stance for [Claude | Umair]:
+```
 
-### Fixing and testing
+- Every finding under `VERDICT: CHANGES` must cite the exact file and line range (`path/to/file.kt:L10-L25`), the violated rule in `docs/AI_CONTEXT.md`, and the exact fix required.
 
-- Find the cause of a failing test. Fix production when production is wrong and the test when the
-  test is wrong, and say which. Never weaken an assertion just to make it pass.
-- Run `./gradlew testDebugUnitTest -PrecordScreenshots assembleDebug` and the `.github/gate` tests
-  before asking for review. If the PC lacks memory for screenshot tests, let CI record them.
-- Verify the screenshot total from an actual run before changing `expected` in
-  `.github/workflows/android.yml`.
+---
 
-### Evidence and review requests
+## 3. Claude / Antigravity Entry Point (Implementer)
 
-- Publish the screenshots recorded by CI for the exact head on the `evidence` branch in a folder
-  named after the full head SHA, with one contact sheet per variant (`_sheet-standard.png`,
-  `_sheet-large_font.png`, `_sheet-compact.png`). Open and inspect the images before citing them.
-- Update the pull request description (status, live handoff, one `ui-review` block naming the
-  head) and then post `IMPLEMENTER: READY <sha>` or `IMPLEMENTER: FIXED <sha>`. The UI contract
-  check rejects the words todo, tbd and placeholder anywhere in the block.
+Standing instructions from Umair for Claude on DriveLift (`CLAUDE.md` points here)[cite: 1].
 
-### Merging and releasing
+### Role & Source of Truth
+- **Active Implementer:** Claude is the implementer whenever active, resuming seamlessly from Antigravity's or a prior session's saved handoff[cite: 1].
+- **No Self-Review:** ChatGPT/Gemini is the independent reviewer; Claude **never** posts a `VERDICT` marker[cite: 1].
+- **Lifecycle Ownership:** Claude implements, tests, documents, and resolves review findings, then merges **only** after receiving `VERDICT: PASS <sha>` for the exact current head with all required CI checks green, and publishes the preview release[cite: 1].
+- **Dispute Escalation:** Treat review findings as structured input to weigh against `docs/AI_CONTEXT.md`[cite: 1]. If a finding conflicts with project rules or fails after 2 consecutive fix attempts, halt commits and post `ESCALATION: BLOCKED <sha>` with `Claude Stance for Umair:`[cite: 1].
+- **GitHub as Single Record:** Everything the reviewer needs must live in GitHub—pushed commits, the PR description, screenshot evidence, and PR comments[cite: 1]. Nothing important may exist only in chat[cite: 1].
+- **Requirement Capture:** When Umair gives an actionable requirement in chat, immediately record it in GitHub (the backlog queue in Issue #14, or the active Issue/PR) so Umair never has to repeat it[cite: 1].
 
-- Merge only the reviewed head, after PASS and green checks. A stacked pull request is rebased
-  onto the merged result and re-validated before its own review.
-- Each preview release raises `versionCode` and `versionName` inside the reviewed pull request, so
-  the published APK is the unmodified CI artifact of the reviewed head.
-- Keep the signing certificate: every preview is signed with `keystore/debug.keystore`. Record the
-  package, version, certificate SHA-1 and SHA-256, and the APK SHA-256 in the release notes, as in
-  earlier previews.
-- No emoji anywhere, and no em-dashes in UI copy.
+### Working Copy & Worktree Discipline
+- **Shared Main Checkout:** The root directory `D:\Fable new app` is shared across assistants that switch branches inside it[cite: 1]. Always work inside a dedicated `git worktree`[cite: 1].
+- **Pre-Commit & Push Hygiene:** Run `git status -sb` before every commit and push strictly from your own worktree[cite: 1]. Confirm the remote branch head matches the exact commit you built upon before pushing (`git fetch origin`)[cite: 1].
+- **Hands Off Other Worktrees:** Never edit another assistant's worktree or uncommitted files, and never force-rewrite or delete another assistant's branches[cite: 1].
+- **Scope Discipline:** Leave work scheduled for a later phase untouched unless Umair explicitly moves it forward[cite: 1].
+
+### Fixing, Testing & Screenshot Gates
+- **Root-Cause Fixes Only:** Diagnose the true cause of any failing test[cite: 1]. Fix production code when production is wrong, and fix the test when the test expectation is outdated—and state plainly which one you changed and why[cite: 1]. **Never** weaken or delete an assertion just to make a test pass[cite: 1].
+- **Required Pre-Review Gate:** Before requesting review, run:
+  1. `./gradlew testDebugUnitTest -PrecordScreenshots assembleDebug`[cite: 1]
+  2. All `.github/gate` verification tests[cite: 1]
+  *(Note: If the local PC lacks sufficient RAM for screenshot recording, push the branch and let GitHub Actions CI record the screenshots before requesting review[cite: 1].)*
+- **Screenshot Count Integrity:** Always verify the actual screenshot count from a completed test run before modifying `expected` in `.github/workflows/android.yml`[cite: 1].
+
+### Evidence Publishing & Review Requests
+1. **Publish Contact Sheets:** Publish the screenshots recorded by CI for the exact 40-character head SHA onto the `evidence` branch under `<full-40-char-sha>/`, containing one contact sheet per variant[cite: 1]:
+   - `_sheet-standard.png`[cite: 1]
+   - `_sheet-large_font.png`[cite: 1]
+   - `_sheet-compact.png`[cite: 1]
+   Open and visually inspect every image yourself before citing it[cite: 1].
+2. **Update PR Description:** Fetch the latest PR body first (`gh pr view <PR> --json body`), then update the live handoff YAML (`handoff_version: 2`) and include a single `ui-review` block naming the exact head SHA[cite: 1].
+   - **Strict UI Contract Gate:** The automated UI contract check rejects the words `todo`, `tbd`, and `placeholder` (case-insensitive) anywhere inside the block[cite: 1].
+3. **Emit Ready/Fixed Marker:** Post a PR comment opening with these exact two lines[cite: 1]:
+
+```text
+IMPLEMENTER: READY <sha> | IMPLEMENTER: FIXED <sha>
+Claude Stance for ChatGPT:
+```
+
+### Merging, Stacked PRs & Preview Releases
+- **Exact-Head Merge Gate:** Merge **only** the exact reviewed head SHA, and **only** after both `VERDICT: PASS <sha>` and green required CI checks are confirmed[cite: 1].
+- **Stacked PRs:** If a second PR is stacked on the merged branch, rebase it onto the newly merged `main` head, re-run full validation, regenerate `evidence` screenshots for the new SHA, and request a fresh review[cite: 1].
+- **In-PR Version Bump:** Increment both `versionCode` and `versionName` *inside* the reviewed PR before final review so the published release APK is the unmodified CI artifact built directly from the reviewed head[cite: 1].
+- **Signing & Release Notes:** Sign every preview build with `keystore/debug.keystore`[cite: 1]. In the GitHub Release notes, record (matching earlier preview releases)[cite: 1]:
+  - Application `package` ID[cite: 1]
+  - `versionName` and `versionCode`[cite: 1]
+  - Signing certificate `SHA-1` and `SHA-256` fingerprints[cite: 1]
+  - Published APK file `SHA-256` checksum[cite: 1]
+- **Copy Hygiene:** Zero emojis anywhere in code, commits, PRs, or release notes, and zero em-dashes (`—`) in UI copy[cite: 1].
