@@ -23,6 +23,9 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.geometry.Offset
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.hasAnyDescendant
@@ -76,6 +79,7 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowDialog
+import kotlin.math.roundToInt
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
@@ -338,6 +342,8 @@ class ScreenshotTest {
             act = {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
+                giveSystemBars(GESTURE_NAV_DP)
+                assertClearOfSystemBars("Move here: My Drive", GESTURE_NAV_DP)
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -351,6 +357,8 @@ class ScreenshotTest {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
                 tap("Archive 2024")
+                giveSystemBars(GESTURE_NAV_DP)
+                assertClearOfSystemBars("Move here: Archive 2024", GESTURE_NAV_DP)
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -382,6 +390,31 @@ class ScreenshotTest {
                 assertEquals("Create was not pressed", before + 1, createCalls.get())
             },
         ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun moveHereIsTappableAboveTheNavigationArea() {
+        grantMedia()
+        for (navDp in listOf(GESTURE_NAV_DP, THREE_BUTTON_NAV_DP)) {
+            eachVariant(
+                "picker-tap-$navDp", expect = null, connected = true, overlay = true, capture = false,
+                act = {
+                    openDestinationSheet()
+                    tap("Choose a Drive folder")
+                    giveSystemBars(navDp)
+                    assertClearOfSystemBars("Move here: My Drive", navDp)
+                    // A pointer tap on the button itself, not a semantics action.
+                    compose.onNodeWithText("Move here: My Drive").performClick()
+                    pump(DIALOG_FRAMES)
+                    assertTrue(
+                        "The picker is still open after Move here",
+                        compose.onAllNodesWithText("Move here: My Drive").fetchSemanticsNodes().isEmpty(),
+                    )
+                    val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
+                    assertEquals("Move here did not queue the two selected files", 2, queued)
+                },
+            ) { vm -> AppRoot(vm) }
+        }
     }
 
     // ------------------------------------------------------------------ steps
@@ -432,13 +465,62 @@ class ScreenshotTest {
     }
 
     /** A tap at [at] inside the dialog opened last, sent to its view without the test framework. */
-    private fun touchLatestDialog(at: Offset) {
-        fun composeView(view: View): View? = when {
-            view.javaClass.name.endsWith("AndroidComposeView") -> view
-            view is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { composeView(view.getChildAt(it)) }
-            else -> null
+    private fun composeView(view: View): View? = when {
+        view.javaClass.name.endsWith("AndroidComposeView") -> view
+        view is ViewGroup -> (0 until view.childCount).firstNotNullOfOrNull { composeView(view.getChildAt(it)) }
+        else -> null
+    }
+
+    private fun latestDialogView(): View =
+        checkNotNull(composeView(ShadowDialog.getLatestDialog().window!!.decorView)) { "No dialog is open" }
+
+    private fun px(dp: Int) = (dp * app.resources.displayMetrics.density).roundToInt()
+
+    /**
+     * Gives every open sheet and dialog the system bars a phone gives them: a status bar on top and a
+     * navigation area of [navDp] at the bottom (about 24 dp with gesture navigation, 48 dp with
+     * three buttons). The JVM has no system bars of its own, so without this a window that
+     * ignores them looks fine here and is cut off on a phone.
+     */
+    private fun giveSystemBars(navDp: Int) {
+        // A window is listed as shown a few frames after its content first appears.
+        pump(DIALOG_FRAMES)
+        val insets = WindowInsetsCompat.Builder()
+            .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, px(STATUS_BAR_DP), 0, 0))
+            .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.of(0, 0, 0, px(navDp)))
+            .build()
+        // Installed on each window's root view, so every later pass of the insets through the
+        // window (each layout can start one) carries these bars instead of the JVM's none. A
+        // pass is also made now, for a window that has just opened and has no layout pending.
+        for (dialog in ShadowDialog.getShownDialogs()) {
+            val decor = dialog.window?.decorView as? ViewGroup ?: continue
+            ViewCompat.setOnApplyWindowInsetsListener(decor) { root, _ ->
+                val group = root as ViewGroup
+                for (i in 0 until group.childCount) ViewCompat.dispatchApplyWindowInsets(group.getChildAt(i), insets)
+                WindowInsetsCompat.CONSUMED
+            }
+            ViewCompat.dispatchApplyWindowInsets(decor, insets)
+            ViewCompat.requestApplyInsets(decor)
         }
-        val target = checkNotNull(composeView(ShadowDialog.getLatestDialog().window!!.decorView)) { "No dialog is open" }
+        pump(DIALOG_FRAMES)
+    }
+
+    /** [button] and the top bar of the window it is in sit clear of the status and navigation bars. */
+    private fun assertClearOfSystemBars(button: String, navDp: Int) {
+        val windowHeight = compose.onNode(isRoot() and hasAnyDescendant(hasText(button))).fetchSemanticsNode().size.height
+        val bottom = compose.onNodeWithText(button).fetchSemanticsNode().boundsInRoot.bottom
+        assertTrue(
+            "\"$button\" ends at $bottom px; the navigation area starts at ${windowHeight - px(navDp)} px",
+            bottom <= windowHeight - px(navDp) + 0.5f,
+        )
+        val top = listOf("Close", "Up one folder").firstNotNullOf { label ->
+            compose.onAllNodesWithContentDescription(label).fetchSemanticsNodes().firstOrNull()?.boundsInRoot?.top
+        }
+        assertTrue("The picker's top bar starts at $top px, under the status bar", top >= px(STATUS_BAR_DP) - 0.5f)
+    }
+
+    private fun touchLatestDialog(at: Offset) {
+        val target = latestDialogView()
         val now = SystemClock.uptimeMillis()
         for (action in listOf(MotionEvent.ACTION_DOWN, MotionEvent.ACTION_UP)) {
             val event = MotionEvent.obtain(now, now, action, at.x, at.y, 0)
@@ -465,6 +547,8 @@ class ScreenshotTest {
          */
         ownWindow: Boolean = false,
         drive: DriveFolders = FakeDrive(),
+        /** False for a scenario that only checks behaviour and writes no image. */
+        capture: Boolean = true,
         act: (() -> Unit)? = null,
         content: @Composable (AppViewModel) -> Unit,
     ) {
@@ -503,7 +587,7 @@ class ScreenshotTest {
                 settleImages()
                 // Lets a sheet finish sliding in before it is captured.
                 if (overlay) pump(40)
-                if (record) {
+                if (record && capture) {
                     val path = "build/outputs/screenshots/$name-${variant.name.lowercase()}.png"
                     when {
                         ownWindow -> compose.onNode(isRoot() and hasAnyDescendant(hasText(expect!!))).captureRoboImage(path)
@@ -722,6 +806,11 @@ class ScreenshotTest {
 
         /** Frames run after a change in the new-folder dialog, enough for it to settle. */
         const val DIALOG_FRAMES = 20
+
+        /** System bar sizes of a typical phone, in dp. */
+        const val STATUS_BAR_DP = 24
+        const val GESTURE_NAV_DP = 24
+        const val THREE_BUTTON_NAV_DP = 48
 
         /** Top colour, bottom colour and disc colour of each generated picture, as 0xRRGGBB. */
         val PICTURES = listOf(

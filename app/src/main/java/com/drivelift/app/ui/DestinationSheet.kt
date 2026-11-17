@@ -100,7 +100,11 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
     if (browsing) {
         Dialog(
             onDismissRequest = { browsing = false },
-            properties = DialogProperties(usePlatformDefaultWidth = false),
+            // Full screen, edge to edge, on every Android version: the window covers the status
+            // and navigation bars and the picker keeps its own content clear of them. With the
+            // platform's default fitting, the bottom bar ended up under the gesture area on a
+            // Pixel 8 Pro (issue 6).
+            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
         ) {
             // A dialog is its own window, so it needs its own backdrop.
             GlassBackdrop {
