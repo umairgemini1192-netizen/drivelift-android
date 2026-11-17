@@ -89,13 +89,15 @@ fun GlassPanel(
     modifier: Modifier = Modifier,
     shape: Shape = Tokens.PanelShape,
     onClick: (() -> Unit)? = null,
+    /** What a tap does, read out by accessibility services when it is not obvious from the content. */
+    onClickLabel: String? = null,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier
             .clip(shape)
             .glass(shape)
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier),
+            .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick) else Modifier),
     ) { content() }
 }
 

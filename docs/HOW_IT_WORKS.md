@@ -30,6 +30,9 @@ QUEUED -> UPLOADING -> UPLOADED -> VERIFIED -> REMOVED
 - **Drive**: `ui/DriveBrowser.kt` lists folders and files through the Drive v3 REST API
   (`drive/DriveClient.kt`). A folder is listed to its end, however many entries it has. The same
   browser is the folder picker.
+  Tapping a folder opens it. Tapping a file opens it outside DriveLift, in the Google Drive app
+  if it is installed, otherwise in a browser; DriveLift has no viewer of its own. The link holds
+  only the file's id. The folder picker lists folders only.
 
 ## 2. Selecting in bulk
 

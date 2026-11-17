@@ -1,13 +1,19 @@
 package com.drivelift.app.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -16,6 +22,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
@@ -104,6 +111,9 @@ fun DriveBrowser(
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
+            // As a tab, the screen around it already keeps clear of the status bar. As the
+            // picker it fills its own full-screen window and must do that itself.
+            windowInsets = if (pickMode) TopAppBarDefaults.windowInsets else WindowInsets(0),
             colors = TopAppBarDefaults.topAppBarColors(
                 containerColor = Color.Transparent,
                 scrolledContainerColor = Color.Transparent,
@@ -172,9 +182,13 @@ fun DriveBrowser(
                         DriveRow(
                             file = file,
                             sizeLabel = if (file.isFolder) null else formatBytes(context, file.size),
-                            onClick = if (file.isFolder) {
-                                { stack = stack + Crumb(file.id, file.name) }
-                            } else null,
+                            opensExternally = !file.isFolder && !pickMode,
+                            onClick = when {
+                                file.isFolder -> { { stack = stack + Crumb(file.id, file.name) } }
+                                // The picker chooses folders only; a file there is not a target.
+                                pickMode -> null
+                                else -> { { openInDrive(context, file.id)?.let { scope.launch { vm.messages.emit(it) } } } }
+                            },
                         )
                     }
                 }
@@ -183,7 +197,12 @@ fun DriveBrowser(
 
         if (pickMode && onPick != null && conn == DriveConn.CONNECTED) {
             Box(Modifier.fillMaxWidth().glassBar()) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                // The picker's window reaches the bottom edge of the screen, so the bar keeps its
+                // controls above the gesture handle or the navigation buttons.
+                Column(
+                    Modifier.fillMaxWidth().navigationBarsPadding()
+                        .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                ) {
                     Row(
                         Modifier.fillMaxWidth().clickable(role = Role.Checkbox) { pin = !pin },
                         verticalAlignment = Alignment.CenterVertically,
@@ -254,7 +273,7 @@ fun DriveBrowser(
 }
 
 @Composable
-private fun DriveRow(file: DriveFile, sizeLabel: String?, onClick: (() -> Unit)?) {
+private fun DriveRow(file: DriveFile, sizeLabel: String?, opensExternally: Boolean, onClick: (() -> Unit)?) {
     val icon = when {
         file.isFolder -> Icons.Outlined.Folder
         file.mimeType.startsWith("image/") -> Icons.Outlined.Image
@@ -264,6 +283,7 @@ private fun DriveRow(file: DriveFile, sizeLabel: String?, onClick: (() -> Unit)?
     GlassPanel(
         modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
         onClick = onClick,
+        onClickLabel = if (opensExternally) "Open in Google Drive" else null,
     ) {
     Row(
         Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.RowLoose),
@@ -281,10 +301,34 @@ private fun DriveRow(file: DriveFile, sizeLabel: String?, onClick: (() -> Unit)?
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }
+        if (opensExternally) Icon(
+            Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
         if (file.isFolder) Icon(
             Icons.Outlined.ChevronRight, contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
     }
+    }
+}
+
+/**
+ * Google Drive's own page for a file. It holds no token or account detail: whoever opens it is
+ * asked by Google to sign in if needed.
+ */
+fun driveViewUrl(fileId: String): String = "https://drive.google.com/file/d/" + Uri.encode(fileId) + "/view"
+
+/**
+ * Opens a Drive file outside the app, in the Google Drive app if it is installed, otherwise in a
+ * browser. DriveLift has no viewer of its own. Returns a message to show when nothing can open it.
+ */
+fun openInDrive(context: Context, fileId: String): String? {
+    val intent = Intent(Intent.ACTION_VIEW, Uri.parse(driveViewUrl(fileId))).addCategory(Intent.CATEGORY_BROWSABLE)
+    return try {
+        context.startActivity(intent)
+        null
+    } catch (e: ActivityNotFoundException) {
+        "Nothing on this phone can open Google Drive links. Install Google Drive or a web browser."
     }
 }
