@@ -115,7 +115,9 @@ fun AppRoot(vm: AppViewModel) {
     var savedSelectionIds by rememberSaveable { mutableStateOf(LongArray(0)) }
     var selectionSynced by remember { mutableStateOf(false) }
     var viewingDriveFile by remember { mutableStateOf(false) }
+    var showSettings by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
+    val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
 
     LaunchedEffect(selection) {
         if (!selectionSynced) {
@@ -132,6 +134,9 @@ fun AppRoot(vm: AppViewModel) {
         }
     }
 
+    // Settings opens over Transfers; Back returns there.
+    BackHandler(enabled = inSettings && !pickingDestination) { showSettings = false }
+
     BackHandler(enabled = inFolder && !pickingDestination) {
         if (selection.isNotEmpty()) vm.clearSelection() else openBucket = NO_BUCKET
     }
@@ -146,7 +151,7 @@ fun AppRoot(vm: AppViewModel) {
         contentWindowInsets = WindowInsets.safeDrawing,
         snackbarHost = { SnackbarHost(snackbar) },
         bottomBar = {
-            if (!inFolder && !pickingDestination && !viewingDriveFile) {
+            if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
                 NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                     NavigationBarItem(
                         selected = tab == AppViewModel.TAB_PHONE,
@@ -218,12 +223,13 @@ fun AppRoot(vm: AppViewModel) {
                         },
                     )
                 }
+                inSettings -> SettingsScreen(vm = vm, onBack = { showSettings = false })
                 tab == AppViewModel.TAB_DRIVE -> DriveBrowser(
                     vm = vm,
                     pickMode = false,
                     onViewingFileChange = { viewingDriveFile = it },
                 )
-                else -> TransfersScreen(vm)
+                else -> TransfersScreen(vm, onOpenSettings = { showSettings = true })
             }
         }
     }
