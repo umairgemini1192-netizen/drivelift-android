@@ -2,6 +2,7 @@ package com.drivelift.app.ui
 
 import android.content.Intent
 import android.os.Bundle
+import androidx.activity.OnBackPressedCallback
 import androidx.fragment.app.FragmentActivity
 import com.drivelift.app.Graph
 import androidx.activity.SystemBarStyle
@@ -59,6 +60,9 @@ import com.drivelift.app.transfer.Notifications
 class MainActivity : FragmentActivity() {
     private val vm: AppViewModel by viewModels()
 
+    /** Set when Back leaves the root screen; the session ends once the app is off screen. */
+    private var leavingFromRoot = false
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         // The app is always dark, so system bar icons are always light.
@@ -67,11 +71,35 @@ class MainActivity : FragmentActivity() {
         routeIntent(intent)
         val graph = Graph.get(this)
         (graph.authenticator as? BiometricAuthenticator)?.bind(this)
+        // Registered before any Compose BackHandler, so it only runs when nothing inside the app
+        // (a folder, Settings, a viewer) handles Back. Since Android 12 that Back sends a root
+        // launcher activity to the background instead of finishing it, so onDestroy alone would
+        // miss it. The lock is applied in onStop, after the app has left the screen, so no prompt
+        // appears while it animates away. Home and other apps never set the flag.
+        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
+            override fun handleOnBackPressed() {
+                leavingFromRoot = true
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+                isEnabled = true
+            }
+        })
         setContent {
             DriveLiftTheme {
                 GlassBackdrop { LockGate(graph.lock, graph.authenticator) { AppRoot(vm) } }
             }
         }
+    }
+
+    override fun onStart() {
+        super.onStart()
+        leavingFromRoot = false
+    }
+
+    override fun onStop() {
+        if (leavingFromRoot) Graph.get(this).lock.lock()
+        leavingFromRoot = false
+        super.onStop()
     }
 
     override fun onDestroy() {

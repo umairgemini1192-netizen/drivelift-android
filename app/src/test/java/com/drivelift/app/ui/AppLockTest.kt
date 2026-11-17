@@ -287,7 +287,45 @@ class AppLockTest {
         pump(15)
         compose.onNodeWithText("Transfers").assertExists()
 
-        // Back from the root or a swipe in Recents finishes the activity: the next launch asks again.
+        // Back from the root screen ends the session. Since Android 12 the platform backgrounds
+        // the task instead of finishing it, so the lock must not depend on onDestroy.
+        scenario.onActivity { it.onBackPressedDispatcher.onBackPressed() }
+        pump()
+        runCatching { scenario.moveToState(Lifecycle.State.CREATED) }
+        pump()
+        assertFalse("Back from the root must end the session", graph.lock.state.value.unlocked)
+        scenario.close()
+    }
+
+    @Test
+    fun homeWithoutBackKeepsTheSessionInTheRealActivity() {
+        val graph = Graph.get(app)
+        val auth = FakeAuthenticator(graph.lock)
+        graph.authenticator = auth
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            pump(15)
+            graph.lock.onUnlocked()
+            pump(10)
+            // Home, Recents, an external viewer or a system consent screen: stopped, not Back.
+            scenario.moveToState(Lifecycle.State.CREATED)
+            scenario.moveToState(Lifecycle.State.RESUMED)
+            pump(10)
+            assertTrue(graph.lock.state.value.unlocked)
+            assertEquals(1, auth.prompts)
+        }
+    }
+
+    @Test
+    fun finishingTheActivityEndsTheSession() {
+        val graph = Graph.get(app)
+        graph.authenticator = FakeAuthenticator(graph.lock)
+        compose.mainClock.autoAdvance = false
+        val scenario = ActivityScenario.launch(MainActivity::class.java)
+        pump(15)
+        graph.lock.onUnlocked()
+        pump()
+        // A swipe away in Recents finishes the activity.
         scenario.close()
         pump()
         assertFalse(graph.lock.state.value.unlocked)
