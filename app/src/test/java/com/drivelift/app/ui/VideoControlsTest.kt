@@ -154,6 +154,11 @@ class VideoControlsTest {
         assertEquals(1_033L, frameStepTarget(1_000, 10_000, -1f, forward = true))
         assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
         assertEquals(10_000L, frameStepTarget(9_990, 10_000, 30f, forward = true))
+        // Straight after scrubbing between frames: 1001 ms at 60 fps shows frame 61 (1016.67 ms), so
+        // Next goes to frame 62 and Previous to frame 60, neither repeating nor skipping.
+        assertEquals(61L, frameIndexAt(1_001, 60.0))
+        assertEquals(1_033L, frameStepTarget(1_001, 10_000, 60f, forward = true))
+        assertEquals(1_000L, frameStepTarget(1_001, 10_000, 60f, forward = false))
         // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
         for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120, 120f to 240, 240f to 480)) {
             var position = 0L
