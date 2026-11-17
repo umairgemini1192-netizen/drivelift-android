@@ -1,0 +1,64 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <!-- The app's backdrop: night sky warming to violet. Colours repeat ui/Theme.kt
+         (GlassPalette.SkyTop, SkyMid, SkyBottom, secondary, tertiary). LauncherIconTest checks. -->
+    <path android:pathData="M0,0h108v108h-108z">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="linear"
+                android:startX="54"
+                android:startY="0"
+                android:endX="54"
+                android:endY="108">
+                <item android:offset="0" android:color="#FF070A1E" />
+                <item android:offset="0.45" android:color="#FF15114A" />
+                <item android:offset="1" android:color="#FF45228C" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Violet light behind the mark. -->
+    <path android:pathData="M54,60 m-48,0 a48,48 0,1 0,96 0 a48,48 0,1 0,-96 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="60"
+                android:gradientRadius="48">
+                <item android:offset="0" android:color="#B3A596FF" />
+                <item android:offset="0.55" android:color="#40A596FF" />
+                <item android:offset="1" android:color="#00A596FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Cool light from the upper left. -->
+    <path android:pathData="M30,26 m-36,0 a36,36 0,1 0,72 0 a36,36 0,1 0,-72 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="30"
+                android:centerY="26"
+                android:gradientRadius="36">
+                <item android:offset="0" android:color="#5962C6FF" />
+                <item android:offset="1" android:color="#0062C6FF" />
+            </gradient>
+        </aapt:attr>
+    </path>
+    <!-- Soft shadow the cloud casts on the sky. -->
+    <path android:pathData="M54,71 m-30,0 a30,30 0,1 0,60 0 a30,30 0,1 0,-60 0">
+        <aapt:attr name="android:fillColor">
+            <gradient
+                android:type="radial"
+                android:centerX="54"
+                android:centerY="71"
+                android:gradientRadius="30">
+                <item android:offset="0" android:color="#99070A1E" />
+                <item android:offset="0.6" android:color="#40070A1E" />
+                <item android:offset="1" android:color="#00070A1E" />
+            </gradient>
+        </aapt:attr>
+    </path>
+</vector>

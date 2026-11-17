@@ -89,6 +89,8 @@ on 17 November 2026: futuristic dark glass.
 1. **One dark theme.** A deep indigo night sky that warms to violet at the bottom, with
    translucent glass panels on it. There is no light theme. All raw colour values live in
    `ui/Theme.kt` and nowhere else; screens read `MaterialTheme.colorScheme` and `GlassPalette`.
+   Android XML resources cannot read Compose colours, so the launcher icon and the window
+   theme repeat values from `ui/Theme.kt`; `LauncherIconTest` fails if the icon uses any other.
 2. **Colour by meaning.** Coral (primary) is the one accent and marks the main action. Rose red
    (error) is used only for removal and failure. Violet and sky blue are atmosphere (backdrop,
    progress gauge), never an action.

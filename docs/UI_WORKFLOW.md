@@ -40,6 +40,10 @@ theme, fed by a fake media store with generated pictures, seeded transfer rows, 
 - After the text of a field inside a dialog changes, Compose test calls that wait for idle never
   return under Robolectric. Run frames with `pump`, touch the window directly and capture; see
   `openNewFolderDialog`.
+- The launcher icon has its own test, `LauncherIconTest`. It renders the icon's real layers,
+  cut to a circle, a squircle and a rounded square, and at launcher sizes from 48 to 192
+  pixels, and writes `launcher-icon-standard.png` and `launcher-icon-compact.png`. Text size
+  does not apply to an icon, so there is no large-font image for it.
 - A local run needs about 2 GB of free memory. One scenario at a time
   (`--tests "*ScreenshotTest.driveListing"`) needs less. If it cannot start, let CI record instead.
 - Record with `./gradlew testDebugUnitTest -PrecordScreenshots`. Images are written to
