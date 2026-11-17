@@ -144,7 +144,7 @@ fun appVersionLabel(context: Context): String {
             context.packageManager.getPackageInfo(context.packageName, 0)
         }
     }.getOrNull()
-    val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.8"
-    val code = info?.longVersionCode ?: 7L
+    val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.9"
+    val code = info?.longVersionCode ?: 8L
     return "DriveLift $name (build $code)"
 }

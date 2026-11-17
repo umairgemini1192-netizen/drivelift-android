@@ -280,6 +280,93 @@ class ScreenshotTest {
         }
     }
 
+    /**
+     * Issue 24: with Media management granted, Remove opens DriveLift's text-only confirmation
+     * (names and sizes, no pictures) instead of Android's preview dialog; Cancel removes nothing.
+     */
+    @Test
+    fun textOnlyRemovalConfirmation() {
+        grantMedia()
+        Graph.get(app).prefs.setAutoRemove(false)
+        Graph.get(app).canManageMedia = { true }
+        // Rows whose address is really in the fake media store; a missing one would correctly be
+        // closed out as already gone before the confirmation.
+        seedTransfers(
+            row(1, "IMG_0001.jpg", TransferStatus.VERIFIED),
+            row(2, "IMG_0002.jpg", TransferStatus.VERIFIED),
+            row(4, "IMG_0004.jpg", TransferStatus.VERIFIED, size = 48_000_000),
+        )
+        eachVariant(
+            "removal-text-only", expect = "Remove 3 files from this phone?", tab = AppViewModel.TAB_TRANSFERS,
+            overlay = true,
+            act = {
+                waitFor("Remove 3 verified files from phone")
+                compose.onNodeWithText("Remove 3 verified files from phone").performClick()
+                waitFor("Remove 3 files from this phone?")
+                // The dialog line ("name  ·  size"); the file list behind it also shows the name alone.
+                compose.onNodeWithText("IMG_0004.jpg  ·  ", substring = true).assertExists()
+                compose.onNodeWithText("Each Drive copy matched", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun textOnlyRemovalCancelRemovesNothingAndSettingsShowsTheAccess() {
+        grantMedia()
+        Graph.get(app).prefs.setAutoRemove(false)
+        Graph.get(app).canManageMedia = { true }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.VERIFIED))
+        eachVariant(
+            "removal-cancel", expect = null, tab = AppViewModel.TAB_TRANSFERS, capture = false,
+            act = {
+                waitFor("Remove 1 verified file from phone")
+                compose.onNodeWithText("Remove 1 verified file from phone").performClick()
+                waitFor("Remove 1 file from this phone?")
+                compose.onNodeWithText("Cancel").performClick()
+                pump(10)
+                assertTrue(
+                    "Cancel must close the confirmation",
+                    compose.onAllNodesWithText("Remove 1 file from this phone?").fetchSemanticsNodes().isEmpty(),
+                )
+                compose.onNodeWithText("Remove 1 verified file from phone").assertExists()
+                assertEquals(
+                    TransferStatus.VERIFIED.name,
+                    kotlinx.coroutines.runBlocking { Graph.get(app).db.transfers().get(2) }?.status,
+                )
+                compose.onNodeWithContentDescription("Settings").performClick()
+                waitFor("Text-only removal confirmation")
+                compose.onNodeWithText("On. DriveLift lists the files", substring = true).assertExists()
+                compose.onNodeWithContentDescription("Back to transfers").performClick()
+                pump(6)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun withoutMediaManagementAndroidsDialogIsKept() {
+        grantMedia()
+        Graph.get(app).prefs.setAutoRemove(false)
+        Graph.get(app).canManageMedia = { false }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.VERIFIED))
+        eachVariant(
+            "removal-system", expect = null, tab = AppViewModel.TAB_TRANSFERS, capture = false,
+            act = {
+                waitFor("Remove 1 verified file from phone")
+                compose.onNodeWithContentDescription("Settings").performClick()
+                waitFor("Text-only removal confirmation")
+                compose.onNodeWithText("Off. Android's confirmation shows a preview", substring = true).assertExists()
+                compose.onNodeWithContentDescription("Back to transfers").performClick()
+                waitFor("Remove 1 verified file from phone")
+                compose.onNodeWithText("Remove 1 verified file from phone").performClick()
+                pump(10)
+                assertTrue(
+                    "Without the access DriveLift must not show its own dialog",
+                    compose.onAllNodesWithText("Remove 1 file from this phone?").fetchSemanticsNodes().isEmpty(),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun transfersVerifiedReadyToRemove() {
         grantMedia()
@@ -642,7 +729,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.8 (build 7)",
+            "build-id", expect = "DriveLift 1.0.0-preview.9 (build 8)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")

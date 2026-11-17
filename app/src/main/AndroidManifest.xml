@@ -14,6 +14,9 @@
         android:maxSdkVersion="32" />
     <!-- Keeps GPS EXIF intact in the bytes that are uploaded. -->
     <uses-permission android:name="android.permission.ACCESS_MEDIA_LOCATION" />
+    <!-- Granted by the owner in Settings; lets DriveLift show a text-only removal confirmation
+         instead of Android's picture preview. Media only, not broad storage access. -->
+    <uses-permission android:name="android.permission.MANAGE_MEDIA" />
 
     <!-- Long uploads run as a foreground data-sync job with a progress notification. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

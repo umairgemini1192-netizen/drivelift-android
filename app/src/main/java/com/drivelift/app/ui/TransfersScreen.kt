@@ -100,6 +100,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
 
     // Removal from the phone always goes through Android's own confirmation dialog.
     var awaitingConfirm by remember { mutableStateOf<List<String>>(emptyList()) }
+    // Set while DriveLift's text-only confirmation is open (Media management granted).
+    var textOnlyBatch by remember { mutableStateOf<List<RemovalItem>?>(null) }
     var removeRequest by remember { mutableIntStateOf(0) }
     var lastAutoPrompt by rememberSaveable { mutableIntStateOf(-1) }
     val removeLauncher = rememberLauncherForActivityResult(
@@ -115,6 +117,12 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
         if (removeRequest == 0) return@LaunchedEffect
         val uris = vm.verifiedForRemoval(REMOVE_BATCH)
         if (uris.isEmpty()) return@LaunchedEffect
+        if (vm.textOnlyRemoval()) {
+            // DriveLift asks first, in text; Android then completes the request without a preview.
+            // Removal is limited to exactly the files the dialog will list.
+            textOnlyBatch = vm.describeForRemoval(uris).takeIf { it.isNotEmpty() }
+            return@LaunchedEffect
+        }
         awaitingConfirm = uris
         runCatching {
             val request = MediaStore.createDeleteRequest(context.contentResolver, uris.map(Uri::parse))
@@ -123,6 +131,24 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             awaitingConfirm = emptyList()
             vm.messages.tryEmit("Android could not open the removal prompt: ${it.message}")
         }
+    }
+    textOnlyBatch?.let { items ->
+        TextOnlyRemovalDialog(
+            items = items,
+            onRemove = {
+                textOnlyBatch = null
+                val uris = items.map { it.uri }
+                awaitingConfirm = uris
+                runCatching {
+                    val request = MediaStore.createDeleteRequest(context.contentResolver, uris.map(Uri::parse))
+                    removeLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+                }.onFailure {
+                    awaitingConfirm = emptyList()
+                    vm.messages.tryEmit("Android could not remove the files: ${it.message}")
+                }
+            },
+            onCancel = { textOnlyBatch = null },
+        )
     }
     LaunchedEffect(idle, verified, autoRemove) {
         if (autoRemove && idle && verified > 0 && verified != lastAutoPrompt) {
@@ -235,7 +261,11 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
                         )
                     }
                     Text(
-                        "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm.",
+                        if (vm.textOnlyRemoval()) {
+                            "Only files whose Drive copy matched byte for byte are included. DriveLift lists them for you to confirm."
+                        } else {
+                            "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm."
+                        },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Snug),

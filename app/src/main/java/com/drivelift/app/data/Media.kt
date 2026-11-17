@@ -112,6 +112,13 @@ fun mediaVisibility(
 }
 
 object MediaAccess {
+    /**
+     * True when the owner granted Media management access (Android 12+), so removal can use
+     * DriveLift's text-only confirmation and skip Android's picture preview.
+     */
+    fun canManageMedia(context: Context): Boolean =
+        Build.VERSION.SDK_INT >= 31 && android.provider.MediaStore.canManageMedia(context)
+
     /** Everything asked for in one system prompt, including notifications. */
     fun runtimePermissions(): Array<String> = buildList {
         if (Build.VERSION.SDK_INT >= 33) {
