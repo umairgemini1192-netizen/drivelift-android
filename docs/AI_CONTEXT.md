@@ -58,8 +58,12 @@ These protect the user's files. A change that touches them is high risk and need
    `VERIFIED` requires both the size and the MD5 checksum of the phone file to equal Drive's.
    A file that could not be compared is never shown as verified or removed. A file that cannot
    be read right now is retried, not treated as gone.
-3. **Removal is confirmed by Android.** Deletion goes through `MediaStore.createDeleteRequest`.
-   The app never deletes media silently and never asks for broad storage management access.
+3. **Removal is confirmed by the user.** Deletion goes through `MediaStore.createDeleteRequest`.
+   When the owner has granted Android's Media management access (`MANAGE_MEDIA`, owner decision
+   on issue #24), DriveLift first shows its own text-only confirmation listing the verified files
+   and Android then completes the request without its picture preview; otherwise Android's own
+   dialog confirms. The app never deletes media without that confirmation and never asks for
+   broad storage management access (`MANAGE_EXTERNAL_STORAGE`).
 4. **Retries have no limit.** Recoverable errors are retried forever with capped backoff. A
    dropped connection resumes from the byte Drive confirms, never from an assumed offset.
 5. **A bad copy is never left looking good.** A size or checksum mismatch trashes the Drive copy

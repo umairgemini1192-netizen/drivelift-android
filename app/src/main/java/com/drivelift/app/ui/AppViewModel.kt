@@ -296,6 +296,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     suspend fun verifiedForRemoval(limit: Int): List<String> = graph.transfers.verifiedForRemoval(limit)
 
+    /**
+     * The exact files in [uris] that are still VERIFIED, with name and size, looked up by their
+     * own addresses. The text-only confirmation shows these and removes only these, so what the
+     * user confirms is always exactly what is deleted.
+     */
+    suspend fun describeForRemoval(uris: List<String>): List<RemovalItem> {
+        val rows = uris.chunked(400).flatMap { graph.db.transfers().byMediaUris(it) }
+            .filter { it.status == com.drivelift.app.data.TransferStatus.VERIFIED.name }
+            .associateBy { it.mediaUri }
+        return uris.mapNotNull { uri -> rows[uri]?.let { RemovalItem(it.name, it.size, uri) } }
+    }
+
+    /** Whether removal can use DriveLift's text-only confirmation instead of Android's preview. */
+    fun textOnlyRemoval(): Boolean = graph.canManageMedia(getApplication())
+
     fun confirmRemoved(uris: List<String>) {
         viewModelScope.launch {
             graph.transfers.markRemoved(uris)

@@ -33,6 +33,8 @@ class Graph(app: Application) {
     val lock = AppLock()
     /** Replaced by a fake in tests; the app uses Android's BiometricPrompt. */
     var authenticator: Authenticator = BiometricAuthenticator(lock)
+    /** Replaced in tests; the app asks Android whether Media management was granted. */
+    var canManageMedia: (Context) -> Boolean = { com.drivelift.app.data.MediaAccess.canManageMedia(it) }
 
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph

@@ -21,6 +21,13 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.Lifecycle
+import androidx.compose.ui.platform.testTag
+import androidx.compose.runtime.setValue
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
@@ -38,6 +45,9 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
     val context = LocalContext.current
     val wifiOnly by vm.prefs.wifiOnly.collectAsStateWithLifecycle()
     val autoRemove by vm.prefs.autoRemove.collectAsStateWithLifecycle()
+    // Read again whenever Settings comes back to the front, for example after Android's screen.
+    var mediaManagement by remember { mutableStateOf(vm.textOnlyRemoval()) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { mediaManagement = vm.textOnlyRemoval() }
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
@@ -74,6 +84,10 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     )
                 }
             }
+            SectionHeading("Removal")
+            GlassPanel(Modifier.fillMaxWidth()) {
+                MediaManagementRow(granted = mediaManagement)
+            }
             SectionHeading("About")
             GlassPanel(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)) {
@@ -86,6 +100,32 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     )
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun MediaManagementRow(granted: Boolean) {
+    val context = LocalContext.current
+    val supported = android.os.Build.VERSION.SDK_INT >= 31
+    Row(
+        Modifier.fillMaxWidth()
+            .then(if (supported) Modifier.clickable(role = Role.Button) { openMediaManagementSettings(context) } else Modifier)
+            .padding(horizontal = Tokens.Gutter, vertical = Tokens.Row)
+            .testTag("media-management-row"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text("Text-only removal confirmation", style = MaterialTheme.typography.bodyLarge)
+            Text(
+                when {
+                    !supported -> "Needs Android 12 or later. Android's own confirmation is used."
+                    granted -> "On. DriveLift lists the files by name before removing them; Android shows no preview."
+                    else -> "Off. Android's confirmation shows a preview. Tap to allow Media management for DriveLift."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }
