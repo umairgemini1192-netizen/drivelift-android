@@ -28,8 +28,8 @@ import kotlin.math.sign
 import kotlin.math.sin
 
 /**
- * Renders the launcher icon from the app's own resources (the foreground vector and the
- * background colour) and checks the two rules an adaptive icon has to keep.
+ * Renders the launcher icon from the app's own resources (the foreground and background
+ * vectors) and checks the two rules an adaptive icon has to keep.
  *
  * The masks here are drawn by this test. They stand in for what a launcher does; no launcher is
  * involved, and themed (monochrome) icons are not covered because the app does not ship one.
@@ -50,7 +50,11 @@ class LauncherIconTest {
     private fun layers(layerPx: Int, background: Boolean = true): Bitmap {
         val bitmap = Bitmap.createBitmap(layerPx, layerPx, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
-        if (background) canvas.drawColor(ContextCompat.getColor(app, R.color.launcher_background))
+        if (background) {
+            val back = checkNotNull(ContextCompat.getDrawable(app, R.drawable.ic_launcher_background))
+            back.setBounds(0, 0, layerPx, layerPx)
+            back.draw(canvas)
+        }
         val foreground = checkNotNull(ContextCompat.getDrawable(app, R.drawable.ic_launcher_foreground))
         foreground.setBounds(0, 0, layerPx, layerPx)
         foreground.draw(canvas)
@@ -106,18 +110,19 @@ class LauncherIconTest {
     @Test
     fun iconColoursComeFromTheTheme() {
         // An XML drawable cannot read Compose colours, so it repeats them. Each one must be a
-        // colour that ui/Theme.kt defines, so the icon cannot drift from the app's palette.
+        // colour that ui/Theme.kt defines (at any opacity), so the icon cannot drift from the
+        // app's palette.
         val theme = File("src/main/java/com/drivelift/app/ui/Theme.kt").readText().uppercase()
         val hex = Regex("\"#([0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})\"")
-        val icon = File("src/main/res/drawable/ic_launcher_foreground.xml").readText()
-        val colours = hex.findAll(icon).map { it.groupValues[1].uppercase() }.filter { it != "00000000" }.toSet()
-        assertTrue("The icon has no colours", colours.isNotEmpty())
-        for (colour in colours) {
-            val argb = if (colour.length == 6) "FF$colour" else colour
-            assertTrue("#$colour in the launcher icon is not a colour in Theme.kt", theme.contains("0X$argb"))
+        for (layer in listOf("ic_launcher_foreground", "ic_launcher_background")) {
+            val xml = File("src/main/res/drawable/$layer.xml").readText()
+            val colours = hex.findAll(xml).map { it.groupValues[1].uppercase() }.filter { it != "00000000" }.toSet()
+            assertTrue("$layer has no colours", colours.isNotEmpty())
+            for (colour in colours) {
+                val rgb = colour.takeLast(6)
+                assertTrue("#$colour in $layer is not a colour in Theme.kt", theme.contains("0XFF$rgb"))
+            }
         }
-        val background = "%06X".format(ContextCompat.getColor(app, R.color.launcher_background) and 0xFFFFFF)
-        assertTrue("The launcher background #$background is not a colour in Theme.kt", theme.contains("0XFF$background"))
     }
 
     @Test
