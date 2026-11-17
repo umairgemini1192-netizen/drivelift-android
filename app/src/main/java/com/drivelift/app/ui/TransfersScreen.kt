@@ -6,8 +6,8 @@ import android.provider.MediaStore
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
@@ -30,6 +30,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Schedule
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -37,7 +38,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -53,7 +53,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.TransferEntity
@@ -65,12 +64,13 @@ private const val REMOVE_BATCH = 2000
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-fun TransfersScreen(vm: AppViewModel) {
+fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
     val context = LocalContext.current
     val transfers by vm.transfers.collectAsStateWithLifecycle()
     val counts by vm.counts.collectAsStateWithLifecycle()
     val live by vm.live.collectAsStateWithLifecycle()
     val paused by vm.prefs.paused.collectAsStateWithLifecycle()
+    // Read here only for the status line; the switch itself lives in Settings.
     val wifiOnly by vm.prefs.wifiOnly.collectAsStateWithLifecycle()
     val autoRemove by vm.prefs.autoRemove.collectAsStateWithLifecycle()
     val online by vm.online.collectAsStateWithLifecycle()
@@ -132,6 +132,8 @@ fun TransfersScreen(vm: AppViewModel) {
     }
 
     if (tracked + failed + count(TransferStatus.CANCELLED) == 0) {
+        Column(Modifier.fillMaxSize()) {
+        SettingsAction(onOpenSettings, Modifier.align(Alignment.End))
         Column(
             Modifier.fillMaxSize().padding(horizontal = Tokens.Section),
             verticalArrangement = Arrangement.Center,
@@ -143,7 +145,7 @@ fun TransfersScreen(vm: AppViewModel) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.padding(top = Tokens.Medium).widthIn(max = Tokens.ReadableWidth),
             )
-            SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = Tokens.Section))
+        }
         }
         return
     }
@@ -166,6 +168,9 @@ fun TransfersScreen(vm: AppViewModel) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "lead") {
+            // The gear sits in the empty top corner beside the gauge, so moving the preferences
+            // out adds no height and the rest of Transfers keeps its place.
+            Box(Modifier.fillMaxWidth()) {
             Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header)) {
                 DotArcGauge(
                     fraction = fraction,
@@ -206,6 +211,8 @@ fun TransfersScreen(vm: AppViewModel) {
                     if (failed > 0) Stat("Failed", failed)
                 }
                 }
+            }
+            SettingsAction(onOpenSettings, Modifier.align(Alignment.TopEnd))
             }
         }
 
@@ -250,7 +257,6 @@ fun TransfersScreen(vm: AppViewModel) {
                         TextButton(onClick = vm::clearFinished) { Text("Clear finished") }
                     }
                 }
-                SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = Tokens.Small))
             }
         }
 
@@ -279,41 +285,14 @@ private fun Stat(label: String, value: Int) {
     }
 }
 
+/** The labelled gear that opens Settings, at the top end of the Transfers content. */
 @Composable
-private fun SettingRows(wifiOnly: Boolean, autoRemove: Boolean, vm: AppViewModel, modifier: Modifier = Modifier) {
-    val context = LocalContext.current
-    Column(modifier) {
-        SwitchRow(
-            "Upload on Wi-Fi only", "Mobile data is never used for uploads.",
-            wifiOnly, vm::setWifiOnly,
-        )
-        SwitchRow(
-            "Offer removal when verified",
-            "Opens Android's confirmation as soon as a batch is fully verified.",
-            autoRemove, vm.prefs::setAutoRemove,
-        )
-        Text(
-            appVersionLabel(context),
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = Tokens.Small),
-        )
-    }
-}
-
-@Composable
-private fun SwitchRow(title: String, body: String, checked: Boolean, onChange: (Boolean) -> Unit) {
-    Row(
-        Modifier.fillMaxWidth()
-            .clickable(role = Role.Switch) { onChange(!checked) }
-            .padding(vertical = Tokens.Row),
-        verticalAlignment = Alignment.CenterVertically,
+private fun SettingsAction(onOpenSettings: () -> Unit, modifier: Modifier = Modifier) {
+    IconButton(
+        onClick = onOpenSettings,
+        modifier = modifier.padding(horizontal = Tokens.Tiny).size(Tokens.TouchTarget),
     ) {
-        Column(Modifier.weight(1f).padding(end = Tokens.Gutter)) {
-            Text(title, style = MaterialTheme.typography.bodyLarge)
-            Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
-        Switch(checked = checked, onCheckedChange = null)
+        Icon(Icons.Outlined.Settings, contentDescription = "Settings")
     }
 }
 

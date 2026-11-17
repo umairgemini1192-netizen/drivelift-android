@@ -45,6 +45,13 @@ import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import com.drivelift.app.data.Prefs
+import androidx.work.WorkManager
+import androidx.work.NetworkType
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -570,11 +577,91 @@ class ScreenshotTest {
     }
 
     @Test
-    fun buildIdentifierIsVisibleOnTransfers() {
+    fun settings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.5 (build 4)",
+            "settings", expect = "Offer removal when verified", tab = AppViewModel.TAB_TRANSFERS,
+            act = {
+                waitFor("Nothing in transit")
+                compose.onNodeWithContentDescription("Settings").performClick()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun buildIdentifierIsVisibleInSettings() {
+        grantMedia()
+        eachVariant(
+            "build-id", expect = "DriveLift 1.0.0-preview.6 (build 5)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
+            act = {
+                waitFor("Nothing in transit")
+                compose.onNodeWithContentDescription("Settings").performClick()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue 13: the two preferences left Transfers for Settings without changing what they store
+     * or do. Checked at standard size, 1.5x text and 320 dp.
+     */
+    @Test
+    fun settingsHoldTransferPreferencesThatPersistAndKeepTheirEffect() {
+        grantMedia()
+        seedTransfers(row(1, "IMG_0001.jpg", TransferStatus.QUEUED))
+        val prefs = Graph.get(app).prefs
+        eachVariant(
+            "settings-flow", expect = null, tab = AppViewModel.TAB_TRANSFERS, capture = false,
+            act = {
+                waitFor("Files")
+                assertTrue(
+                    "Transfers must no longer show the preference switches",
+                    compose.onAllNodesWithText("Upload on Wi-Fi only").fetchSemanticsNodes().isEmpty(),
+                )
+                compose.onNodeWithContentDescription("Settings")
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .performClick()
+                waitFor("Upload on Wi-Fi only")
+                assertTrue(
+                    "The tab bar hides while Settings is open, as inside a folder",
+                    compose.onAllNodesWithText("Phone").fetchSemanticsNodes().isEmpty(),
+                )
+
+                // Defaults are unchanged: Wi-Fi only off, offer removal on.
+                compose.onNodeWithText("Upload on Wi-Fi only").assertIsOff().performClick()
+                compose.waitUntil(5_000) { pump(1); prefs.wifiOnly.value }
+                compose.onNodeWithText("Upload on Wi-Fi only").assertIsOn()
+                // Same effect as before: queued uploads are rescheduled to wait for an unmetered network.
+                compose.waitUntil(5_000) {
+                    pump(1)
+                    WorkManager.getInstance(app).getWorkInfosForUniqueWork("drivelift-upload").get()
+                        .any { it.constraints.requiredNetworkType == NetworkType.UNMETERED }
+                }
+                compose.onNodeWithText("Offer removal when verified").assertIsOn().performClick()
+                compose.waitUntil(5_000) { pump(1); !prefs.autoRemove.value }
+
+                // Stored, not only in memory: a fresh reader (as after a restart) sees both values.
+                val reread = Prefs(app)
+                assertTrue(reread.wifiOnly.value)
+                assertTrue(!reread.autoRemove.value)
+
+                // Back returns to Transfers, with the tab bar.
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                waitFor("Files")
+                compose.onNodeWithText("Phone").assertExists()
+
+                // Reopening shows the stored values.
+                compose.onNodeWithContentDescription("Settings").performClick()
+                waitFor("Upload on Wi-Fi only")
+                compose.onNodeWithText("Upload on Wi-Fi only").assertIsOn()
+                compose.onNodeWithText("Offer removal when verified").assertIsOff()
+                compose.onNodeWithContentDescription("Back to transfers").performClick()
+                waitFor("Files")
+
+                prefs.setWifiOnly(false)
+                prefs.setAutoRemove(true)
+            },
         ) { vm -> AppRoot(vm) }
     }
 
