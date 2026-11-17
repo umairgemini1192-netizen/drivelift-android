@@ -77,7 +77,9 @@ class MainActivity : FragmentActivity() {
     override fun onDestroy() {
         // Back from the root or a swipe in Recents ends the UI session; uploads may keep the
         // process alive, so the lock is reset here rather than relying on a process restart.
-        if (isFinishing && !isChangingConfigurations) Graph.get(this).lock.lock()
+        val graph = Graph.get(this)
+        if (isFinishing && !isChangingConfigurations) graph.lock.lock()
+        (graph.authenticator as? BiometricAuthenticator)?.unbind(this)
         super.onDestroy()
     }
 

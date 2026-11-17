@@ -10,7 +10,6 @@ import androidx.fragment.app.FragmentActivity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.update
-import java.lang.ref.WeakReference
 
 /**
  * Why the app is still locked after an attempt, shown on the locked screen.
@@ -84,16 +83,26 @@ interface Authenticator {
  * is no fallback to the device PIN: the owner has not approved one.
  */
 class BiometricAuthenticator(private val lock: AppLock) : Authenticator {
-    private var prompt: WeakReference<BiometricPrompt>? = null
+    // Held strongly for the activity's lifetime so retries and the prompt after a screen-off lock
+    // always have it; released in [unbind] so the activity is never leaked.
+    private var prompt: BiometricPrompt? = null
+    private var owner: FragmentActivity? = null
 
     /**
      * Called from the activity's onCreate, as BiometricPrompt requires, so a prompt that is open
      * during a configuration change reports to the new activity.
      */
     fun bind(activity: FragmentActivity) {
-        prompt = WeakReference(
-            BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), Callback(lock)),
-        )
+        owner = activity
+        prompt = BiometricPrompt(activity, ContextCompat.getMainExecutor(activity), Callback(lock))
+    }
+
+    /** Called from the activity's onDestroy. A newer activity that already bound is left alone. */
+    fun unbind(activity: FragmentActivity) {
+        if (owner === activity) {
+            owner = null
+            prompt = null
+        }
     }
 
     override fun availability(context: Context): BiometricAvailability =
@@ -104,7 +113,7 @@ class BiometricAuthenticator(private val lock: AppLock) : Authenticator {
         }
 
     override fun authenticate(context: Context) {
-        val current = prompt?.get()
+        val current = prompt
         if (current == null || context.findFragmentActivity() == null) {
             lock.onProblem(LockProblem.Error("the unlock prompt could not be opened"))
             return
