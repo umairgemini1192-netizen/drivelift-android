@@ -12,6 +12,8 @@ import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
+import androidx.compose.ui.test.onRoot
+import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.drivelift.app.data.frameFileName
@@ -102,6 +104,44 @@ class VideoControlsTest {
             assertEquals(1, toggles)
             assertEquals(1, speeds)
             assertEquals(1, captures)
+        }
+    }
+
+    @Test
+    fun allControlsKeepFullTargetsOnACompactPhoneWithLargeText() {
+        // The production layout: 320 dp wide, 1.5x text, the player's outer Tokens.Edge padding.
+        org.robolectric.RuntimeEnvironment.setFontScale(1.5f)
+        try {
+            compose.mainClock.autoAdvance = false
+            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+                scenario.onActivity {
+                    it.setContent {
+                        DriveLiftTheme {
+                            VideoControls(
+                                state = VideoUiState(
+                                    playing = true, position = 3_729_000, duration = 7_200_000,
+                                    speed = 1.25f, quality = qualityLabel(3840, 2160, 60f), zoomed = true,
+                                ),
+                                onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {}, onFit = {},
+                                modifier = androidx.compose.ui.Modifier.padding(Tokens.Edge),
+                            )
+                        }
+                    }
+                }
+                pump()
+                val rootWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
+                for (label in listOf(
+                    "Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo",
+                    "Playback speed 1.25x", "Fit the whole picture",
+                )) {
+                    val node = compose.onNodeWithContentDescription(label)
+                    node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
+                    val bounds = node.fetchSemanticsNode().boundsInRoot
+                    org.junit.Assert.assertTrue("$label is cut off ($bounds, screen $rootWidth)", bounds.right <= rootWidth + 1f)
+                }
+            }
+        } finally {
+            org.robolectric.RuntimeEnvironment.setFontScale(1f)
         }
     }
 

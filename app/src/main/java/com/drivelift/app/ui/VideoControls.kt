@@ -25,6 +25,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -101,21 +103,35 @@ internal fun VideoControls(
 
     GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    state.quality,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
-                )
+            // Speed and Fit sit beside the quality label, or on their own row on a narrow phone or
+            // with large text, so the transport buttons below always keep 48 dp each.
+            val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+            val options: @Composable () -> Unit = {
                 if (state.zoomed) {
                     TextButton(
                         onClick = onFit,
                         modifier = Modifier.semantics { contentDescription = "Fit the whole picture" },
                     ) { Text("Fit") }
                 }
+                TextButton(
+                    onClick = onSpeed,
+                    modifier = Modifier.semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
+                ) { Text(speedLabel(state.speed)) }
+            }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    state.quality,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = if (stacked) 2 else 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (!stacked) options()
+            }
+            if (stacked) {
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { options() }
             }
             Slider(
                 value = if (duration > 0) (shown.toFloat() / duration).coerceIn(0f, 1f) else 0f,
@@ -153,12 +169,9 @@ internal fun VideoControls(
             }
             Row(
                 Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(onClick = onSpeed, modifier = Modifier.semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" }) {
-                    Text(speedLabel(state.speed))
-                }
                 IconButton(
                     onClick = { onSeek(skipTarget(state.position, duration, -SKIP_MS)) },
                     modifier = Modifier.size(Tokens.TouchTarget),
