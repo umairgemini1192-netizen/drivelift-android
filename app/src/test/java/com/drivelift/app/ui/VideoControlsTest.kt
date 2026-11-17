@@ -146,6 +146,68 @@ class VideoControlsTest {
     }
 
     @Test
+    fun frameStepMovesOneFrameAndIsOfferedOnlyWhilePaused() {
+        assertEquals(1_017L, frameStepTarget(1_000, 10_000, 60f, forward = true))
+        assertEquals(983L, frameStepTarget(1_000, 10_000, 60f, forward = false))
+        assertEquals(1_033L, frameStepTarget(1_000, 10_000, -1f, forward = true))
+        assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
+        assertEquals(10_000L, frameStepTarget(9_990, 10_000, 30f, forward = true))
+
+        val steps = mutableListOf<Boolean>()
+        var playing by androidx.compose.runtime.mutableStateOf(false)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(
+                                playing = playing, position = 1_000, duration = 10_000,
+                                speed = 1f, quality = qualityLabel(1920, 1080, 30f),
+                            ),
+                            onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                            onStepFrame = { steps += it },
+                        )
+                    }
+                }
+            }
+            pump()
+            for (label in listOf("Previous frame", "Next frame")) {
+                compose.onNodeWithContentDescription(label)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+            }
+            compose.onNodeWithContentDescription("Previous frame").performClick()
+            compose.onNodeWithContentDescription("Next frame").performClick()
+            pump()
+            assertEquals(listOf(false, true), steps)
+        }
+        playing = true
+    }
+
+    @Test
+    fun frameStepIsHiddenWhilePlaying() {
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(
+                                playing = true, position = 1_000, duration = 10_000,
+                                speed = 1f, quality = qualityLabel(1920, 1080, 30f),
+                            ),
+                            onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                        )
+                    }
+                }
+            }
+            pump()
+            assertEquals(0, compose.onAllNodesWithText("Frame").fetchSemanticsNodes().size)
+        }
+    }
+
+    @Test
     fun captureIsDisabledWhileAFrameIsBeingSaved() {
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->

@@ -371,7 +371,7 @@ class ScreenshotTest {
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 VideoControls(
                     state = VideoUiState(
-                        playing = true, position = 83_000, duration = 754_000,
+                        playing = false, position = 83_000, duration = 754_000,
                         speed = 1.25f, quality = qualityLabel(3840, 2160, 60f),
                     ),
                     onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
@@ -642,7 +642,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.8 (build 7)",
+            "build-id", expect = "DriveLift 1.0.0-preview.10 (build 9)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")

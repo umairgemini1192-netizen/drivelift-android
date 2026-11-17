@@ -443,6 +443,16 @@ private fun VideoPlayer(
                     captureFrame()
                     touched()
                 },
+                onStepFrame = { forward ->
+                    // Stepping implies a still picture: pause first, then move exactly one frame.
+                    player.pause()
+                    val target = frameStepTarget(
+                        player.currentPosition, duration, player.videoFormat?.frameRate ?: -1f, forward,
+                    )
+                    player.seekTo(target)
+                    position = target
+                    touched()
+                },
                 onScrubbingChange = { active ->
                     scrubbing = active
                     touched()

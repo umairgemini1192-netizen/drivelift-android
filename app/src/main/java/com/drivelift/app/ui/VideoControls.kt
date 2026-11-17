@@ -7,6 +7,8 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Forward10
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -63,6 +65,16 @@ internal fun qualityLabel(width: Int, height: Int, frameRate: Float): String {
     return "Original  ·  ${width}x$height$fps"
 }
 
+/** Frames per second assumed when the video does not say. */
+internal const val DEFAULT_FRAME_RATE = 30f
+
+/** Where one frame forward or back lands, clamped to the video. */
+internal fun frameStepTarget(position: Long, duration: Long, frameRate: Float, forward: Boolean): Long {
+    val fps = if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE
+    val frameMs = Math.round(1000f / fps).toLong().coerceAtLeast(1)
+    return skipTarget(position, duration, if (forward) frameMs else -frameMs)
+}
+
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
     return if (duration > 0) target.coerceAtMost(duration) else target
@@ -95,6 +107,8 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
+    /** One frame back (false) or forward (true); offered while the video is paused. */
+    onStepFrame: (Boolean) -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
     var dragTarget by remember { mutableStateOf<Long?>(null) }
@@ -166,6 +180,29 @@ internal fun VideoControls(
                     modifier = Modifier.weight(1f).padding(start = Tokens.Small),
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
+            }
+            // Frame by frame, on its own row so the transport buttons keep 48 dp on any phone.
+            if (!state.playing) {
+                Row(
+                    Modifier.fillMaxWidth().testTag("frame-step"),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = { onStepFrame(false) },
+                        modifier = Modifier.semantics { contentDescription = "Previous frame" },
+                    ) {
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
+                        Text("Frame")
+                    }
+                    TextButton(
+                        onClick = { onStepFrame(true) },
+                        modifier = Modifier.semantics { contentDescription = "Next frame" },
+                    ) {
+                        Text("Frame")
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
+                    }
+                }
             }
             Row(
                 Modifier.fillMaxWidth(),
