@@ -153,7 +153,8 @@ class VideoControlsTest {
         assertEquals(983L, frameStepTarget(1_000, 10_000, 60f, forward = false))
         assertEquals(1_033L, frameStepTarget(1_000, 10_000, -1f, forward = true))
         assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
-        assertEquals(10_000L, frameStepTarget(9_990, 10_000, 30f, forward = true))
+        // The last frame of a 10 s clip at 30 fps is frame 299 (9966 ms); Next stays there.
+        assertEquals(9_966L, frameStepTarget(9_990, 10_000, 30f, forward = true))
         // Straight after scrubbing between frames: 1001 ms at 60 fps shows frame 61 (1016.67 ms), so
         // Next goes to frame 62 and Previous to frame 60, neither repeating nor skipping.
         assertEquals(61L, frameIndexAt(1_001, 60.0))
