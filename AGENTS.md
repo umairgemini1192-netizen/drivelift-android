@@ -97,4 +97,5 @@ Claude Stance for ChatGPT:
   - `versionName` and `versionCode`[cite: 1]
   - Signing certificate `SHA-1` and `SHA-256` fingerprints[cite: 1]
   - Published APK file `SHA-256` checksum[cite: 1]
+- **On-Phone Checklist:** With every release, tell the owner in chat exactly what to check on the phone: the version label to confirm, each new feature to try step by step, what a pass looks like, and what to report back. Do not rely on the release notes alone.
 - **Copy Hygiene:** Zero emojis anywhere in code, commits, PRs, or release notes, and zero em-dashes (`—`) in UI copy[cite: 1].
