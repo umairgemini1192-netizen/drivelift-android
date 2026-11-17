@@ -6,7 +6,10 @@ import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -123,6 +126,51 @@ class VideoControlsTest {
             compose.onNodeWithContentDescription("Save this frame as a photo").assertIsNotEnabled()
             compose.onNodeWithContentDescription("Play").assertExists()
         }
+    }
+
+    @Test
+    fun fitAppearsOnlyWhenZoomedAndResets() {
+        var fits = 0
+        var zoomed by androidx.compose.runtime.mutableStateOf(false)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(
+                                playing = true, position = 1_000, duration = 10_000,
+                                speed = 1f, quality = qualityLabel(1920, 1080, 30f), zoomed = zoomed,
+                            ),
+                            onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                            onFit = { fits++; zoomed = false },
+                        )
+                    }
+                }
+            }
+            pump()
+            assertEquals(0, compose.onAllNodesWithText("Fit").fetchSemanticsNodes().size)
+            zoomed = true
+            pump()
+            compose.onNodeWithContentDescription("Fit the whole picture").performClick()
+            pump()
+            assertEquals(1, fits)
+            assertEquals(0, compose.onAllNodesWithText("Fit").fetchSemanticsNodes().size)
+        }
+    }
+
+    @Test
+    fun zoomClampsSoThePictureNeverLeavesTheScreen() {
+        val zoom = ImageTransformState()
+        val bounds = androidx.compose.ui.unit.IntSize(1000, 500)
+        zoom.applyGesture(pan = androidx.compose.ui.geometry.Offset(5_000f, 5_000f), zoom = 2f, bounds = bounds)
+        assertEquals(2f, zoom.scale)
+        assertEquals(500f, zoom.offset.x)
+        assertEquals(250f, zoom.offset.y)
+        zoom.applyGesture(pan = androidx.compose.ui.geometry.Offset.Zero, zoom = 10f, bounds = bounds)
+        assertEquals("Zoom is capped at 4x", 4f, zoom.scale)
+        zoom.reset()
+        assertEquals(1f, zoom.scale)
     }
 
     private fun pump() = repeat(6) {

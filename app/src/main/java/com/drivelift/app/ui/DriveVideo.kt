@@ -1,15 +1,18 @@
 package com.drivelift.app.ui
 
 import androidx.annotation.OptIn
+import android.view.TextureView
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import android.graphics.Bitmap
-import android.os.Handler
-import android.os.Looper
-import android.view.PixelCopy
-import android.view.SurfaceView
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -57,7 +60,6 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
-import androidx.media3.ui.PlayerView
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DriveVideoStream
@@ -223,7 +225,25 @@ private fun VideoPlayer(
     var capturing by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var interaction by remember(player) { mutableIntStateOf(0) }
-    var playerView by remember(player) { mutableStateOf<PlayerView?>(null) }
+    var textureView by remember(player) { mutableStateOf<TextureView?>(null) }
+    var videoAspect by remember(player) { mutableFloatStateOf(DEFAULT_ASPECT) }
+    var viewport by remember(player) { mutableStateOf(IntSize.Zero) }
+    // Zoom stays exactly where the user leaves it (through hiding controls, seeking, pausing and
+    // rotation) until they pinch again or tap Fit.
+    var savedZoom by rememberSaveable(file.id) { mutableFloatStateOf(1f) }
+    var savedPanX by rememberSaveable(file.id) { mutableFloatStateOf(0f) }
+    var savedPanY by rememberSaveable(file.id) { mutableFloatStateOf(0f) }
+    val zoom = remember(file.id) {
+        ImageTransformState().apply {
+            scale = savedZoom
+            offset = Offset(savedPanX, savedPanY)
+        }
+    }
+    fun rememberZoom() {
+        savedZoom = zoom.scale
+        savedPanX = zoom.offset.x
+        savedPanY = zoom.offset.y
+    }
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
@@ -236,16 +256,13 @@ private fun VideoPlayer(
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
                 // The screen stays on only while the video is actually playing.
-                playerView?.keepScreenOn = isPlaying
+                textureView?.keepScreenOn = isPlaying
             }
 
             override fun onVideoSizeChanged(videoSize: VideoSize) {
                 quality = qualityLabel(videoSize.width, videoSize.height, player.videoFormat?.frameRate ?: -1f)
-                // Full-resolution surface buffer, so a saved frame keeps the original resolution;
-                // the display still scales it to fit.
                 if (videoSize.width > 0 && videoSize.height > 0) {
-                    (playerView?.videoSurfaceView as? SurfaceView)?.holder
-                        ?.setFixedSize(videoSize.width, videoSize.height)
+                    videoAspect = videoSize.width * videoSize.pixelWidthHeightRatio / videoSize.height
                 }
             }
         }
@@ -297,52 +314,64 @@ private fun VideoPlayer(
     }
 
     fun captureFrame() {
-        val surface = playerView?.videoSurfaceView as? SurfaceView
+        val view = textureView
         val size = player.videoSize
-        if (surface == null || size.width <= 0 || size.height <= 0) {
+        if (view == null || size.width <= 0 || size.height <= 0) {
             scope.launch { vm.messages.emit("The video is not showing a picture yet. Try again in a moment.") }
             return
         }
         capturing = true
         val at = player.currentPosition
-        val bitmap = Bitmap.createBitmap(size.width, size.height, Bitmap.Config.ARGB_8888)
-        PixelCopy.request(
-            surface,
-            bitmap,
-            { result ->
-                scope.launch {
-                    if (result == PixelCopy.SUCCESS) {
-                        vm.saveVideoFrame(bitmap, file.name, at)
-                    } else {
-                        vm.messages.emit("Couldn't capture this frame.")
-                    }
-                    capturing = false
-                }
-            },
-            Handler(Looper.getMainLooper()),
-        )
+        // The decoded frame at the video's own resolution; zoom and screen size do not affect it.
+        val bitmap = view.getBitmap(size.width, size.height)
+        scope.launch {
+            if (bitmap != null) {
+                vm.saveVideoFrame(bitmap, file.name, at)
+            } else {
+                vm.messages.emit("Couldn't capture this frame.")
+            }
+            capturing = false
+        }
     }
 
     Box(Modifier.fillMaxSize()) {
-        AndroidView(
-            factory = { viewContext ->
-                PlayerView(viewContext).apply {
-                    this.player = player
-                    useController = false
-                    keepScreenOn = player.isPlaying
-                    playerView = this
-                }
-            },
-            // Full screen; the top bar overlays it while the controls are shown.
-            modifier = Modifier
-                .fillMaxSize()
-                .testTag("viewer-video"),
-        )
-        // Tap shows or hides the controls; double tap on the left or right half skips 10 s.
+        Box(
+            Modifier.fillMaxSize().onSizeChanged { viewport = it },
+            contentAlignment = Alignment.Center,
+        ) {
+            // Full screen, fitted to the video's shape; the top bar overlays it while the
+            // controls are shown. A TextureView, unlike a SurfaceView, can be scaled for zoom.
+            AndroidView(
+                factory = { viewContext ->
+                    TextureView(viewContext).also { view ->
+                        player.setVideoTextureView(view)
+                        view.keepScreenOn = player.isPlaying
+                        textureView = view
+                    }
+                },
+                modifier = Modifier
+                    .aspectRatio(videoAspect)
+                    .testTag("viewer-video")
+                    .graphicsLayer(
+                        scaleX = zoom.scale,
+                        scaleY = zoom.scale,
+                        translationX = zoom.offset.x,
+                        translationY = zoom.offset.y,
+                    ),
+            )
+        }
+        // Tap shows or hides the controls; double tap on the left or right half skips 10 s; pinch
+        // zooms smoothly up to 4x and a drag moves around the zoomed picture.
         Box(
             Modifier
                 .fillMaxSize()
                 .testTag("video-touch")
+                .pointerInput(player) {
+                    detectTransformGestures { _, pan, gestureZoom, _ ->
+                        zoom.applyGesture(pan = pan, zoom = gestureZoom, bounds = viewport)
+                        rememberZoom()
+                    }
+                }
                 .pointerInput(player) {
                     detectTapGestures(
                         onTap = {
@@ -365,6 +394,7 @@ private fun VideoPlayer(
                     speed = savedSpeed,
                     quality = quality,
                     capturing = capturing,
+                    zoomed = zoom.scale > ZOOMED_THRESHOLD,
                 ),
                 onPlayPause = {
                     if (player.isPlaying) player.pause() else player.play()
@@ -384,6 +414,11 @@ private fun VideoPlayer(
                     captureFrame()
                     touched()
                 },
+                onFit = {
+                    zoom.reset()
+                    rememberZoom()
+                    touched()
+                },
                 modifier = Modifier.align(Alignment.BottomCenter).padding(Tokens.Edge),
             )
         }
@@ -391,6 +426,8 @@ private fun VideoPlayer(
 }
 
 private const val POSITION_REFRESH_MS = 250L
+private const val DEFAULT_ASPECT = 16f / 9f
+private const val ZOOMED_THRESHOLD = 1.05f
 
 private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
     is android.app.Activity -> this

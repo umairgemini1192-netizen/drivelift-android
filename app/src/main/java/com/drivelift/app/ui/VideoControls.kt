@@ -74,6 +74,8 @@ internal data class VideoUiState(
     val speed: Float,
     val quality: String,
     val capturing: Boolean = false,
+    /** The picture is zoomed in; a Fit button brings it back to the whole frame. */
+    val zoomed: Boolean = false,
 )
 
 /**
@@ -88,6 +90,7 @@ internal fun VideoControls(
     onSpeed: () -> Unit,
     onCapture: () -> Unit,
     modifier: Modifier = Modifier,
+    onFit: () -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
     var dragTarget by remember { mutableStateOf<Long?>(null) }
@@ -96,13 +99,22 @@ internal fun VideoControls(
 
     GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
-            Text(
-                state.quality,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    state.quality,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (state.zoomed) {
+                    TextButton(
+                        onClick = onFit,
+                        modifier = Modifier.semantics { contentDescription = "Fit the whole picture" },
+                    ) { Text("Fit") }
+                }
+            }
             Slider(
                 value = if (duration > 0) (shown.toFloat() / duration).coerceIn(0f, 1f) else 0f,
                 onValueChange = { dragTarget = (it * duration).toLong() },
