@@ -364,6 +364,22 @@ class ScreenshotTest {
     }
 
     @Test
+    fun driveVideoError() {
+        grantMedia()
+        eachVariant(
+            "drive-video-error",
+            expect = "Could not play video",
+            connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Trip to the coast.mp4")
+                compose.onNodeWithText("Trip to the coast.mp4").performClick()
+                waitFor("Could not play video")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
     fun driveViewerAuthExpired() {
         grantMedia()
         eachVariant(
@@ -606,7 +622,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.7 (build 6)",
+            "build-id", expect = "DriveLift 1.0.0-preview.8 (build 7)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")

@@ -7,6 +7,7 @@ import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
@@ -33,6 +34,7 @@ import java.io.IOException
 import java.nio.ByteBuffer
 import java.time.Instant
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
@@ -100,6 +102,10 @@ interface DriveFolders {
         maxBytes: Long,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ): ByteArray = throw IOException("Preview not available")
+
+    /** A stream for the in-app video player, authorised for the connected account. */
+    suspend fun openVideoStream(file: DriveFile): DriveVideoStream =
+        throw IOException("Video playback is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -335,6 +341,37 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         }
         if (bytes.isNotEmpty()) previewCache.putBytes(email, file.id, variant, bytes)
         return bytes
+    }
+
+    override suspend fun openVideoStream(file: DriveFile): DriveVideoStream {
+        val current = AtomicReference(token())
+        val url = "$API/files".toHttpUrl().newBuilder()
+            .addPathSegment(file.id)
+            .addQueryParameter("alt", "media")
+            .build()
+        val client = http.newBuilder()
+            .readTimeout(30, TimeUnit.SECONDS)
+            // A token can expire during a long pause or a late seek. On 401 the rejected token is
+            // invalidated and the request retried once with a fresh one, as the other Drive calls
+            // do; only a second 401 reaches the player as "authorization expired". This runs on
+            // the player's loading thread, never the main thread.
+            .addInterceptor { chain ->
+                val response = chain.proceed(chain.request())
+                if (response.code != 401) return@addInterceptor response
+                response.close()
+                val rejected = current.get()
+                val fresh = runBlocking {
+                    DriveAuth.invalidate(context, rejected)
+                    runCatching { token() }.getOrNull()
+                }
+                if (fresh != null) current.set(fresh)
+                chain.proceed(chain.request())
+            }
+            // Redirects are followed by OkHttp, and every hop passes the trusted-host check before
+            // the current token is attached.
+            .addNetworkInterceptor { chain -> chain.proceed(authorizedMediaRequest(chain.request(), current.get())) }
+            .build()
+        return DriveVideoStream(url.toString(), client)
     }
 
     private suspend fun <T> executeTrustedMedia(initialUrl: HttpUrl, handle: suspend (Response) -> T): T {

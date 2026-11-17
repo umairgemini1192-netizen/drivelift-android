@@ -139,6 +139,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         },
     )
 
+    /** A stream for the in-app video player, authorised for the connected account. */
+    suspend fun openVideoStream(file: com.drivelift.app.drive.DriveFile): com.drivelift.app.drive.DriveVideoStream =
+        driveFolders.openVideoStream(file)
+
     fun connectDrive(interactive: Boolean) {
         if (driveConn.value == DriveConn.CONNECTING) return
         driveConn.value = DriveConn.CONNECTING

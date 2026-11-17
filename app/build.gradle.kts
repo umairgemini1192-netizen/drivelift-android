@@ -13,8 +13,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 6
-        versionName = "1.0.0-preview.7"
+        versionCode = 7
+        versionName = "1.0.0-preview.8"
     }
 
     signingConfigs {
@@ -91,6 +91,10 @@ dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("io.coil-kt:coil-compose:2.7.0")
     implementation("io.coil-kt:coil-video:2.7.0")
+
+    implementation("androidx.media3:media3-exoplayer:1.4.1")
+    implementation("androidx.media3:media3-ui:1.4.1")
+    implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation(composeBom)
