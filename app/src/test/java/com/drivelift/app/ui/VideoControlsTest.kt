@@ -165,6 +165,15 @@ class VideoControlsTest {
         assertEquals(500L, frameStepTarget(1_250, 10_000, 2f, forward = false, afterSeek = false))
         assertEquals(1_500L, frameStepTarget(1_250, 10_000, 2f, forward = true, afterSeek = false))
         assertEquals(60L, frameIndexAt(1_010, 60.0, afterSeek = false))
+        // At the end: a 2000 ms clip at 2 fps has frames 0 to 3. After it finishes (position 2000)
+        // or after stepping onto the last frame, Previous goes to frame 2 and Next stays on frame 3.
+        assertEquals(1_000L, frameStepTarget(2_000, 2_000, 2f, forward = false, afterSeek = false))
+        assertEquals(1_000L, frameStepTarget(2_000, 2_000, 2f, forward = false, afterSeek = true))
+        assertEquals(1_500L, frameStepTarget(1_500, 2_000, 2f, forward = true))
+        assertEquals(1_000L, frameStepTarget(frameStepTarget(1_500, 2_000, 2f, forward = true), 2_000, 2f, forward = false))
+        // A paused player restored after rotation at 1016 ms (a seek) shows frame 61 at 60 fps.
+        assertEquals(1_033L, frameStepTarget(1_016, 10_000, 60f, forward = true, afterSeek = true))
+        assertEquals(1_000L, frameStepTarget(1_016, 10_000, 60f, forward = false, afterSeek = true))
         // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
         for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120, 120f to 240, 240f to 480)) {
             var position = 0L

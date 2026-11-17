@@ -86,8 +86,10 @@ internal fun frameStepTarget(
     afterSeek: Boolean = true,
 ): Long {
     val fps = (if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE).toDouble()
-    val frame = frameIndexAt(position, fps, afterSeek)
-    val next = (if (forward) frame + 1 else frame - 1).coerceAtLeast(0)
+    // Frames exist only before the end: a 2000 ms clip at 2 fps has frames 0 to 3 (0 to 1500 ms).
+    val lastFrame = if (duration > 0) (Math.ceil(duration * fps / 1000.0 - FRAME_EPSILON).toLong() - 1).coerceAtLeast(0) else Long.MAX_VALUE
+    val frame = frameIndexAt(position, fps, afterSeek).coerceAtMost(lastFrame)
+    val next = (if (forward) frame + 1 else frame - 1).coerceIn(0, lastFrame)
     val target = Math.floor(next * 1000.0 / fps).toLong()
     return if (duration > 0) target.coerceAtMost(duration) else target
 }

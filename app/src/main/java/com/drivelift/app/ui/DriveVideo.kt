@@ -232,7 +232,8 @@ private fun VideoPlayer(
     var scrubbing by remember(player) { mutableStateOf(false) }
     // The last position this player was told to seek to. While the video is still there, the
     // frame on screen is the one at or after it; after playback it is the one at or before.
-    var lastSeekTarget by remember(player) { mutableStateOf<Long?>(null) }
+    // Restoring after rotation or recreation is itself a seek to the saved position.
+    var lastSeekTarget by remember(player) { mutableStateOf<Long?>(savedPosition) }
     fun seekTo(target: Long) {
         player.seekTo(target)
         lastSeekTarget = target
