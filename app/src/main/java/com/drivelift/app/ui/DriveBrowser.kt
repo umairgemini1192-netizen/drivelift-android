@@ -28,16 +28,15 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -48,10 +47,10 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
@@ -93,7 +92,7 @@ fun DriveBrowser(
         entries = null
         error = null
         try {
-            entries = vm.drive.listChildren(here.id, foldersOnly = pickMode)
+            entries = vm.driveFolders.listChildren(here.id, foldersOnly = pickMode)
         } catch (e: CancellationException) {
             throw e
         } catch (e: Exception) {
@@ -105,6 +104,10 @@ fun DriveBrowser(
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = Color.Transparent,
+                scrolledContainerColor = Color.Transparent,
+            ),
             title = {
                 Column {
                     Text(here.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -144,15 +147,15 @@ fun DriveBrowser(
                 conn != DriveConn.CONNECTED -> DriveStatusRow(
                     conn = conn, label = null,
                     onConnect = { vm.connectDrive(interactive = true) },
-                    modifier = Modifier.padding(20.dp),
+                    modifier = Modifier.padding(Tokens.Edge),
                 )
-                error != null -> Column(Modifier.padding(20.dp)) {
+                error != null -> Column(Modifier.padding(Tokens.Edge)) {
                     Text("Could not load this folder", style = MaterialTheme.typography.titleMedium)
                     Text(
                         error.orEmpty(),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 4.dp, bottom = 12.dp),
+                        modifier = Modifier.padding(top = Tokens.Tiny, bottom = Tokens.Medium),
                     )
                     OutlinedButton(onClick = { reload++ }) { Text("Try again") }
                 }
@@ -162,7 +165,7 @@ fun DriveBrowser(
                     else "This folder is empty.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(20.dp),
+                    modifier = Modifier.padding(Tokens.Edge),
                 )
                 else -> LazyColumn(Modifier.fillMaxSize()) {
                     items(list, key = { it.id }) { file ->
@@ -173,18 +176,14 @@ fun DriveBrowser(
                                 { stack = stack + Crumb(file.id, file.name) }
                             } else null,
                         )
-                        HorizontalDivider(
-                            modifier = Modifier.padding(start = 60.dp),
-                            color = MaterialTheme.colorScheme.outlineVariant,
-                        )
                     }
                 }
             }
         }
 
         if (pickMode && onPick != null && conn == DriveConn.CONNECTED) {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 2.dp) {
-                Column(Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp)) {
+            Box(Modifier.fillMaxWidth().glassBar()) {
+                Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
                     Row(
                         Modifier.fillMaxWidth().clickable(role = Role.Checkbox) { pin = !pin },
                         verticalAlignment = Alignment.CenterVertically,
@@ -193,12 +192,12 @@ fun DriveBrowser(
                         Text(
                             "Keep this folder as a preset",
                             style = MaterialTheme.typography.bodyLarge,
-                            modifier = Modifier.padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+                            modifier = Modifier.padding(start = Tokens.Medium, top = Tokens.Small, bottom = Tokens.Small),
                         )
                     }
                     Button(
                         onClick = { onPick(Destination(here.id, path), pin) },
-                        modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                        modifier = Modifier.fillMaxWidth().padding(top = Tokens.Tiny),
                     ) {
                         Text("Move here: ${here.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
                     }
@@ -233,7 +232,7 @@ fun DriveBrowser(
                         failure = null
                         scope.launch {
                             try {
-                                val created = vm.drive.createFolder(name.trim(), here.id)
+                                val created = vm.driveFolders.createFolder(name.trim(), here.id)
                                 showNewFolder = false
                                 stack = stack + Crumb(created.id, created.name)
                             } catch (e: CancellationException) {
@@ -262,17 +261,19 @@ private fun DriveRow(file: DriveFile, sizeLabel: String?, onClick: (() -> Unit)?
         file.mimeType.startsWith("video/") -> Icons.Outlined.Videocam
         else -> Icons.AutoMirrored.Outlined.InsertDriveFile
     }
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+        onClick = onClick,
+    ) {
     Row(
-        Modifier.fillMaxWidth()
-            .then(if (onClick != null) Modifier.clickable(onClick = onClick) else Modifier)
-            .padding(horizontal = 20.dp, vertical = 14.dp),
+        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.RowLoose),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Icon(
-            icon, contentDescription = null, modifier = Modifier.size(24.dp),
+            icon, contentDescription = null, modifier = Modifier.size(Tokens.Icon),
             tint = if (file.isFolder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
         )
-        Spacer(Modifier.width(16.dp))
+        Spacer(Modifier.width(Tokens.Gutter))
         Column(Modifier.weight(1f)) {
             Text(file.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             if (sizeLabel != null) Text(
@@ -284,5 +285,6 @@ private fun DriveRow(file: DriveFile, sizeLabel: String?, onClick: (() -> Unit)?
             Icons.Outlined.ChevronRight, contentDescription = null,
             tint = MaterialTheme.colorScheme.onSurfaceVariant,
         )
+    }
     }
 }

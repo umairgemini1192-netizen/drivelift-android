@@ -1,6 +1,9 @@
 <resources>
-    <color name="launcher_background">#1F5F4A</color>
-    <style name="Theme.DriveLift" parent="android:Theme.Material.Light.NoActionBar">
-        <item name="android:windowBackground">#FAF8F4</item>
+    <!-- Launcher icon background and the window colour shown before Compose draws its first
+         frame. Both match the top of the backdrop in ui/Theme.kt (GlassPalette.SkyTop). -->
+    <color name="launcher_background">#15114A</color>
+    <color name="window_background">#070A1E</color>
+    <style name="Theme.DriveLift" parent="android:Theme.Material.NoActionBar">
+        <item name="android:windowBackground">@color/window_background</item>
     </style>
 </resources>

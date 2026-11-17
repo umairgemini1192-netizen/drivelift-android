@@ -16,6 +16,7 @@ copy is intact, and only then removes the originals from the phone.
 |---|---|
 | Compiles, debug APK builds | Yes, locally and in GitHub Actions |
 | Unit tests (retry timing, resume offset, speed meter, verification and removal safety, full folder listing) | 19 of 19 pass |
+| Screens rendered in CI (9 scenarios, each at standard size, large text and a narrow phone) | 27 screenshots per run, in the `screenshots` artifact |
 | Run on a real phone against a real Google account | Not yet. No device was attached when this was built |
 | Colour contrast and touch-target audit | Not measured |
 

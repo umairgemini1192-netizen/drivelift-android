@@ -48,6 +48,20 @@ android {
     buildFeatures {
         compose = true
     }
+
+    testOptions {
+        unitTests {
+            // Robolectric renders the real screens for the screenshot tests.
+            isIncludeAndroidResources = true
+            all {
+                it.maxHeapSize = "1536m"
+                // Images are written only when asked for: ./gradlew testDebugUnitTest -PrecordScreenshots
+                if (project.hasProperty("recordScreenshots")) {
+                    it.systemProperty("roborazzi.test.record", "true")
+                }
+            }
+        }
+    }
 }
 
 dependencies {
@@ -77,4 +91,12 @@ dependencies {
     implementation("io.coil-kt:coil-video:2.7.0")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation(composeBom)
+    testImplementation("androidx.compose.ui:ui-test-junit4")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
+    testImplementation("androidx.test:core-ktx:1.6.1")
+    testImplementation("org.robolectric:robolectric:4.14.1")
+    testImplementation("androidx.work:work-testing:2.10.0")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
+    testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
 }

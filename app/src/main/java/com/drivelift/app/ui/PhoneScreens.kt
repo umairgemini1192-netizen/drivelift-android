@@ -38,15 +38,14 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
+import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -57,25 +56,26 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaFolder
 import com.drivelift.app.data.MediaItem
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 
 // ---------------------------------------------------------------------------
 // Folder list
@@ -93,7 +93,7 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "lead") {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 28.dp, bottom = 8.dp)) {
+            Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header, bottom = Tokens.Small)) {
                 Text(
                     formatBytes(context, totalBytes),
                     style = MaterialTheme.typography.displayLarge,
@@ -115,7 +115,7 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
                     "${a.email}  ·  $quota"
                 },
                 onConnect = { vm.connectDrive(interactive = true) },
-                modifier = Modifier.padding(horizontal = 20.dp, vertical = 12.dp),
+                modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
             )
         }
         if (MediaAccess.isPartial(context)) {
@@ -124,7 +124,7 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
                     "Only the photos you selected are visible. Allow full access in system settings to see every folder.",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 20.dp, vertical = 4.dp),
+                    modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
                 )
             }
         }
@@ -132,12 +132,12 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
             Text(
                 "Folders",
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 20.dp, top = 16.dp, bottom = 4.dp),
+                modifier = Modifier.padding(start = Tokens.Edge, top = Tokens.Gutter, bottom = Tokens.Tiny),
             )
         }
         if (!loaded) {
             item(key = "loading") {
-                Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
+                Box(Modifier.fillMaxWidth().padding(Tokens.EmptyState), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
             }
@@ -147,30 +147,21 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
                     "No photos or videos found on this phone.",
                     style = MaterialTheme.typography.bodyLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(20.dp),
+                    modifier = Modifier.padding(Tokens.Edge),
                 )
             }
         }
         items(folders, key = { it.bucketId }) { folder ->
             FolderRow(folder, onOpen = { onOpen(folder.bucketId) }, onMove = { onMoveFolder(folder.bucketId) })
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 96.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
-            )
         }
     }
 }
 
 @Composable
 fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modifier: Modifier = Modifier) {
-    Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(12.dp),
-        color = MaterialTheme.colorScheme.surfaceContainerLow,
-        border = androidx.compose.foundation.BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant),
-    ) {
+    GlassPanel(modifier = modifier.fillMaxWidth()) {
         Row(
-            Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+            Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (conn == DriveConn.CONNECTED) {
@@ -178,15 +169,17 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
                     Icons.Outlined.CloudDone, contentDescription = null,
                     tint = MaterialTheme.colorScheme.primary,
                 )
-                Column(Modifier.padding(start = 12.dp)) {
+                Column(Modifier.padding(start = Tokens.Medium)) {
                     Text("Google Drive connected", style = MaterialTheme.typography.titleSmall)
                     if (label != null) Text(
                         label, style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        maxLines = 2, overflow = TextOverflow.Ellipsis,
                     )
                 }
             } else {
+                // With large text the button moves under the message instead of squeezing it.
+                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
                 Column(Modifier.weight(1f)) {
                     Text("Google Drive is not connected", style = MaterialTheme.typography.titleSmall)
                     Text(
@@ -194,12 +187,11 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    if (stacked) ConnectAction(conn, onConnect, Modifier.padding(top = Tokens.Medium))
                 }
-                Spacer(Modifier.width(12.dp))
-                if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp)
-                } else {
-                    Button(onClick = onConnect) { Text("Connect") }
+                if (!stacked) {
+                    Spacer(Modifier.width(Tokens.Medium))
+                    ConnectAction(conn, onConnect)
                 }
             }
         }
@@ -207,20 +199,33 @@ fun DriveStatusRow(conn: DriveConn, label: String?, onConnect: () -> Unit, modif
 }
 
 @Composable
+private fun ConnectAction(conn: DriveConn, onConnect: () -> Unit, modifier: Modifier = Modifier) {
+    if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
+        CircularProgressIndicator(modifier.size(Tokens.Icon), strokeWidth = Tokens.Stroke)
+    } else {
+        Button(onClick = onConnect, modifier = modifier) { Text("Connect") }
+    }
+}
+
+@Composable
 private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Unit) {
     val context = LocalContext.current
+    GlassPanel(
+        modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+        onClick = onOpen,
+    ) {
     Row(
-        Modifier.fillMaxWidth().clickable(onClick = onOpen).padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         AsyncImage(
             model = ImageRequest.Builder(context).data(folder.cover).size(192).build(),
             contentDescription = null,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.size(60.dp).clip(RoundedCornerShape(10.dp))
-                .background(MaterialTheme.colorScheme.surfaceVariant),
+            modifier = Modifier.size(Tokens.FolderThumb).clip(Tokens.ThumbShape)
+                .background(GlassPalette.Thumb),
         )
-        Column(Modifier.weight(1f).padding(horizontal = 16.dp)) {
+        Column(Modifier.weight(1f).padding(horizontal = Tokens.Gutter)) {
             Text(folder.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 "${folder.count} items  ·  ${formatBytes(context, folder.bytes)}",
@@ -234,8 +239,13 @@ private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Uni
             )
         }
         IconButton(onClick = onMove) {
-            Icon(Icons.Outlined.CloudUpload, contentDescription = "Move the whole ${folder.name} folder to Drive")
+            Icon(
+                Icons.Outlined.CloudUpload,
+                contentDescription = "Move the whole ${folder.name} folder to Drive",
+                tint = MaterialTheme.colorScheme.primary,
+            )
         }
+    }
     }
 }
 
@@ -289,6 +299,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
     Column(Modifier.fillMaxSize()) {
         TopAppBar(
+            colors = TopAppBarDefaults.topAppBarColors(
+                containerColor = Color.Transparent,
+                scrolledContainerColor = Color.Transparent,
+            ),
             title = {
                 Column {
                     Text(
@@ -323,10 +337,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
         )
 
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = 104.dp),
+            columns = GridCells.Adaptive(minSize = Tokens.GridCell),
             state = gridState,
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
-            verticalArrangement = Arrangement.spacedBy(2.dp),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.GridGap),
+            verticalArrangement = Arrangement.spacedBy(Tokens.GridGap),
             modifier = Modifier.weight(1f).dragSelect(
                 state = gridState,
                 autoScroll = { autoScroll.floatValue = it },
@@ -348,11 +362,11 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                     is GridEntry.Header -> {
                         val allDay = entry.ids.all { it in selection }
                         Row(
-                            Modifier.fillMaxWidth().padding(start = 16.dp, end = 4.dp, top = 12.dp),
+                            Modifier.fillMaxWidth().padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Medium),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             Text(
-                                "${entry.label}  ·  ${entry.ids.size}",
+                                "${entry.label}\u00A0\u00A0·\u00A0\u00A0${entry.ids.size}",
                                 style = MaterialTheme.typography.titleSmall,
                                 modifier = Modifier.weight(1f),
                             )
@@ -372,22 +386,40 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
         }
 
         if (selection.isNotEmpty()) {
-            Surface(color = MaterialTheme.colorScheme.surfaceContainer, tonalElevation = 2.dp) {
-                Row(
-                    Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 12.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
-                        Text(
-                            formatBytes(context, selectedBytes),
-                            style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
+            Box(Modifier.fillMaxWidth().glassBar()) {
+                // With large text or a narrow phone the two buttons would squeeze the count into
+                // a sliver, so the count goes on its own line above them.
+                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                    LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+                val summary: @Composable () -> Unit = {
+                    Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        formatBytes(context, selectedBytes),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (stacked) {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                        summary()
+                        Row(
+                            Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                            Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
+                        }
                     }
-                    OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                    Spacer(Modifier.width(8.dp))
-                    Button(onClick = onMove) { Text("Move to Drive") }
+                } else {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) { summary() }
+                        OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                        Spacer(Modifier.width(Tokens.Small))
+                        Button(onClick = onMove) { Text("Move to Drive") }
+                    }
                 }
             }
         }
@@ -396,27 +428,29 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
 @Composable
 private fun MediaCell(item: MediaItem, selected: Boolean, tracked: Boolean, onToggle: () -> Unit) {
-    val inset by animateDpAsState(if (selected) 10.dp else 0.dp, label = "inset")
+    val inset by animateDpAsState(
+        if (selected) Tokens.SelectedInset else Tokens.NoInset, AppMotion.spec(Tokens.Motion.SELECTION), label = "inset",
+    )
     Box(
         Modifier
             .aspectRatio(1f)
-            .background(MaterialTheme.colorScheme.surfaceVariant)
+            .background(GlassPalette.Thumb)
             .toggleable(value = selected, role = Role.Checkbox, onValueChange = { onToggle() }),
     ) {
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current).data(item.uri).size(256).build(),
             contentDescription = item.name,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) 8.dp else 0.dp)),
+            modifier = Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) Tokens.SelectedCorner else Tokens.NoInset)),
         )
         if (item.isVideo) {
             Text(
                 formatDuration(item.durationMs),
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.inverseOnSurface,
-                modifier = Modifier.align(Alignment.BottomEnd).padding(6.dp)
-                    .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.8f), RoundedCornerShape(4.dp))
-                    .padding(horizontal = 5.dp, vertical = 1.dp),
+                modifier = Modifier.align(Alignment.BottomEnd).padding(Tokens.Snug)
+                    .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.8f), Tokens.TagShape)
+                    .padding(horizontal = Tokens.TagPaddingHorizontal, vertical = Tokens.Hairline),
             )
         }
         if (tracked) {
@@ -424,18 +458,18 @@ private fun MediaCell(item: MediaItem, selected: Boolean, tracked: Boolean, onTo
                 Icons.Outlined.CloudDone,
                 contentDescription = "Already in a transfer",
                 tint = MaterialTheme.colorScheme.inverseOnSurface,
-                modifier = Modifier.align(Alignment.BottomStart).padding(6.dp).size(20.dp)
+                modifier = Modifier.align(Alignment.BottomStart).padding(Tokens.Snug).size(Tokens.Badge)
                     .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.8f), CircleShape)
-                    .padding(3.dp),
+                    .padding(Tokens.BadgePadding),
             )
         }
         if (selected) {
-            Box(Modifier.fillMaxSize().border(3.dp, MaterialTheme.colorScheme.primary))
+            Box(Modifier.fillMaxSize().border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary))
             Icon(
                 Icons.Outlined.CheckCircle,
                 contentDescription = null,
                 tint = MaterialTheme.colorScheme.onPrimary,
-                modifier = Modifier.align(Alignment.TopStart).padding(6.dp).size(24.dp)
+                modifier = Modifier.align(Alignment.TopStart).padding(Tokens.Snug).size(Tokens.Icon)
                     .background(MaterialTheme.colorScheme.primary, CircleShape),
             )
         }
@@ -456,7 +490,7 @@ private fun Modifier.dragSelect(
 ): Modifier {
     val lookup by rememberUpdatedState(indexOfKey)
     val range by rememberUpdatedState(onRange)
-    val edge = with(LocalDensity.current) { 72.dp.toPx() }
+    val edge = with(LocalDensity.current) { Tokens.AutoScrollEdge.toPx() }
     return pointerInput(Unit) {
         var anchor: Int? = null
         var base: Set<Long> = emptySet()

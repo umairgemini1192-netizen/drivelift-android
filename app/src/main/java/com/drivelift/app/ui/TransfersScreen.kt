@@ -32,7 +32,6 @@ import androidx.compose.material.icons.outlined.ErrorOutline
 import androidx.compose.material.icons.outlined.Schedule
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -56,7 +55,6 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
@@ -135,7 +133,7 @@ fun TransfersScreen(vm: AppViewModel) {
 
     if (tracked + failed + count(TransferStatus.CANCELLED) == 0) {
         Column(
-            Modifier.fillMaxSize().padding(horizontal = 24.dp),
+            Modifier.fillMaxSize().padding(horizontal = Tokens.Section),
             verticalArrangement = Arrangement.Center,
         ) {
             Text("Nothing in transit", style = MaterialTheme.typography.displaySmall)
@@ -143,9 +141,9 @@ fun TransfersScreen(vm: AppViewModel) {
                 "Open a folder on the Phone tab, select photos or videos, and choose where they go in Drive. Progress shows up here.",
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.padding(top = 12.dp).widthIn(max = 480.dp),
+                modifier = Modifier.padding(top = Tokens.Medium).widthIn(max = Tokens.ReadableWidth),
             )
-            SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = 24.dp))
+            SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = Tokens.Section))
         }
         return
     }
@@ -168,18 +166,19 @@ fun TransfersScreen(vm: AppViewModel) {
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "lead") {
-            Column(Modifier.padding(start = 20.dp, end = 20.dp, top = 28.dp)) {
-                Text("${(fraction * 100).toInt()}%", style = MaterialTheme.typography.displayLarge)
+            Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header)) {
+                DotArcGauge(
+                    fraction = fraction,
+                    label = "${(fraction * 100).toInt()}%",
+                    modifier = Modifier.align(Alignment.CenterHorizontally),
+                )
                 Text(
                     status,
+                    modifier = Modifier.padding(top = Tokens.Medium),
                     style = MaterialTheme.typography.bodyLarge,
                     color = if (live.phase == LiveProgress.Phase.RETRY_WAIT) MaterialTheme.colorScheme.error
                     else MaterialTheme.colorScheme.onSurface,
                     maxLines = 3, overflow = TextOverflow.Ellipsis,
-                )
-                LinearProgressIndicator(
-                    progress = { fraction },
-                    modifier = Modifier.fillMaxWidth().padding(top = 16.dp).height(8.dp),
                 )
                 val detail = buildString {
                     append("${formatBytes(context, doneBytes)} of ${formatBytes(context, totalBytes)}")
@@ -192,12 +191,13 @@ fun TransfersScreen(vm: AppViewModel) {
                     detail,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(top = 8.dp),
+                    modifier = Modifier.padding(top = Tokens.Small),
                 )
+                GlassPanel(Modifier.fillMaxWidth().padding(top = Tokens.Gutter)) {
                 FlowRow(
-                    modifier = Modifier.padding(top = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                    modifier = Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Section),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
                 ) {
                     Stat("Waiting", pending)
                     Stat("To verify", uploaded)
@@ -205,12 +205,13 @@ fun TransfersScreen(vm: AppViewModel) {
                     Stat("Removed", removed)
                     if (failed > 0) Stat("Failed", failed)
                 }
+                }
             }
         }
 
         if (verified > 0) {
             item(key = "remove") {
-                Column(Modifier.padding(horizontal = 20.dp).padding(top = 20.dp)) {
+                Column(Modifier.padding(horizontal = Tokens.Edge).padding(top = Tokens.Edge)) {
                     Button(
                         onClick = { removeRequest++ },
                         colors = ButtonDefaults.buttonColors(
@@ -219,23 +220,26 @@ fun TransfersScreen(vm: AppViewModel) {
                         ),
                         modifier = Modifier.fillMaxWidth(),
                     ) {
-                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(18.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("Remove $verified verified files from phone")
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
+                        Spacer(Modifier.width(Tokens.Small))
+                        Text(
+                            if (verified == 1) "Remove 1 verified file from phone"
+                            else "Remove $verified verified files from phone"
+                        )
                     }
                     Text(
                         "Only files whose Drive copy matched byte for byte are included. Android asks you to confirm.",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = 6.dp),
+                        modifier = Modifier.padding(top = Tokens.Snug),
                     )
                 }
             }
         }
 
         item(key = "controls") {
-            Column(Modifier.padding(horizontal = 20.dp).padding(top = 16.dp)) {
-                FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.padding(horizontal = Tokens.Edge).padding(top = Tokens.Gutter)) {
+                FlowRow(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                     if (pending + uploaded > 0) {
                         if (paused) OutlinedButton(onClick = vm::resume) { Text("Resume") }
                         else OutlinedButton(onClick = vm::pause) { Text("Pause") }
@@ -246,7 +250,7 @@ fun TransfersScreen(vm: AppViewModel) {
                         TextButton(onClick = vm::clearFinished) { Text("Clear finished") }
                     }
                 }
-                SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = 8.dp))
+                SettingRows(wifiOnly, autoRemove, vm, Modifier.padding(top = Tokens.Small))
             }
         }
 
@@ -254,7 +258,7 @@ fun TransfersScreen(vm: AppViewModel) {
             Text(
                 if (tracked > transfers.size) "Files (first ${transfers.size})" else "Files",
                 style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = 20.dp, top = 20.dp, bottom = 4.dp),
+                modifier = Modifier.padding(start = Tokens.Edge, top = Tokens.Edge, bottom = Tokens.Tiny),
             )
         }
         items(transfers, key = { it.id }) { item ->
@@ -262,10 +266,6 @@ fun TransfersScreen(vm: AppViewModel) {
                 item = item,
                 live = live.takeIf { it.itemId == item.id },
                 onCancel = { vm.cancel(item.id) },
-            )
-            HorizontalDivider(
-                modifier = Modifier.padding(start = 60.dp),
-                color = MaterialTheme.colorScheme.outlineVariant,
             )
         }
     }
@@ -299,10 +299,10 @@ private fun SwitchRow(title: String, body: String, checked: Boolean, onChange: (
     Row(
         Modifier.fillMaxWidth()
             .clickable(role = Role.Switch) { onChange(!checked) }
-            .padding(vertical = 10.dp),
+            .padding(vertical = Tokens.Row),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Column(Modifier.weight(1f).padding(end = 16.dp)) {
+        Column(Modifier.weight(1f).padding(end = Tokens.Gutter)) {
             Text(title, style = MaterialTheme.typography.bodyLarge)
             Text(body, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
         }
@@ -323,17 +323,18 @@ private fun TransferRow(item: TransferEntity, live: LiveProgress.State?, onCance
         TransferStatus.UPLOADED -> { icon = Icons.Outlined.CloudDone; label = "Uploaded, waiting to verify" }
         TransferStatus.VERIFIED -> { icon = Icons.Outlined.CheckCircle; label = "Verified in Drive"; tint = MaterialTheme.colorScheme.primary }
         TransferStatus.REMOVED -> { icon = Icons.Outlined.CheckCircle; label = "In Drive, removed from phone" }
-        TransferStatus.FAILED -> { icon = Icons.Outlined.ErrorOutline; label = "Not moved"; tint = MaterialTheme.colorScheme.error }
+        TransferStatus.FAILED -> { icon = Icons.Outlined.ErrorOutline; label = "Needs attention"; tint = MaterialTheme.colorScheme.error }
         TransferStatus.CANCELLED -> { icon = Icons.Outlined.Close; label = "Cancelled" }
     }
     val active = status == TransferStatus.QUEUED || status == TransferStatus.UPLOADING
 
+    GlassPanel(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny)) {
     Row(
-        Modifier.fillMaxWidth().padding(start = 20.dp, end = 8.dp, top = 10.dp, bottom = 10.dp),
+        Modifier.fillMaxWidth().padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(24.dp))
-        Column(Modifier.weight(1f).padding(start = 16.dp, end = 8.dp)) {
+        Icon(icon, contentDescription = null, tint = tint, modifier = Modifier.size(Tokens.Icon))
+        Column(Modifier.weight(1f).padding(start = Tokens.Gutter, end = Tokens.Small)) {
             Text(item.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
             val progress = live?.takeIf { it.total > 0 && it.phase != LiveProgress.Phase.RETRY_WAIT }
             Text(
@@ -351,7 +352,8 @@ private fun TransferRow(item: TransferEntity, live: LiveProgress.State?, onCance
             if (progress != null) {
                 LinearProgressIndicator(
                     progress = { progress.sent.toFloat() / progress.total },
-                    modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+                    trackColor = GlassPalette.Dim,
+                    modifier = Modifier.fillMaxWidth().padding(top = Tokens.Snug),
                 )
             }
             val problem = item.lastError
@@ -369,5 +371,6 @@ private fun TransferRow(item: TransferEntity, live: LiveProgress.State?, onCance
                 Icon(Icons.Outlined.Close, contentDescription = "Cancel ${item.name}")
             }
         }
+    }
     }
 }
