@@ -8,6 +8,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 /**
@@ -74,6 +75,43 @@ object Tokens {
     object Motion {
         const val SELECTION = 160
         const val PROGRESS = 300
+    }
+}
+
+/** User-selected thumbnail size / column density shared across Phone and Drive grids. */
+enum class GridDensity(
+    val phoneMinCell: Dp,
+    val driveMinCell: Dp,
+    val label: String,
+) {
+    LARGE(160.dp, 220.dp, "Large thumbnails"),
+    MEDIUM(104.dp, 132.dp, "Medium thumbnails"),
+    SMALL(78.dp, 96.dp, "Small thumbnails"),
+    COMPACT(60.dp, 76.dp, "Compact thumbnails"),
+    ;
+
+    fun zoomOutward(): GridDensity = when (this) {
+        COMPACT -> SMALL
+        SMALL -> MEDIUM
+        MEDIUM, LARGE -> LARGE
+    }
+
+    fun zoomInward(): GridDensity = when (this) {
+        LARGE -> MEDIUM
+        MEDIUM -> SMALL
+        SMALL, COMPACT -> COMPACT
+    }
+
+    fun nextAccessible(): GridDensity = when (this) {
+        LARGE -> COMPACT
+        MEDIUM -> LARGE
+        SMALL -> MEDIUM
+        COMPACT -> SMALL
+    }
+
+    companion object {
+        fun fromStored(name: String?): GridDensity =
+            entries.firstOrNull { it.name == name } ?: MEDIUM
     }
 }
 

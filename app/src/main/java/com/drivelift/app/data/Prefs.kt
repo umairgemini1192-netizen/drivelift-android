@@ -2,6 +2,7 @@ package com.drivelift.app.data
 
 import android.content.Context
 import com.drivelift.app.drive.AccountPinStore
+import com.drivelift.app.ui.GridDensity
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 
@@ -16,6 +17,9 @@ class Prefs(context: Context) : AccountPinStore {
 
     private val _paused = MutableStateFlow(sp.getBoolean(KEY_PAUSED, false))
     val paused: StateFlow<Boolean> = _paused
+
+    private val _gridDensity = MutableStateFlow(GridDensity.fromStored(sp.getString(KEY_GRID_DENSITY, null)))
+    val gridDensity: StateFlow<GridDensity> = _gridDensity
 
     /** Email of the connected Drive account. Only used to pin Drive token requests. */
     override var accountEmail: String?
@@ -37,10 +41,16 @@ class Prefs(context: Context) : AccountPinStore {
         _paused.value = value
     }
 
+    fun setGridDensity(value: GridDensity) {
+        sp.edit().putString(KEY_GRID_DENSITY, value.name).apply()
+        _gridDensity.value = value
+    }
+
     private companion object {
         const val KEY_WIFI = "wifi_only"
         const val KEY_AUTO_REMOVE = "auto_remove"
         const val KEY_PAUSED = "paused"
         const val KEY_ACCOUNT = "account_email"
+        const val KEY_GRID_DENSITY = "grid_density"
     }
 }

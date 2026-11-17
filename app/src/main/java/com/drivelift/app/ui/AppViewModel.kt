@@ -91,6 +91,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val live = LiveProgress.state
     val pickerMetrics = MutableStateFlow(PickerWindowMetrics())
+    val gridDensity: StateFlow<GridDensity> = graph.prefs.gridDensity
+
+    fun setGridDensity(density: GridDensity) {
+        graph.prefs.setGridDensity(density)
+    }
+
+    fun cycleGridDensity() {
+        setGridDensity(gridDensity.value.nextAccessible())
+    }
 
     val online: StateFlow<Boolean> = callbackFlow {
         val manager = app.getSystemService(ConnectivityManager::class.java)

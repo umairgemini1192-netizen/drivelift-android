@@ -35,6 +35,7 @@ import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -62,6 +63,7 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -267,6 +269,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     val media by vm.media.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
     val tracked by vm.trackedUris.collectAsStateWithLifecycle()
+    val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
 
     val items = remember(media, bucketId) { media.filter { it.bucketId == bucketId } }
     val entries = remember(items) {
@@ -288,6 +291,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
     val gridState = rememberLazyGridState()
     val autoScroll = remember { mutableFloatStateOf(0f) }
+    val pinchActive = remember { booleanArrayOf(false) }
     LaunchedEffect(autoScroll.floatValue) {
         if (autoScroll.floatValue != 0f) {
             while (isActive) {
@@ -314,6 +318,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         else formatBytes(context, selectedBytes),
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
                 }
             },
@@ -330,6 +336,15 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
             },
             actions = {
                 val all = selection.size == items.size && items.isNotEmpty()
+                IconButton(
+                    onClick = vm::cycleGridDensity,
+                    modifier = Modifier.size(Tokens.TouchTarget),
+                ) {
+                    Icon(
+                        Icons.Outlined.PhotoSizeSelectLarge,
+                        contentDescription = "Thumbnail size: ${gridDensity.label}",
+                    )
+                }
                 TextButton(onClick = { vm.setSelected(items.map { it.id }, !all) }) {
                     Text(if (all) "Select none" else "Select all")
                 }
@@ -337,20 +352,30 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
         )
 
         LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = Tokens.GridCell),
+            columns = GridCells.Adaptive(minSize = gridDensity.phoneMinCell),
             state = gridState,
             horizontalArrangement = Arrangement.spacedBy(Tokens.GridGap),
             verticalArrangement = Arrangement.spacedBy(Tokens.GridGap),
-            modifier = Modifier.weight(1f).dragSelect(
-                state = gridState,
-                autoScroll = { autoScroll.floatValue = it },
-                indexOfKey = { key -> (key as? Long)?.let(indexById::get) },
-                current = { vm.selection.value },
-                onRange = { base, from, to ->
-                    val range = if (from <= to) from..to else to..from
-                    vm.selection.value = base + range.map { items[it].id }
-                },
-            ),
+            modifier = Modifier
+                .weight(1f)
+                .testTag("phone-media-grid")
+                .pinchGridDensity(
+                    gridState = gridState,
+                    density = gridDensity,
+                    onDensityChange = vm::setGridDensity,
+                    onPinchStateChange = { pinchActive[0] = it },
+                )
+                .dragSelect(
+                    state = gridState,
+                    isPinching = { pinchActive[0] },
+                    autoScroll = { autoScroll.floatValue = it },
+                    indexOfKey = { key -> (key as? Long)?.let(indexById::get) },
+                    current = { vm.selection.value },
+                    onRange = { base, from, to ->
+                        val range = if (from <= to) from..to else to..from
+                        vm.selection.value = base + range.map { items[it].id }
+                    },
+                ),
         ) {
             items(
                 entries,
@@ -483,6 +508,7 @@ private fun MediaCell(item: MediaItem, selected: Boolean, tracked: Boolean, onTo
 @Composable
 private fun Modifier.dragSelect(
     state: LazyGridState,
+    isPinching: () -> Boolean,
     autoScroll: (Float) -> Unit,
     indexOfKey: (Any) -> Int?,
     current: () -> Set<Long>,
@@ -490,6 +516,7 @@ private fun Modifier.dragSelect(
 ): Modifier {
     val lookup by rememberUpdatedState(indexOfKey)
     val range by rememberUpdatedState(onRange)
+    val pinchGuard by rememberUpdatedState(isPinching)
     val edge = with(LocalDensity.current) { Tokens.AutoScrollEdge.toPx() }
     return pointerInput(Unit) {
         var anchor: Int? = null
@@ -501,6 +528,7 @@ private fun Modifier.dragSelect(
 
         detectDragGesturesAfterLongPress(
             onDragStart = { point ->
+                if (pinchGuard()) return@detectDragGesturesAfterLongPress
                 indexAt(point)?.let {
                     anchor = it
                     base = current()
@@ -516,6 +544,11 @@ private fun Modifier.dragSelect(
                 autoScroll(0f)
             },
             onDrag = { change, _ ->
+                if (pinchGuard()) {
+                    anchor = null
+                    autoScroll(0f)
+                    return@detectDragGesturesAfterLongPress
+                }
                 val start = anchor
                 if (start != null) {
                     val fromBottom = state.layoutInfo.viewportSize.height - change.position.y
