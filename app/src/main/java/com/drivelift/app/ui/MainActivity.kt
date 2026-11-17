@@ -2,7 +2,8 @@ package com.drivelift.app.ui
 
 import android.content.Intent
 import android.os.Bundle
-import androidx.activity.ComponentActivity
+import androidx.fragment.app.FragmentActivity
+import com.drivelift.app.Graph
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -55,7 +56,7 @@ import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.TransferStatus
 import com.drivelift.app.transfer.Notifications
 
-class MainActivity : ComponentActivity() {
+class MainActivity : FragmentActivity() {
     private val vm: AppViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -64,7 +65,20 @@ class MainActivity : ComponentActivity() {
         val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
         enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
         routeIntent(intent)
-        setContent { DriveLiftTheme { GlassBackdrop { AppRoot(vm) } } }
+        val graph = Graph.get(this)
+        (graph.authenticator as? BiometricAuthenticator)?.bind(this)
+        setContent {
+            DriveLiftTheme {
+                GlassBackdrop { LockGate(graph.lock, graph.authenticator) { AppRoot(vm) } }
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        // Back from the root or a swipe in Recents ends the UI session; uploads may keep the
+        // process alive, so the lock is reset here rather than relying on a process restart.
+        if (isFinishing && !isChangingConfigurations) Graph.get(this).lock.lock()
+        super.onDestroy()
     }
 
     override fun onNewIntent(intent: Intent) {

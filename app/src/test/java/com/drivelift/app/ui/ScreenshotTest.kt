@@ -589,10 +589,24 @@ class ScreenshotTest {
     }
 
     @Test
+    fun lockScreen() {
+        eachVariant("lock-screen", expect = "DriveLift is locked") { _ ->
+            LockedScreen(state = AppLock.State(), onUnlock = {}, onEnroll = {})
+        }
+    }
+
+    @Test
+    fun lockScreenNotEnrolled() {
+        eachVariant("lock-not-enrolled", expect = "Set up fingerprint or face") { _ ->
+            LockedScreen(state = AppLock.State(problem = LockProblem.NotEnrolled), onUnlock = {}, onEnroll = {})
+        }
+    }
+
+    @Test
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.6 (build 5)",
+            "build-id", expect = "DriveLift 1.0.0-preview.7 (build 6)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
