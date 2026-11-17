@@ -159,6 +159,12 @@ class VideoControlsTest {
         assertEquals(61L, frameIndexAt(1_001, 60.0))
         assertEquals(1_033L, frameStepTarget(1_001, 10_000, 60f, forward = true))
         assertEquals(1_000L, frameStepTarget(1_001, 10_000, 60f, forward = false))
+        // Straight after pausing ordinary playback: 1250 ms at 2 fps still shows the 1000 ms frame,
+        // so Previous goes to 500 ms and Next to 1500 ms.
+        assertEquals(2L, frameIndexAt(1_250, 2.0, afterSeek = false))
+        assertEquals(500L, frameStepTarget(1_250, 10_000, 2f, forward = false, afterSeek = false))
+        assertEquals(1_500L, frameStepTarget(1_250, 10_000, 2f, forward = true, afterSeek = false))
+        assertEquals(60L, frameIndexAt(1_010, 60.0, afterSeek = false))
         // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
         for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120, 120f to 240, 240f to 480)) {
             var position = 0L

@@ -69,28 +69,41 @@ internal fun qualityLabel(width: Int, height: Int, frameRate: Float): String {
 internal const val DEFAULT_FRAME_RATE = 30f
 
 /**
- * Where one frame forward or back lands, clamped to the video. The frame on screen is read from
- * the position as the first frame at or after it (what Media3 shows after a seek), the neighbouring frame number is taken, and the seek goes to that
- * frame's timestamp rounded down. Media3 skips frames earlier than the seek position, so seeking
- * at or just before the timestamp shows exactly that frame; working from frame numbers means
- * repeated steps never drift.
+ * Where one frame forward or back lands, clamped to the video. The frame on screen is worked out
+ * from the position (see [frameIndexAt]), the neighbouring frame number is taken, and the seek
+ * goes to that frame's timestamp rounded down. Media3 skips frames earlier than the seek
+ * position, so seeking at or just before the timestamp shows exactly that frame; working from
+ * frame numbers means repeated steps never drift.
+ *
+ * [afterSeek] says whether the position is a seek target the player just went to (scrub, skip or
+ * an earlier step) rather than where ordinary playback was paused.
  */
-internal fun frameStepTarget(position: Long, duration: Long, frameRate: Float, forward: Boolean): Long {
+internal fun frameStepTarget(
+    position: Long,
+    duration: Long,
+    frameRate: Float,
+    forward: Boolean,
+    afterSeek: Boolean = true,
+): Long {
     val fps = (if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE).toDouble()
-    val frame = frameIndexAt(position, fps)
+    val frame = frameIndexAt(position, fps, afterSeek)
     val next = (if (forward) frame + 1 else frame - 1).coerceAtLeast(0)
     val target = Math.floor(next * 1000.0 / fps).toLong()
     return if (duration > 0) target.coerceAtMost(duration) else target
 }
 
 /**
- * The frame on screen after seeking to [position] ms: Media3 shows the first frame whose
- * timestamp is at or after the seek position, so this rounds up. It covers both an arbitrary
- * scrubber position (1001 ms at 60 fps shows frame 61) and an earlier step target, which is a
- * frame timestamp rounded down by less than 1 ms (exact at any frame rate below 1000 fps).
+ * The frame on screen at [position] ms.
+ * - After a seek, Media3 shows the first frame whose timestamp is at or after the seek position,
+ *   so this rounds up: 1001 ms at 60 fps shows frame 61, and an earlier step target (a frame
+ *   timestamp rounded down by under 1 ms) maps back to its own frame at any rate below 1000 fps.
+ * - After ordinary playback is paused, Media3 keeps showing the last frame it released, the one
+ *   at or before the position, so this rounds down: 1250 ms at 2 fps shows the 1000 ms frame.
  */
-internal fun frameIndexAt(position: Long, fps: Double): Long =
-    Math.ceil(position.coerceAtLeast(0) * fps / 1000.0 - FRAME_EPSILON).toLong()
+internal fun frameIndexAt(position: Long, fps: Double, afterSeek: Boolean = true): Long {
+    val exact = position.coerceAtLeast(0) * fps / 1000.0
+    return if (afterSeek) Math.ceil(exact - FRAME_EPSILON).toLong() else Math.floor(exact + FRAME_EPSILON).toLong()
+}
 
 private const val FRAME_EPSILON = 1e-9
 
