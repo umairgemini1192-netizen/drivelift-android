@@ -450,9 +450,11 @@ class GridDensityTest {
         vm.setGridDensity(GridDensity.SMALL)
         pump(4)
         compose.onAllNodesWithText("Photo_01.jpg").onFirst().performClick()
+        // Wait for the loaded image, not the cached thumbnail under the centred loading card.
         compose.waitUntil(5_000) {
             pump(1)
-            compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty()
+            compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty() &&
+                compose.onAllNodesWithText("Loading image preview").fetchSemanticsNodes().isEmpty()
         }
 
         compose.onNodeWithTag("viewer-image").performTouchInput {
