@@ -389,6 +389,17 @@ private fun ImagePreviewContent(
             )
         }
 
+        // Until the full image is ready the cached thumbnail is only context. Dim it with the shared
+        // scrim so the translucent glass notice above stays readable over bright pictures.
+        if (displayBitmap != null && state !is ImageViewerState.Ready) {
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .testTag("viewer-placeholder-scrim")
+                    .background(GlassPalette.ThumbScrim),
+            )
+        }
+
         when (val s = state) {
             ImageViewerState.Loading -> {
                 GlassPanel(
@@ -484,6 +495,7 @@ private fun FileDetailsPreview(
             Column(
                 Modifier
                     .fillMaxWidth()
+                    .testTag("viewer-details")
                     .verticalScroll(rememberScrollState())
                     .padding(Tokens.Edge),
             ) {
