@@ -219,6 +219,9 @@ private fun VideoPlayer(
             }
     }
     var playing by remember(player) { mutableStateOf(false) }
+    // What the user asked for, which stays true while a playing stream buffers.
+    var wantPlay by remember(player) { mutableStateOf(savedPlay) }
+    var ended by remember(player) { mutableStateOf(false) }
     var position by remember(player) { mutableLongStateOf(0L) }
     var duration by remember(player) { mutableLongStateOf(0L) }
     var quality by remember(player) { mutableStateOf(qualityLabel(0, 0, -1f)) }
@@ -253,6 +256,11 @@ private fun VideoPlayer(
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 savedPlay = playWhenReady
+                wantPlay = playWhenReady
+            }
+
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                ended = playbackState == Player.STATE_ENDED
             }
 
             override fun onIsPlayingChanged(isPlaying: Boolean) {
@@ -370,7 +378,7 @@ private fun VideoPlayer(
                 .testTag("video-touch")
                 .pointerInput(player) {
                     detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom.applyGesture(pan = pan, zoom = gestureZoom, bounds = viewport)
+                        zoom.applyVideoGesture(pan, gestureZoom, fittedVideoSize(viewport, videoAspect), viewport)
                         rememberZoom()
                     }
                 }
@@ -390,7 +398,7 @@ private fun VideoPlayer(
         if (controlsVisible) {
             VideoControls(
                 state = VideoUiState(
-                    playing = playing,
+                    playing = wantPlay && !ended,
                     position = position,
                     duration = duration,
                     speed = savedSpeed,
@@ -399,7 +407,8 @@ private fun VideoPlayer(
                     zoomed = zoom.scale > ZOOMED_THRESHOLD,
                 ),
                 onPlayPause = {
-                    if (player.isPlaying) {
+                    // Decided by intent, not by isPlaying: a buffering stream can still be paused.
+                    if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) {
                         player.pause()
                     } else {
                         // After the end, Play starts the video again from the beginning.
@@ -438,6 +447,41 @@ private fun VideoPlayer(
 }
 
 private const val POSITION_REFRESH_MS = 250L
+
+/** The size the video occupies when fitted inside [viewport] with its own shape. */
+internal fun fittedVideoSize(viewport: IntSize, aspect: Float): androidx.compose.ui.geometry.Size {
+    if (viewport.width <= 0 || viewport.height <= 0 || aspect <= 0f) return androidx.compose.ui.geometry.Size.Zero
+    val viewportAspect = viewport.width.toFloat() / viewport.height
+    return if (viewportAspect > aspect) {
+        androidx.compose.ui.geometry.Size(viewport.height * aspect, viewport.height.toFloat())
+    } else {
+        androidx.compose.ui.geometry.Size(viewport.width.toFloat(), viewport.width / aspect)
+    }
+}
+
+/**
+ * Pinch and drag for the video picture. Panning is limited by the zoomed picture itself, so its
+ * edges stop at the screen edges and it can never be dragged out of view; along an axis where the
+ * zoomed picture is still smaller than the screen it stays centred.
+ */
+internal fun ImageTransformState.applyVideoGesture(
+    pan: Offset,
+    zoom: Float,
+    picture: androidx.compose.ui.geometry.Size,
+    viewport: IntSize,
+) {
+    val nextScale = (scale * zoom).coerceIn(1f, MAX_VIDEO_ZOOM)
+    val maxX = ((picture.width * nextScale - viewport.width) / 2f).coerceAtLeast(0f)
+    val maxY = ((picture.height * nextScale - viewport.height) / 2f).coerceAtLeast(0f)
+    scale = nextScale
+    offset = if (nextScale <= 1.01f) {
+        Offset.Zero
+    } else {
+        Offset((offset.x + pan.x).coerceIn(-maxX, maxX), (offset.y + pan.y).coerceIn(-maxY, maxY))
+    }
+}
+
+private const val MAX_VIDEO_ZOOM = 4f
 private const val DEFAULT_ASPECT = 16f / 9f
 private const val ZOOMED_THRESHOLD = 1.05f
 

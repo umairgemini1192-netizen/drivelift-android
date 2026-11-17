@@ -169,6 +169,24 @@ class VideoControlsTest {
     }
 
     @Test
+    fun zoomedWideVideoInATallScreenCannotBeDraggedOutOfView() {
+        val viewport = androidx.compose.ui.unit.IntSize(320, 640)
+        val picture = fittedVideoSize(viewport, 16f / 9f)
+        assertEquals(320f, picture.width)
+        assertEquals(180f, picture.height)
+        val zoom = ImageTransformState()
+        zoom.applyVideoGesture(androidx.compose.ui.geometry.Offset(10_000f, 10_000f), 4f, picture, viewport)
+        assertEquals(4f, zoom.scale)
+        // 4x picture is 1280 x 720 in a 320 x 640 screen: edges stop at the screen edges.
+        assertEquals(480f, zoom.offset.x)
+        assertEquals(40f, zoom.offset.y)
+        // At 2x the picture (360 tall) is still shorter than the screen, so it stays centred vertically.
+        zoom.reset()
+        zoom.applyVideoGesture(androidx.compose.ui.geometry.Offset(0f, 500f), 2f, picture, viewport)
+        assertEquals(0f, zoom.offset.y)
+    }
+
+    @Test
     fun zoomClampsSoThePictureNeverLeavesTheScreen() {
         val zoom = ImageTransformState()
         val bounds = androidx.compose.ui.unit.IntSize(1000, 500)
