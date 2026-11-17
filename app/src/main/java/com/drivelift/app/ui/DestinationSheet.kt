@@ -4,12 +4,10 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
@@ -23,17 +21,14 @@ import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.window.Dialog
-import androidx.compose.ui.window.DialogProperties
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.transfer.Destination
@@ -41,16 +36,21 @@ import com.drivelift.app.transfer.Destination
 /** Asks where the selected files should go: auto-organize, a preset, or any Drive folder. */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destination) -> Unit) {
+fun DestinationSheet(
+    vm: AppViewModel,
+    onDismiss: () -> Unit,
+    onBrowseFolders: () -> Unit,
+    onChosen: (Destination) -> Unit,
+) {
     val context = LocalContext.current
     val selection by vm.selection.collectAsStateWithLifecycle()
     val media by vm.media.collectAsStateWithLifecycle()
     val presets by vm.presets.collectAsStateWithLifecycle()
     val conn by vm.driveConn.collectAsStateWithLifecycle()
-    var browsing by remember { mutableStateOf(false) }
     val bytes = remember(selection, media) { media.sumOf { if (it.id in selection) it.size else 0L } }
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(onDismissRequest = onDismiss, sheetState = sheetState) {
         Column(
             Modifier.fillMaxWidth().verticalScroll(rememberScrollState())
                 .padding(horizontal = Tokens.Edge).padding(bottom = Tokens.Edge).navigationBarsPadding(),
@@ -91,36 +91,9 @@ fun DestinationSheet(vm: AppViewModel, onDismiss: () -> Unit, onChosen: (Destina
             }
 
             OutlinedButton(
-                onClick = { browsing = true },
+                onClick = onBrowseFolders,
                 modifier = Modifier.fillMaxWidth().padding(top = Tokens.Medium),
             ) { Text("Choose a Drive folder") }
-        }
-    }
-
-    if (browsing) {
-        Dialog(
-            onDismissRequest = { browsing = false },
-            // Full screen, edge to edge, on every Android version: the window covers the status
-            // and navigation bars and the picker keeps its own content clear of them. With the
-            // platform's default fitting, the bottom bar ended up under the gesture area on a
-            // Pixel 8 Pro (issue 6).
-            properties = DialogProperties(usePlatformDefaultWidth = false, decorFitsSystemWindows = false),
-        ) {
-            // A dialog is its own window, so it needs its own backdrop.
-            GlassBackdrop {
-                DriveBrowser(
-                    vm = vm,
-                    pickMode = true,
-                    onClose = { browsing = false },
-                    onPick = { dest, pin ->
-                        if (pin && dest.folderId != null) {
-                            vm.pin(PresetEntity(dest.folderId, dest.label.substringAfterLast(" / "), dest.label))
-                        }
-                        browsing = false
-                        onChosen(dest)
-                    },
-                )
-            }
         }
     }
 }

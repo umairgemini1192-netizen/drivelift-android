@@ -8,6 +8,7 @@ import android.net.Network
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.drivelift.app.Graph
+import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaFolder
 import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.StatusCount
@@ -29,12 +30,27 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
 enum class DriveConn { UNKNOWN, CONNECTING, CONNECTED, DISCONNECTED }
+
+/** Non-PII layout and window inset measurements recorded by the destination folder picker. */
+data class PickerWindowMetrics(
+    val windowWidthPx: Int = 0,
+    val windowHeightPx: Int = 0,
+    val topInsetPx: Int = 0,
+    val bottomInsetPx: Int = 0,
+    val rootBottomPx: Int = 0,
+    val footerTopPx: Int = 0,
+    val footerBottomPx: Int = 0,
+    val moveHereTopPx: Int = 0,
+    val moveHereBottomPx: Int = 0,
+    val moveHereHeightPx: Int = 0,
+)
 
 class AppViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = Graph.get(app)
@@ -74,6 +90,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val presets: StateFlow<List<PresetEntity>> = graph.db.presets().observe()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     val live = LiveProgress.state
+    val pickerMetrics = MutableStateFlow(PickerWindowMetrics())
 
     val online: StateFlow<Boolean> = callbackFlow {
         val manager = app.getSystemService(ConnectivityManager::class.java)
@@ -199,10 +216,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Transfers
     fun startTransfer(dest: Destination) {
         val ids = selection.value
-        val items = media.value.filter { it.id in ids }
-        if (items.isEmpty()) return
+        if (ids.isEmpty()) return
         selection.value = emptySet()
         viewModelScope.launch {
+            if (!mediaLoaded.value && MediaAccess.hasPermission(getApplication())) {
+                mediaLoaded.first { it }
+            }
+            val items = media.value.filter { it.id in ids }
+            if (items.isEmpty()) return@launch
             val added = graph.transfers.enqueue(items, dest)
             val skipped = items.size - added
             messages.emit(

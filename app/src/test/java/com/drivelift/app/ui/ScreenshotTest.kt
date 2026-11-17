@@ -20,15 +20,26 @@ import android.view.View
 import android.view.ViewGroup
 import android.provider.MediaStore.Files.FileColumns
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
+import androidx.activity.enableEdgeToEdge
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
+import androidx.compose.runtime.saveable.SaveableStateRegistry
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
+import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -40,6 +51,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -59,6 +71,7 @@ import com.drivelift.app.drive.DriveAbout
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DriveFolders
+import com.drivelift.app.transfer.Destination
 import com.drivelift.app.transfer.LiveProgress
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -122,6 +135,8 @@ class ScreenshotTest {
     private val imagesStarted = AtomicInteger()
     private val imagesFinished = AtomicInteger()
     private val createCalls = AtomicInteger()
+    private var currentActivity: ComponentActivity? = null
+    private var currentVm: AppViewModel? = null
 
     @Before
     fun fakeWorkManager() {
@@ -321,7 +336,10 @@ class ScreenshotTest {
         seedPresets()
         eachVariant(
             "destination-sheet", expect = "Auto-organize by phone folder", connected = true, overlay = true,
-            act = { openDestinationSheet() },
+            act = {
+                openDestinationSheet()
+                waitFor("Choose a Drive folder")
+            },
         ) { vm -> AppRoot(vm) }
     }
 
@@ -338,7 +356,7 @@ class ScreenshotTest {
     fun folderPicker() {
         grantMedia()
         eachVariant(
-            "folder-picker", expect = "Move here: My Drive", connected = true, overlay = true, ownWindow = true,
+            "folder-picker", expect = "Move here: My Drive", connected = true,
             act = {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
@@ -352,7 +370,7 @@ class ScreenshotTest {
     fun folderPickerEmptyFolder() {
         grantMedia()
         eachVariant(
-            "folder-picker-empty", expect = "Move here: Archive 2024", connected = true, overlay = true, ownWindow = true,
+            "folder-picker-empty", expect = "Move here: Archive 2024", connected = true,
             act = {
                 openDestinationSheet()
                 tap("Choose a Drive folder")
@@ -395,26 +413,191 @@ class ScreenshotTest {
     @Test
     fun moveHereIsTappableAboveTheNavigationArea() {
         grantMedia()
-        for (navDp in listOf(GESTURE_NAV_DP, THREE_BUTTON_NAV_DP)) {
+        val configs = listOf(
+            Triple(STATUS_BAR_DP, GESTURE_NAV_DP, false),
+            Triple(STATUS_BAR_DP, THREE_BUTTON_NAV_DP, false),
+            Triple(TALL_CUTOUT_STATUS_DP, THREE_BUTTON_NAV_DP, true),
+        )
+        for ((statusDp, navDp, enterEmpty) in configs) {
             eachVariant(
-                "picker-tap-$navDp", expect = null, connected = true, overlay = true, capture = false,
+                "picker-tap-$statusDp-$navDp-$enterEmpty", expect = null, connected = true, capture = false,
                 act = {
                     openDestinationSheet()
                     tap("Choose a Drive folder")
-                    giveSystemBars(navDp)
-                    assertClearOfSystemBars("Move here: My Drive", navDp)
-                    // A pointer tap on the button itself, not a semantics action.
-                    compose.onNodeWithText("Move here: My Drive").performClick()
+                    val buttonLabel = if (enterEmpty) {
+                        tap("Archive 2024")
+                        "Move here: Archive 2024"
+                    } else {
+                        "Move here: My Drive"
+                    }
+                    giveSystemBars(navDp, statusDp)
+                    assertClearOfSystemBars(buttonLabel, navDp, statusDp)
+                    // Real pointer tap near the bottom edge of the actionable Move here button.
+                    compose.onNode(hasText(buttonLabel) and hasClickAction()).performTouchInput {
+                        click(Offset(center.x, bottom - 4f))
+                    }
                     pump(DIALOG_FRAMES)
                     assertTrue(
                         "The picker is still open after Move here",
-                        compose.onAllNodesWithText("Move here: My Drive").fetchSemanticsNodes().isEmpty(),
+                        compose.onAllNodesWithText(buttonLabel).fetchSemanticsNodes().isEmpty(),
                     )
                     val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
                     assertEquals("Move here did not queue the two selected files", 2, queued)
                 },
             ) { vm -> AppRoot(vm) }
         }
+    }
+
+    @Test
+    fun pickerCloseReturnsToDestinationSheetWithSelection() {
+        grantMedia()
+        eachVariant(
+            "picker-close", expect = null, connected = true, capture = false,
+            act = {
+                openDestinationSheet()
+                tap("Choose a Drive folder")
+                tap("Archive 2024")
+                giveSystemBars(THREE_BUTTON_NAV_DP, TALL_CUTOUT_STATUS_DP)
+                assertClearOfSystemBars("Move here: Archive 2024", THREE_BUTTON_NAV_DP, TALL_CUTOUT_STATUS_DP)
+                // System Back from subfolder returns to My Drive, then Back again returns to DestinationSheet.
+                currentActivity?.onBackPressedDispatcher?.onBackPressed()
+                waitFor("Move here: My Drive")
+                currentActivity?.onBackPressedDispatcher?.onBackPressed()
+                waitFor("Move 2 items to Drive")
+                assertEquals(2, currentVm?.selection?.value?.size)
+
+                // Re-enter picker and tap Close (X) also returns to DestinationSheet with selection intact.
+                tap("Choose a Drive folder")
+                waitFor("Move here: My Drive")
+                compose.onNodeWithContentDescription("Close").performClick()
+                waitFor("Move 2 items to Drive")
+                assertEquals(2, currentVm?.selection?.value?.size)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun destinationSheetActionsClearOfNavigation() {
+        grantMedia()
+        seedPresets()
+        eachVariant(
+            "destination-clear", expect = null, connected = true, overlay = true, capture = false,
+            act = {
+                openDestinationSheet()
+                giveSystemBars(THREE_BUTTON_NAV_DP, TALL_CUTOUT_STATUS_DP)
+                waitFor("Choose a Drive folder")
+                val buttonBounds = compose.onNode(hasText("Choose a Drive folder") and hasClickAction())
+                    .fetchSemanticsNode().boundsInRoot
+                val sheetWindowHeight = compose.onNode(
+                    isRoot() and hasAnyDescendant(hasText("Choose a Drive folder"))
+                ).fetchSemanticsNode().size.height
+                assertTrue(
+                    "\"Choose a Drive folder\" ends at ${buttonBounds.bottom} px inside nav area ${sheetWindowHeight - px(THREE_BUTTON_NAV_DP)} px",
+                    buttonBounds.bottom <= sheetWindowHeight - px(THREE_BUTTON_NAV_DP) + 0.5f,
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun buildIdentifierIsVisibleOnTransfers() {
+        grantMedia()
+        eachVariant(
+            "build-id", expect = "DriveLift 1.0.0-preview.3 (build 2)",
+            tab = AppViewModel.TAB_TRANSFERS, capture = false,
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun pickerRestoresSelectionAfterProcessRecreation() {
+        grantMedia()
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+
+        val initialVm = AppViewModel(app).apply {
+            pump(12)
+            driveFolders = FakeDrive()
+            driveConn.value = DriveConn.CONNECTED
+            account.value = DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
+        }
+        fun <T> launchWithRegistry(
+            vm: AppViewModel,
+            registry: SaveableStateRegistry,
+            block: () -> T,
+        ): T = ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                currentActivity = activity
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CompositionLocalProvider(LocalSaveableStateRegistry provides registry) {
+                                AppRoot(vm)
+                            }
+                        }
+                    }
+                }
+            }
+            block()
+        }
+
+        val initialRegistry = SaveableStateRegistry(restoredValues = null) { true }
+        val saved = launchWithRegistry(initialVm, initialRegistry) {
+            openDestinationSheet()
+            tap("Choose a Drive folder")
+            waitFor("Move here: My Drive")
+            assertEquals(2, initialVm.selection.value.size)
+            initialRegistry.performSave()
+        }
+
+        // Simulate process death: create a fresh ViewModel (empty selection) and restore only the
+        // saved state bundle into a newly launched Activity composition.
+        val restoredVm = AppViewModel(app).apply {
+            pump(12)
+            driveFolders = FakeDrive()
+            driveConn.value = DriveConn.CONNECTED
+            account.value = DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
+        }
+        assertTrue(restoredVm.selection.value.isEmpty())
+        val restoredRegistry = SaveableStateRegistry(restoredValues = saved) { true }
+
+        launchWithRegistry(restoredVm, restoredRegistry) {
+            waitFor("Move here: My Drive")
+            assertEquals(
+                "Selection was not restored alongside saved picker navigation",
+                2,
+                restoredVm.selection.value.size,
+            )
+            compose.onNode(hasText("Move here: My Drive") and hasClickAction()).performClick()
+            pump(DIALOG_FRAMES)
+            val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
+            assertEquals("Move here did not queue restored selection after recreation", 2, queued)
+        }
+        currentActivity = null
+    }
+
+    @Test
+    fun startTransferWaitsForInFlightMediaScan() {
+        grantMedia()
+        val gate = CountDownLatch(1)
+        FakeMediaStore.gate = gate
+        val vm = AppViewModel(app)
+        pump(12)
+        // Media scan is still blocked on the gate, so mediaLoaded is false and media is empty.
+        assertTrue(vm.media.value.isEmpty())
+        vm.setSelected(listOf(1L, 3L), true)
+        vm.startTransfer(Destination.Auto)
+        pump(6)
+
+        // Release the media scan gate and verify the deferred transfer enqueues both files.
+        gate.countDown()
+        settle {
+            runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) } == 2
+        }
+        val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
+        assertEquals(2, queued)
     }
 
     // ------------------------------------------------------------------ steps
@@ -482,18 +665,23 @@ class ScreenshotTest {
      * three buttons). The JVM has no system bars of its own, so without this a window that
      * ignores them looks fine here and is cut off on a phone.
      */
-    private fun giveSystemBars(navDp: Int) {
+    private fun giveSystemBars(navDp: Int, statusBarDp: Int = STATUS_BAR_DP) {
         // A window is listed as shown a few frames after its content first appears.
         pump(DIALOG_FRAMES)
         val insets = WindowInsetsCompat.Builder()
-            .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, px(STATUS_BAR_DP), 0, 0))
+            .setInsets(WindowInsetsCompat.Type.statusBars(), Insets.of(0, px(statusBarDp), 0, 0))
             .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.of(0, 0, 0, px(navDp)))
             .build()
+        val roots = buildList {
+            (currentActivity?.window?.decorView as? ViewGroup)?.let(::add)
+            for (dialog in ShadowDialog.getShownDialogs()) {
+                (dialog.window?.decorView as? ViewGroup)?.let(::add)
+            }
+        }
         // Installed on each window's root view, so every later pass of the insets through the
         // window (each layout can start one) carries these bars instead of the JVM's none. A
         // pass is also made now, for a window that has just opened and has no layout pending.
-        for (dialog in ShadowDialog.getShownDialogs()) {
-            val decor = dialog.window?.decorView as? ViewGroup ?: continue
+        for (decor in roots) {
             ViewCompat.setOnApplyWindowInsetsListener(decor) { root, _ ->
                 val group = root as ViewGroup
                 for (i in 0 until group.childCount) ViewCompat.dispatchApplyWindowInsets(group.getChildAt(i), insets)
@@ -506,17 +694,46 @@ class ScreenshotTest {
     }
 
     /** [button] and the top bar of the window it is in sit clear of the status and navigation bars. */
-    private fun assertClearOfSystemBars(button: String, navDp: Int) {
+    private fun assertClearOfSystemBars(button: String, navDp: Int, statusBarDp: Int = STATUS_BAR_DP) {
         val windowHeight = compose.onNode(isRoot() and hasAnyDescendant(hasText(button))).fetchSemanticsNode().size.height
-        val bottom = compose.onNodeWithText(button).fetchSemanticsNode().boundsInRoot.bottom
+        val buttonBounds = compose.onNode(hasText(button) and hasClickAction()).fetchSemanticsNode().boundsInRoot
         assertTrue(
-            "\"$button\" ends at $bottom px; the navigation area starts at ${windowHeight - px(navDp)} px",
-            bottom <= windowHeight - px(navDp) + 0.5f,
+            "\"$button\" is clipped: height ${buttonBounds.height} px is smaller than a full button",
+            buttonBounds.height >= px(38),
+        )
+        assertTrue(
+            "\"$button\" starts at ${buttonBounds.top} px, inside the top bar",
+            buttonBounds.top >= px(statusBarDp) - 0.5f,
+        )
+        val metrics = checkNotNull(currentVm?.pickerMetrics?.value) { "Picker window metrics were not recorded" }
+        assertTrue(
+            "Expected topInsetPx >= ${px(statusBarDp)}, got ${metrics.topInsetPx}",
+            metrics.topInsetPx >= px(statusBarDp),
+        )
+        assertTrue(
+            "Expected bottomInsetPx >= ${px(navDp)}, got ${metrics.bottomInsetPx}",
+            metrics.bottomInsetPx >= px(navDp),
+        )
+        assertTrue(
+            "\"$button\" ends at ${buttonBounds.bottom} px; the navigation area starts at ${windowHeight - px(navDp)} px (metrics=$metrics)",
+            buttonBounds.bottom <= windowHeight - px(navDp) + 0.5f,
+        )
+        assertTrue(
+            "Recorded picker metric bottom ${metrics.moveHereBottomPx} exceeds safe bottom ${windowHeight - px(navDp)}",
+            metrics.moveHereBottomPx <= windowHeight - px(navDp) + 1,
+        )
+        assertTrue(
+            "Recorded picker metric height ${metrics.moveHereHeightPx} is smaller than a full button",
+            metrics.moveHereHeightPx >= px(38),
         )
         val top = listOf("Close", "Up one folder").firstNotNullOf { label ->
             compose.onAllNodesWithContentDescription(label).fetchSemanticsNodes().firstOrNull()?.boundsInRoot?.top
         }
-        assertTrue("The picker's top bar starts at $top px, under the status bar", top >= px(STATUS_BAR_DP) - 0.5f)
+        assertTrue("The picker's top bar starts at $top px, under the status bar", top >= px(statusBarDp) - 0.5f)
+        assertTrue(
+            "The picker's top bar starts at $top px, which indicates double status-bar padding",
+            top < px(statusBarDp) + px(28),
+        )
     }
 
     private fun touchLatestDialog(at: Offset) {
@@ -576,8 +793,12 @@ class ScreenshotTest {
                 DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
             } else null
 
+            currentVm = vm
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
+                    currentActivity = activity
+                    val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                    activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
                     activity.setContent {
                         DriveLiftTheme { GlassBackdrop { content(vm) } }
                     }
@@ -596,6 +817,8 @@ class ScreenshotTest {
                     }
                 }
             }
+            currentActivity = null
+            currentVm = null
         }
     }
 
@@ -809,6 +1032,7 @@ class ScreenshotTest {
 
         /** System bar sizes of a typical phone, in dp. */
         const val STATUS_BAR_DP = 24
+        const val TALL_CUTOUT_STATUS_DP = 54
         const val GESTURE_NAV_DP = 24
         const val THREE_BUTTON_NAV_DP = 48
 
