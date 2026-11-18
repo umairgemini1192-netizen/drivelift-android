@@ -299,7 +299,7 @@ class VideoControlsTest {
         assertEquals(null, rig.controller.inFlightGeneration)
     }
 
-    /** Rapid taps in both directions while one seek runs end on the right frame with two seeks. */
+    /** Rapid taps in both directions while one seek runs end on the right frame. */
     @Test
     fun rapidOppositeTapsLandOnTheNetFrame() {
         val rig = StepRig()
@@ -310,11 +310,13 @@ class VideoControlsTest {
         rig.tap(1_000, forward = false, afterSeek = false)
         rig.tap(1_000, forward = true, afterSeek = false)
         assertEquals(31L, rig.frameOf(rig.controller.latest!!))
+        // The taps net out to the frame the first seek shows: one render completes them all,
+        // with no second seek to the same position.
         rig.controller.rendered(rig.seeks[0].first)
-        rig.controller.rendered(rig.seeks.last().first)
-        assertEquals("one seek for the first tap, one for the coalesced rest", 2, rig.seeks.size)
-        assertEquals(31L, rig.frameOf(rig.seeks.last().first))
+        assertEquals("one seek in total", 1, rig.seeks.size)
+        assertEquals(31L, rig.frameOf(rig.seeks.single().first))
         assertEquals(null, rig.controller.latest)
+        assertEquals(null, rig.controller.inFlightGeneration)
     }
 
     /**
