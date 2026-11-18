@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -42,14 +43,16 @@ private const val DELETE_NAMES_SHOWN = 8
 @Composable
 fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
     var plan by remember(ids) { mutableStateOf<PhoneDeletePlan?>(null) }
-    var asked by remember(ids) { mutableStateOf(false) }
+    // The exact batch handed to Android, kept across rotation and recreation so the result of
+    // Android's dialog still reaches this flow (the launcher re-registers under the same key).
+    var asked by rememberSaveable(ids) { mutableStateOf<LongArray?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        plan?.let { vm.finishPhoneDelete(it.eligible, confirmed = result.resultCode == Activity.RESULT_OK) }
+        vm.finishPhoneDelete(asked?.toList().orEmpty(), confirmed = result.resultCode == Activity.RESULT_OK)
         onDone()
     }
 
     fun askAndroid(items: List<MediaItem>) {
-        asked = true
+        asked = items.map { it.id }.toLongArray()
         runCatching {
             launcher.launch(IntentSenderRequest.Builder(vm.phoneTrashRequest(items).intentSender).build())
         }.onFailure {
@@ -58,17 +61,18 @@ fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
         }
     }
 
+    // Waiting for Android's answer: nothing else to show or ask.
+    if (asked != null) return
     LaunchedEffect(ids) { plan = vm.planPhoneDelete(ids) }
 
     val p = plan ?: return
-    if (asked) return
     when {
         p.eligible.isEmpty() -> PhoneDeleteBlockedDialog(p.blocked, onDismiss = onDone)
         vm.textOnlyRemoval() || p.blocked.isNotEmpty() -> PhoneDeleteDialog(
             plan = p,
             onConfirm = { askAndroid(p.eligible) },
             onCancel = {
-                vm.finishPhoneDelete(p.eligible, confirmed = false)
+                vm.finishPhoneDelete(p.eligible.map { it.id }, confirmed = false)
                 onDone()
             },
         )

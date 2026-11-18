@@ -338,7 +338,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * After Android finished the trash request: reloads the phone listing and reports, per file,
      * how many really left the folders. Selection is cleared because the items are gone.
      */
-    fun finishPhoneDelete(items: List<com.drivelift.app.data.MediaItem>, confirmed: Boolean) {
+    fun finishPhoneDelete(ids: List<Long>, confirmed: Boolean) {
         viewModelScope.launch {
             if (!confirmed) {
                 messages.emit("Nothing was moved to the trash.")
@@ -346,8 +346,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
             graph.media.refresh()
             val remaining = media.value.map { it.id }.toSet()
-            val stillHere = items.count { it.id in remaining }
-            val moved = items.size - stillHere
+            val stillHere = ids.count { it in remaining }
+            val moved = ids.size - stillHere
             clearSelection()
             messages.emit(
                 when {

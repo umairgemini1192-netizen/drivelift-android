@@ -310,7 +310,9 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     // also count as a tap on it. Cleared at the start of every touch.
     val longPress = remember { LongPressGuard() }
     // A user-directed delete in progress (issue #36): the items asked about, in selection order.
-    var deleting by remember { mutableStateOf<List<Long>?>(null) }
+    // Saved, so a rotation while Android's dialog is open keeps the flow and its result handler.
+    var deleting by rememberSaveable(bucketId) { mutableStateOf<LongArray?>(null) }
+    val deletingIds = remember(deleting) { deleting?.toList() }
     fun tapCell(item: MediaItem) {
         if (longPress.consume(item.id)) return
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
@@ -470,7 +472,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                             ) {
                                 OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                                DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id } }
+                                DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
                                 Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
                             }
                         }
@@ -481,7 +483,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         ) {
                             Column(Modifier.weight(1f)) { summary() }
                             OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                            DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id } }
+                            DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
                             Button(onClick = onMove) { Text("Move to Drive") }
                         }
                     }
@@ -493,10 +495,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                 vm = vm,
                 item = item,
                 onClose = { viewingId = NOT_VIEWING },
-                onDelete = { deleting = listOf(item.id) },
+                onDelete = { deleting = longArrayOf(item.id) },
             )
         }
-        deleting?.let { ids ->
+        deletingIds?.let { ids ->
             // A viewed file that goes to the trash drops out of [items] when the listing reloads,
             // which closes the viewer by itself.
             PhoneDeleteFlow(vm = vm, ids = ids, onDone = { deleting = null })
