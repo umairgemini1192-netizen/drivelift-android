@@ -30,6 +30,7 @@ import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.CenterFocusWeak
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PictureAsPdf
@@ -280,6 +281,8 @@ internal fun ViewerTopBar(
     externalLabel: String,
     onOpenExternally: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Offered by the Phone viewer only: moves this file to the phone's trash after confirmation. */
+    onDelete: (() -> Unit)? = null,
 ) {
     GlassPanel(
         modifier = modifier
@@ -314,6 +317,11 @@ internal fun ViewerTopBar(
             if (showResetZoom) {
                 IconButton(onClick = onResetZoom, modifier = Modifier.size(Tokens.ViewerControl)) {
                     Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
+                }
+            }
+            if (onDelete != null) {
+                IconButton(onClick = onDelete, modifier = Modifier.size(Tokens.ViewerControl)) {
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = "Move to this phone's trash")
                 }
             }
             IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {

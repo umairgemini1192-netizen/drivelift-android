@@ -319,6 +319,46 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * Works out a user-directed phone delete for the selected items (issue #36): which go to the
+     * trash and which a transfer still depends on. Nothing is changed.
+     */
+    suspend fun planPhoneDelete(ids: List<Long>): com.drivelift.app.data.PhoneDeletePlan {
+        val byId = media.value.associateBy { it.id }
+        val selected = ids.mapNotNull(byId::get)
+        val rows = selected.map { it.uri.toString() }.chunked(400).flatMap { graph.db.transfers().byMediaUris(it) }
+        return com.drivelift.app.data.planPhoneDelete(selected, rows)
+    }
+
+    /** The request that asks Android to move exactly [items] to the phone's trash. */
+    fun phoneTrashRequest(items: List<com.drivelift.app.data.MediaItem>): android.app.PendingIntent =
+        graph.trashRequest(getApplication<android.app.Application>().contentResolver, items.map { it.uri })
+
+    /**
+     * After Android finished the trash request: reloads the phone listing and reports, per file,
+     * how many really left the folders. Selection is cleared because the items are gone.
+     */
+    fun finishPhoneDelete(items: List<com.drivelift.app.data.MediaItem>, confirmed: Boolean) {
+        viewModelScope.launch {
+            if (!confirmed) {
+                messages.emit("Nothing was moved to the trash.")
+                return@launch
+            }
+            graph.media.refresh()
+            val remaining = media.value.map { it.id }.toSet()
+            val stillHere = items.count { it.id in remaining }
+            val moved = items.size - stillHere
+            clearSelection()
+            messages.emit(
+                when {
+                    stillHere == 0 -> if (moved == 1) "1 file moved to this phone's trash" else "$moved files moved to this phone's trash"
+                    moved == 0 -> "No files were moved to the trash."
+                    else -> "$moved moved to this phone's trash; $stillHere could not be moved"
+                },
+            )
+        }
+    }
+
     companion object {
         const val TAB_PHONE = 0
         const val TAB_DRIVE = 1

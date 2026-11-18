@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
@@ -54,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -307,6 +309,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     // Set when a long press selected a cell, so the finger lifting from that press does not
     // also count as a tap on it. Cleared at the start of every touch.
     val longPress = remember { LongPressGuard() }
+    // A user-directed delete in progress (issue #36): the items asked about, in selection order.
+    var deleting by remember { mutableStateOf<List<Long>?>(null) }
     fun tapCell(item: MediaItem) {
         if (longPress.consume(item.id)) return
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
@@ -466,6 +470,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                             ) {
                                 OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                                DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id } }
                                 Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
                             }
                         }
@@ -476,7 +481,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         ) {
                             Column(Modifier.weight(1f)) { summary() }
                             OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                            Spacer(Modifier.width(Tokens.Small))
+                            DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id } }
                             Button(onClick = onMove) { Text("Move to Drive") }
                         }
                     }
@@ -484,12 +489,34 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
             }
         }
         viewing?.let { item ->
-            LocalMediaViewer(vm = vm, item = item, onClose = { viewingId = NOT_VIEWING })
+            LocalMediaViewer(
+                vm = vm,
+                item = item,
+                onClose = { viewingId = NOT_VIEWING },
+                onDelete = { deleting = listOf(item.id) },
+            )
+        }
+        deleting?.let { ids ->
+            // A viewed file that goes to the trash drops out of [items] when the listing reloads,
+            // which closes the viewer by itself.
+            PhoneDeleteFlow(vm = vm, ids = ids, onDone = { deleting = null })
         }
     }
 }
 
 private const val NOT_VIEWING = -1L
+
+/** Moves the selected files to the phone's trash, after confirmation (issue #36). */
+@Composable
+private fun DeleteSelectedButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(Tokens.TouchTarget)) {
+        Icon(
+            Icons.Outlined.DeleteOutline,
+            contentDescription = "Move selected to this phone's trash",
+            tint = MaterialTheme.colorScheme.error,
+        )
+    }
+}
 
 /** Remembers which cell a long press selected during the current touch. */
 private class LongPressGuard {

@@ -343,6 +343,121 @@ class ScreenshotTest {
         }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
     }
 
+    /** Opens Camera and selects IMG_0001 and IMG_0002 (the second is part of a transfer in these tests). */
+    private fun selectTwoForDelete() {
+        waitFor("Camera")
+        compose.onNodeWithText("Camera").performClick()
+        waitFor("Select all")
+        selectCell("IMG_0001.jpg")
+        compose.onAllNodesWithContentDescription("IMG_0002.jpg").onFirst().performClick()
+        waitFor("2 selected")
+    }
+
+    /** Records the files handed to Android's trash request; there is no Android dialog here. */
+    private fun recordTrashRequests(): MutableList<List<String>> {
+        val asked = mutableListOf<List<String>>()
+        Graph.get(app).trashRequest = { _, uris ->
+            asked += uris.map { it.toString() }
+            throw IllegalStateException("No Android trash dialog in tests")
+        }
+        return asked
+    }
+
+    /** Issue #36: DriveLift's text-only trash confirmation, with a file left out by a transfer. */
+    @Test
+    fun phoneDeleteConfirmation() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        eachVariant(
+            "phone-delete-confirm", expect = "Move 1 file to this phone's trash?", connected = true, overlay = true,
+            act = {
+                selectTwoForDelete()
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                waitFor("Move 1 file to this phone's trash?")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #36: Cancel changes nothing; Move to trash hands Android exactly the eligible files and
+     * never the one a transfer still needs; a batch of only held files asks nothing of Android.
+     */
+    @Test
+    fun phoneDeleteAsksAndroidForExactlyTheEligibleFiles() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        val asked = recordTrashRequests()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-delete-flow", expect = null, connected = true, capture = false,
+            act = {
+                asked.clear()
+                selectTwoForDelete()
+                // Cancel: nothing asked of Android, the selection stays.
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                waitFor("Move 1 file to this phone's trash?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue("Cancel must not ask Android to trash anything", asked.isEmpty())
+                assertEquals(2, currentVm!!.selection.value.size)
+
+                // Confirm: exactly IMG_0001, never the file in a transfer.
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                waitFor("Move 1 file to this phone's trash?")
+                compose.onNodeWithText("Left out because", substring = true).assertExists()
+                tap("Move to trash")
+                pump(DIALOG_FRAMES)
+                assertEquals(listOf(listOf(img1)), asked)
+
+                // Only the held file: DriveLift explains, Android is not asked.
+                asked.clear()
+                currentVm!!.clearSelection()
+                pump(4)
+                selectCell("IMG_0002.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                waitFor("This file can't go to the trash yet")
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                assertTrue(asked.isEmpty())
+                currentVm!!.clearSelection()
+                pump(4)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Without Media management and nothing held back, Android's own dialog confirms (invariant 3). */
+    @Test
+    fun phoneDeleteWithoutMediaManagementGoesStraightToAndroid() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { false }
+        val asked = recordTrashRequests()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-delete-android", expect = null, connected = true, capture = false,
+            act = {
+                asked.clear()
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                // From the viewer: its trash icon asks about this one file.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithContentDescription("Move to this phone's trash").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Move to this phone's trash").performClick()
+                pump(DIALOG_FRAMES)
+                assertTrue(
+                    "No DriveLift dialog without Media management",
+                    compose.onAllNodesWithTag("phone-delete").fetchSemanticsNodes().isEmpty(),
+                )
+                assertEquals(listOf(listOf(img1)), asked)
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                pump(4)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun folderLargeDensity() {
         grantMedia()
@@ -885,7 +1000,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.13 (build 12)",
+            "build-id", expect = "DriveLift 1.0.0-preview.16 (build 15)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")

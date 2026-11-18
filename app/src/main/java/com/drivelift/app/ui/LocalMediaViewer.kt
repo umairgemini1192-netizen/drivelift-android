@@ -50,7 +50,7 @@ private sealed interface LocalImageState {
  * account, token or network is involved, and the original file is never changed.
  */
 @Composable
-fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit) {
+fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit, onDelete: (() -> Unit)? = null) {
     val context = LocalContext.current
     BackHandler(onBack = onClose)
     val transform = remember(item.id) { ImageTransformState() }
@@ -81,6 +81,7 @@ fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit) {
             externalLabel = "Open in another app",
             onOpenExternally = openElsewhere,
             modifier = Modifier.align(Alignment.TopCenter),
+            onDelete = onDelete,
         )
     }
 }

@@ -64,6 +64,14 @@ These protect the user's files. A change that touches them is high risk and need
    and Android then completes the request without its picture preview; otherwise Android's own
    dialog confirms. The app never deletes media without that confirmation and never asks for
    broad storage management access (`MANAGE_EXTERNAL_STORAGE`).
+   **Scope (issue #36):** invariants 2 and 3 govern migration cleanup, the removal of uploaded
+   originals offered on Transfers. A user-directed delete from the Phone file manager is a
+   separate operation: the user selects the files, DriveLift names them with count and size, and
+   they go to Android's trash through `MediaStore.createTrashRequest` (recoverable for a limited
+   time), never deleted outright. Confirmation follows invariant 3 (DriveLift's text-only dialog
+   with Media management, otherwise Android's). It needs no Drive copy or `VERIFIED` status and
+   never implies one exists. Files in a `QUEUED`, `UPLOADING`, `UPLOADED` or `VERIFIED` transfer
+   are left out and named, so no transfer or removal step acts on a trashed source.
 4. **Retries have no limit.** Recoverable errors are retried forever with capped backoff. A
    dropped connection resumes from the byte Drive confirms, never from an assumed offset.
 5. **A bad copy is never left looking good.** A size or checksum mismatch trashes the Drive copy
