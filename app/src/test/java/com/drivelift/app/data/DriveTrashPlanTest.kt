@@ -41,4 +41,12 @@ class DriveTrashPlanTest {
             DriveTrashOutcome(emptyList(), listOf(file("b") to "No permission")).message(),
         )
     }
+
+    @Test
+    fun aRunningUploadOfTheSameNameHoldsTheFile() {
+        val active = row(9, "zzz", TransferStatus.UPLOADING).copy(driveFileId = null, name = "a.jpg")
+        val plan = planDriveTrash(listOf(file("a"), file("b")), listOf(active))
+        assertEquals(listOf("b"), plan.eligible.map { it.id })
+        assertEquals(listOf("a"), plan.heldByTransfer.map { it.id })
+    }
 }

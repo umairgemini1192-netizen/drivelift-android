@@ -686,6 +686,34 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /**
+     * Codex review on 3be9fc7: a transfer that comes to depend on a confirmed file before its turn
+     * (its Drive id recorded, or its upload still running under the same name) leaves it alone.
+     */
+    @Test
+    fun driveTrashRechecksTransfersRightBeforeEachFile() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val drive = FakeDrive()
+        vm.driveFolders = drive
+        val scan = DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false)
+        val sunset = DriveFile("d4", "Sunset_0019.jpg", "image/jpeg", 3_400_000, "00", false)
+        val trip = DriveFile("d3", "Trip to the coast.mp4", "video/mp4", 182_000_000, "00", false)
+        val plan = runBlocking { vm.planDriveTrash(listOf(scan, sunset, trip)) }
+        assertEquals(listOf("d2", "d4", "d3"), plan.eligible.map { it.id })
+        // After the confirmation was planned: Sunset's upload id is recorded as VERIFIED, and an
+        // upload of a file named like Trip starts (its Drive id not known yet).
+        seedTransfers(
+            driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED),
+            row(3, "Trip to the coast.mp4", TransferStatus.UPLOADING).copy(driveFileId = null),
+        )
+        val outcome = runBlocking { vm.trashDriveFiles(plan.eligible) }
+        assertEquals(listOf("d2"), drive.trashedIds)
+        assertEquals(listOf("d4", "d3"), outcome.skipped.map { it.id })
+        assertEquals("1 file moved to Google Drive's trash; 2 left in Drive because a transfer now depends on them", outcome.message())
+    }
+
     @Test
     fun folderLargeDensity() {
         grantMedia()

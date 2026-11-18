@@ -195,7 +195,9 @@ fun DriveBrowser(
     // Files selected for a file-manager action (issue #36). Folders are not selectable.
     var selectedIds by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
     var trashPlan by remember { mutableStateOf<DriveTrashPlan?>(null) }
-    var trashing by remember { mutableStateOf(false) }
+    // The confirmed batch runs in the view model, so a rotation does not cancel it halfway.
+    val trashRun by vm.driveTrashRun.collectAsStateWithLifecycle()
+    val trashing = trashRun?.working == true
     val selecting = selectedIds.isNotEmpty() && !pickMode
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
@@ -269,19 +271,17 @@ fun DriveBrowser(
     fun askTrash(files: List<DriveFile>) {
         scope.launch { trashPlan = vm.planDriveTrash(files) }
     }
-    fun confirmTrash(plan: DriveTrashPlan) {
-        scope.launch {
-            trashing = true
-            val outcome = vm.trashDriveFiles(plan.eligible)
-            trashing = false
-            trashPlan = null
-            val gone = outcome.trashed.map { it.id }.toSet()
-            outcome.trashed.forEach { thumbCache.remove(driveMemoryCacheKey(accountKey, it)) }
-            selectedIds = selectedIds - gone
-            entries = entries?.filterNot { it.id in gone }
-            if (viewerFile?.id in gone) viewerFile = null
-            vm.messages.emit(outcome.message())
-        }
+    fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan.eligible)
+    // Applies a finished batch, including one that finished while the screen was recreated.
+    LaunchedEffect(trashRun?.outcome) {
+        val outcome = trashRun?.outcome ?: return@LaunchedEffect
+        trashPlan = null
+        val gone = outcome.trashed.map { it.id }.toSet()
+        outcome.trashed.forEach { thumbCache.remove(driveMemoryCacheKey(accountKey, it)) }
+        selectedIds = selectedIds - gone
+        entries = entries?.filterNot { it.id in gone }
+        if (viewerFile?.id in gone) viewerFile = null
+        vm.driveTrashApplied()
     }
 
     BackHandler(enabled = selecting && viewerFile == null) { selectedIds = emptySet() }

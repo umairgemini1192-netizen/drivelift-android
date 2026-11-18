@@ -28,21 +28,45 @@ val TRANSFER_HOLDS_DRIVE_COPY: Set<String> = setOf(
     TransferStatus.VERIFIED.name,
 )
 
+/**
+ * Whether a transfer still depends on [file]: a row with its Drive id in an active or verified
+ * state, or an upload still in progress under the same name (Drive can list a finished upload
+ * before the worker has recorded its id; same-named files are held too, to stay safe).
+ */
+fun transferHolds(file: DriveFile, transfers: List<TransferEntity>): Boolean = transfers.any { t ->
+    (t.driveFileId == file.id && t.status in TRANSFER_HOLDS_DRIVE_COPY) ||
+        (t.name == file.name && t.status in setOf(TransferStatus.QUEUED.name, TransferStatus.UPLOADING.name))
+}
+
 fun planDriveTrash(selected: List<DriveFile>, transfers: List<TransferEntity>): DriveTrashPlan {
     val byDriveId = transfers.filter { it.driveFileId != null }.groupBy { it.driveFileId!! }
     val folders = selected.filter { it.isFolder }
     val files = selected.filterNot { it.isFolder }
-    val (held, eligible) = files.partition { f -> byDriveId[f.id].orEmpty().any { it.status in TRANSFER_HOLDS_DRIVE_COPY } }
+    val (held, eligible) = files.partition { f -> transferHolds(f, transfers) }
     val onlyCopy = eligible.filter { f -> byDriveId[f.id].orEmpty().any { it.status == TransferStatus.REMOVED.name } }
     return DriveTrashPlan(eligible = eligible, folders = folders, heldByTransfer = held, onlyCopy = onlyCopy)
 }
 
 /** What happened to each file of a Drive trash request. */
-data class DriveTrashOutcome(val trashed: List<DriveFile>, val failed: List<Pair<DriveFile, String>>) {
-    fun message(): String = when {
-        failed.isEmpty() -> if (trashed.size == 1) "1 file moved to Google Drive's trash" else "${trashed.size} files moved to Google Drive's trash"
-        trashed.isEmpty() -> if (failed.size == 1) "Could not move ${failed[0].first.name} to the trash: ${failed[0].second}"
-            else "None of the ${failed.size} files could be moved to the trash: ${failed[0].second}"
-        else -> "${trashed.size} moved to Google Drive's trash; ${failed.size} could not be moved: ${failed[0].second}"
+data class DriveTrashOutcome(
+    val trashed: List<DriveFile>,
+    val failed: List<Pair<DriveFile, String>>,
+    /** Confirmed files left alone because a transfer came to depend on them before their turn. */
+    val skipped: List<DriveFile> = emptyList(),
+) {
+    fun message(): String {
+        val base = when {
+            failed.isEmpty() && trashed.isEmpty() -> null
+            failed.isEmpty() -> if (trashed.size == 1) "1 file moved to Google Drive's trash" else "${trashed.size} files moved to Google Drive's trash"
+            trashed.isEmpty() -> if (failed.size == 1) "Could not move ${failed[0].first.name} to the trash: ${failed[0].second}"
+                else "None of the ${failed.size} files could be moved to the trash: ${failed[0].second}"
+            else -> "${trashed.size} moved to Google Drive's trash; ${failed.size} could not be moved: ${failed[0].second}"
+        }
+        val held = when (skipped.size) {
+            0 -> null
+            1 -> "1 left in Drive because a transfer now depends on it"
+            else -> "${skipped.size} left in Drive because a transfer now depends on them"
+        }
+        return listOfNotNull(base, held).joinToString("; ").ifEmpty { "Nothing was moved to the trash." }
     }
 }

@@ -435,10 +435,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var lastTrashOutcome: com.drivelift.app.data.TrashOutcome? = null
         private set
 
+    /** Transfer rows that could make [files] depend on a transfer: by Drive id, or active by name. */
+    private suspend fun transferRowsFor(files: List<com.drivelift.app.drive.DriveFile>): List<com.drivelift.app.data.TransferEntity> {
+        val dao = graph.db.transfers()
+        return files.map { it.id }.chunked(400).flatMap { dao.byDriveFileIds(it) } +
+            files.map { it.name }.distinct().chunked(400).flatMap { dao.activeByNames(it) }
+    }
+
     /** Works out a user-directed Drive trash for [files] (issue #36). Nothing is changed. */
-    suspend fun planDriveTrash(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashPlan {
-        val rows = files.map { it.id }.chunked(400).flatMap { graph.db.transfers().byDriveFileIds(it) }
-        return com.drivelift.app.data.planDriveTrash(files, rows)
+    suspend fun planDriveTrash(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashPlan =
+        com.drivelift.app.data.planDriveTrash(files, transferRowsFor(files))
+
+    /** A confirmed Drive trash batch: running, then its outcome until the screen applies it. */
+    data class DriveTrashRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveTrashOutcome? = null)
+
+    val driveTrashRun = MutableStateFlow<DriveTrashRun?>(null)
+
+    /**
+     * Runs a confirmed Drive trash batch in the view model's scope, so a rotation or screen
+     * change does not cancel it halfway. The screen observes [driveTrashRun] for the outcome.
+     */
+    fun startDriveTrash(files: List<com.drivelift.app.drive.DriveFile>) {
+        if (driveTrashRun.value?.working == true) return
+        driveTrashRun.value = DriveTrashRun(working = true)
+        viewModelScope.launch {
+            val outcome = trashDriveFiles(files)
+            driveTrashRun.value = DriveTrashRun(working = false, outcome = outcome)
+            messages.emit(outcome.message())
+        }
+    }
+
+    /** The screen applied the outcome (removed the files from its listing). */
+    fun driveTrashApplied() {
+        if (driveTrashRun.value?.working == false) driveTrashRun.value = null
     }
 
     /**
@@ -448,7 +477,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun trashDriveFiles(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashOutcome {
         val trashed = mutableListOf<com.drivelift.app.drive.DriveFile>()
         val failed = mutableListOf<Pair<com.drivelift.app.drive.DriveFile, String>>()
+        val skipped = mutableListOf<com.drivelift.app.drive.DriveFile>()
         for ((i, file) in files.withIndex()) {
+            // Checked again right before the change: a transfer may have come to depend on this
+            // file since the confirmation was shown (for example its upload id was just recorded).
+            if (com.drivelift.app.data.transferHolds(file, transferRowsFor(listOf(file)))) {
+                skipped += file
+                continue
+            }
             try {
                 driveFolders.moveToTrash(file.id)
                 trashed += file
@@ -461,7 +497,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 failed += file to com.drivelift.app.transfer.describeError(e)
             }
         }
-        return com.drivelift.app.data.DriveTrashOutcome(trashed, failed)
+        return com.drivelift.app.data.DriveTrashOutcome(trashed, failed, skipped)
     }
 
     companion object {

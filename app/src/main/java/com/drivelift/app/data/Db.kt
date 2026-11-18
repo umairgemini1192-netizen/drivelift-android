@@ -90,6 +90,10 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE driveFileId IN (:ids)")
     suspend fun byDriveFileIds(ids: List<String>): List<TransferEntity>
 
+    /** Transfers still copying a file of one of these names (their Drive id may not be known yet). */
+    @Query("SELECT * FROM transfers WHERE status IN ('QUEUED', 'UPLOADING') AND name IN (:names)")
+    suspend fun activeByNames(names: List<String>): List<TransferEntity>
+
     @Query("SELECT COUNT(*) FROM transfers WHERE status IN (:statuses)")
     suspend fun count(statuses: List<String>): Int
 
