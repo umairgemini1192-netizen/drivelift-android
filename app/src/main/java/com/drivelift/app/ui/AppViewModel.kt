@@ -334,6 +334,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * trash and which a transfer still depends on. Nothing is changed.
      */
     suspend fun planPhoneDelete(ids: List<Long>): com.drivelift.app.data.PhoneDeletePlan {
+        // A request restored after the process was recreated can arrive before the listing has
+        // loaded; resolve the ids only against a loaded listing.
+        // (Without media permission the listing never loads, so there is nothing to wait for.)
+        if (!mediaLoaded.value && MediaAccess.hasPermission(getApplication())) mediaLoaded.first { it }
         val byId = media.value.associateBy { it.id }
         val selected = ids.mapNotNull(byId::get)
         val rows = selected.map { it.uri.toString() }.chunked(400).flatMap { graph.db.transfers().byMediaUris(it) }

@@ -56,6 +56,11 @@ fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
 
     val p = plan ?: return
     when {
+        // None of the files are in the listing any more: nothing to confirm or explain by name.
+        p.eligible.isEmpty() && p.blocked.isEmpty() -> LaunchedEffect(p) {
+            vm.messages.tryEmit("These files are no longer in the folder. Nothing was sent to the trash.")
+            onDone()
+        }
         p.eligible.isEmpty() -> PhoneDeleteBlockedDialog(p.blocked, onDismiss = onDone)
         vm.textOnlyRemoval() || p.blocked.isNotEmpty() -> PhoneDeleteDialog(
             plan = p,

@@ -478,6 +478,23 @@ class ScreenshotTest {
         assertEquals(null, fresh.pendingTrash.value)
     }
 
+    /** Codex review on d3948d5: a delete plan restored before the listing loads waits for it. */
+    @Test
+    fun aRestoredDeletePlanWaitsForTheListing() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        // Asked at once, as after process recreation, before the listing has necessarily loaded.
+        val plan = kotlinx.coroutines.runBlocking {
+            kotlinx.coroutines.withTimeout(10_000) {
+                val job = kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.Default) { vm.planPhoneDelete(listOf(img1.id)) }
+                while (!job.isCompleted) { compose.runOnUiThread { pump(1) } }
+                job.await()
+            }
+        }
+        assertEquals(listOf(img1.id), plan.eligible.map { it.id })
+    }
+
     /**
      * ChatGPT review on 27ea5ba: results are counted only over submitted files and read back from
      * MediaStore. A file that vanished from the listing (here: media access withdrawn, so the
