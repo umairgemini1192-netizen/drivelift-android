@@ -100,19 +100,34 @@ on 17 November 2026: futuristic dark glass.
    dialog because a dialog is its own window. Screens and scaffolds on it are transparent.
    Panels and rows use `GlassPanel` or `Modifier.glass`. Pinned bars use `Modifier.glassBar`,
    which is denser. Sheets, dialogs and menus stay solid (`surfaceContainer` roles) so text on
-   them is readable. Do not nest a glass panel inside a glass panel.
+   them is readable. Do not nest a glass panel inside a glass panel. Inside a glass panel, flat
+   or tinted control wells and capsule pills are allowed for buttons, step controls and badges:
+   they use semantic surface and border tokens and have no glass effect of their own (owner
+   decision, issue #32).
 4. **Tokens.** Spacing, sizes, shapes and durations come from `ui/Tokens.kt`. No raw `dp` or
    millisecond values in screens. A new token needs a reason stated in the pull request.
 5. **Motion.** Only state feedback (selection, progress). It uses `AppMotion.spec`, so it snaps
    when the phone has animations turned off. Nothing decorative moves.
 6. **One thing leads** on each screen: the display-size figure, title or the dot gauge on
-   Transfers. Glow and gradient are reserved for the backdrop and that lead element.
+   Transfers, or the Play/Pause control on the video player. Glow and gradient are reserved
+   for the backdrop and that lead element. Ordinary panels, wells and pills use plain token
+   borders and no glow.
 7. Every interactive element has a touch target of at least `Tokens.TouchTarget` (48 dp) and a
-   content description or visible label.
+   content description or visible label. A secondary circular well or compact pill may draw a
+   smaller visual container (40 to 44 dp) only when its touch target is still at least 48 dp
+   (`Modifier.minimumInteractiveComponentSize()` or equivalent padding).
 8. Layout must hold at font scale 1.5 and on a 320 dp wide phone. A row with text beside a
    button stacks them from `Tokens.STACK_AT_FONT_SCALE`.
 9. Every screen handles loading, empty, error and populated states.
 10. UI copy is plain and specific: what happened, why, what to do. No marketing words.
+11. **Tabular digits.** Every timecode, playback speed, transfer figure (bytes, rate, time
+    left, percentage) and numeric counter uses tabular numerals (`fontFeatureSettings = "tnum"`,
+    set in the theme's text styles or a shared style), so digits do not shift as they change.
+12. **Text emphasis by token.** Secondary and muted text uses the theme's colour roles (for
+    example `onSurfaceVariant`), never an ad hoc opacity on a colour.
+13. **Layout follows the content.** Vertical list screens (Transfers, Settings, folder lists)
+    stay lists; no dashboard or Bento grid is imposed on them. Design guidance written for
+    other products (currency, analytics, subscription examples) does not apply here.
 
 The owner's reference image set a direction, not a feature list. Do not add subscriptions,
 upgrade prompts, other cloud providers or iOS chrome because a reference shows them.
