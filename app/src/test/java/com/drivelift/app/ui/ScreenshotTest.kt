@@ -58,6 +58,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
@@ -556,6 +557,39 @@ class ScreenshotTest {
             PhoneTrashHost(vm)
             AppRoot(vm)
         }
+    }
+
+    /**
+     * Owner report on Preview 15: the viewer sat inside the page's system-bar padding, leaving
+     * bands at the top and bottom. It now fills the whole window, behind the bars, while its top
+     * bar stays below the status bar.
+     */
+    @Test
+    fun phoneViewerFillsTheWholeWindowBehindTheSystemBars() {
+        grantMedia()
+        eachVariant(
+            "viewer-full-window", expect = null, connected = true, capture = false,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithTag("local-viewer").fetchSemanticsNodes().isNotEmpty() }
+                giveSystemBars(THREE_BUTTON_NAV_DP)
+                pump(DIALOG_FRAMES)
+                val window = compose.onAllNodes(isRoot()).fetchSemanticsNodes().maxBy { it.size.height }.size
+                val viewer = compose.onNodeWithTag("local-viewer").fetchSemanticsNode().boundsInRoot
+                assertTrue("Viewer starts at ${viewer.top}, not at the top of the window", viewer.top <= 0.5f)
+                assertTrue(
+                    "Viewer ends at ${viewer.bottom}, not at the bottom of the window (${window.height})",
+                    viewer.bottom >= window.height - 0.5f,
+                )
+                val close = compose.onNodeWithContentDescription("Close viewer").fetchSemanticsNode().boundsInRoot
+                assertTrue("Close viewer (${close.top}) is under the status bar", close.top >= px(STATUS_BAR_DP) - 0.5f)
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                pump(4)
+            },
+        ) { vm -> AppRoot(vm) }
     }
 
     @Test
@@ -1100,7 +1134,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.16 (build 15)",
+            "build-id", expect = "DriveLift 1.0.0-preview.17 (build 16)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")

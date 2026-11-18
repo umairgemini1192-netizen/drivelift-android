@@ -478,12 +478,14 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
             }
         }
         viewing?.let { item ->
-            LocalMediaViewer(
-                vm = vm,
-                item = item,
-                onClose = { viewingId = NOT_VIEWING },
-                onDelete = { deleting = longArrayOf(item.id) },
-            )
+            FullScreenOverlay {
+                LocalMediaViewer(
+                    vm = vm,
+                    item = item,
+                    onClose = { viewingId = NOT_VIEWING },
+                    onDelete = { deleting = longArrayOf(item.id) },
+                )
+            }
         }
         deletingIds?.let { ids ->
             // A viewed file that goes to the trash drops out of [items] when the listing reloads,
