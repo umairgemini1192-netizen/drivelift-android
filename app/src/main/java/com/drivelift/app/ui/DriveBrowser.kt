@@ -386,9 +386,14 @@ fun DriveBrowser(
                 },
                 actions = {
                     if (selecting) {
+                        // Acts on the files shown only: a file selected earlier and hidden by the
+                        // search stays selected (Clear is the explicit whole-selection reset).
                         val files = shown.orEmpty().filterNot { it.isFolder }
                         val all = files.isNotEmpty() && files.all { it.id in selectedIds }
-                        TextButton(onClick = { selectedIds = if (all) emptySet() else files.map { it.id }.toSet() }) {
+                        TextButton(onClick = {
+                            val ids = files.map { it.id }
+                            selectedIds = if (all) selectedIds - ids.toSet() else selectedIds + ids
+                        }) {
                             Text(if (all) "Select none" else "Select all")
                         }
                     } else if (conn == DriveConn.CONNECTED) {

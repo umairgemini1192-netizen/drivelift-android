@@ -188,8 +188,10 @@ A Phone folder and a Drive folder each show a search field and a sort button abo
 The search matches part of a name, ignoring case, and only looks at the folder on screen: the
 photos and videos DriveLift already lists for a Phone folder, or the entries of the Drive folder
 for the connected account. Nothing else is read and no new permission is asked for. When nothing
-matches, the folder says so. Select all, range selection and the selection count then act on the
-files shown.
+matches, the folder says so. The search only filters what is listed: files selected before stay
+selected even when the search hides them. Select all and Select none (and a range drag) add or
+remove only the matching files shown; Clear empties the whole selection. The selection count, its
+size and every confirmation (move, trash) always cover all selected files, shown or not.
 
 Sort choices: date (newest or oldest first), name (A to Z or Z to A, numbers in natural order so
 IMG_2 comes before IMG_10) and size (largest or smallest first). The choice is kept separately for

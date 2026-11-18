@@ -879,6 +879,66 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /**
+     * ChatGPT review on 0af3cc9: a search never drops a selection it hides. Select all and Select
+     * none act on the matching files only; the count and the trash/move plan cover every selected
+     * file. Phone and Drive behave the same.
+     */
+    @Test
+    fun filteredSelectAllKeepsSelectionsTheSearchHides() {
+        grantMedia()
+        eachVariant(
+            "filtered-select-flow", expect = null, connected = true, capture = false,
+            act = {
+                // Phone: VID_0003 selected, then a search that hides it.
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                selectCell("VID_0003.mp4")
+                waitFor("1 selected")
+                compose.onNodeWithTag("folder-search").performTextReplacement("IMG_0001")
+                pump(DIALOG_FRAMES)
+                tap("Select all")
+                waitFor("2 selected")
+                tap("Select none")
+                waitFor("1 selected")
+                assertEquals(1, currentVm!!.selection.value.size)
+                compose.onNodeWithContentDescription("Clear search").performClick()
+                pump(DIALOG_FRAMES)
+                waitFor("1 selected")
+                currentVm!!.clearSelection()
+                pump(4)
+
+                // Drive: Packing selected, then a search for scan that hides it.
+                currentVm!!.tab.value = AppViewModel.TAB_DRIVE
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Packing list.pdf")
+                waitFor("1 selected")
+                compose.onNodeWithTag("folder-search").performTextReplacement("scan")
+                pump(DIALOG_FRAMES)
+                tap("Select all")
+                waitFor("2 selected")
+                tap("Select none")
+                waitFor("1 selected")
+                tap("Select all")
+                waitFor("2 selected")
+                compose.onNodeWithContentDescription("Clear search").performClick()
+                pump(DIALOG_FRAMES)
+                waitFor("2 selected")
+                // The trash plan names both selected files, the hidden one included.
+                compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
+                waitFor("Move 2 files to Google Drive's trash?")
+                assertTrue(
+                    "The hidden selected file is in the confirmation",
+                    compose.onAllNodesWithText("Packing list.pdf  ·", substring = true).fetchSemanticsNodes().isNotEmpty(),
+                )
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                waitFor("2 selected")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     /** Issue #36: Drive trash confirmation with a file a transfer still depends on left out. */
     @Test
     fun driveTrashConfirmation() {
