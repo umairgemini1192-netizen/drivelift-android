@@ -269,13 +269,21 @@ class GridDensityTest {
         assertEquals(GridDensity.COMPACT, Prefs(app).gridDensity.value)
     }
 
+    /**
+     * The width of a cell that is fully on screen. After a pinch the grid keeps the focal cell in
+     * place, so the first cell in the list can be scrolled out of view (zero visible width).
+     */
+    private fun visibleCellWidth(cells: androidx.compose.ui.test.SemanticsMatcher): Float =
+        compose.onAllNodes(cells).fetchSemanticsNodes()
+            .first { it.boundsInRoot.width > 0f && it.boundsInRoot.height >= it.size.height - 1f }
+            .boundsInRoot.width
+
     @Test
     fun phoneGridPinchOutAndInChangesCellSizesAndPreservesSelection() = launchPhoneFolder { vm ->
         vm.setSelected(listOf(1L), true)
         pump(4)
         val cellQuery = hasContentDescription("IMG_", substring = true)
-        val mediumWidth = compose.onAllNodes(cellQuery)
-            .fetchSemanticsNodes().first().boundsInRoot.width
+        val mediumWidth = visibleCellWidth(cellQuery)
 
         compose.onNodeWithTag("phone-media-grid").performTouchInput {
             val c = center
@@ -292,8 +300,7 @@ class GridDensityTest {
             vm.gridDensity.value == GridDensity.LARGE
         }
         pump(4)
-        val largeWidth = compose.onAllNodes(cellQuery)
-            .fetchSemanticsNodes().first().boundsInRoot.width
+        val largeWidth = visibleCellWidth(cellQuery)
         assertTrue("Expected larger cells in LARGE density ($largeWidth <= $mediumWidth)", largeWidth > mediumWidth)
         assertEquals("Pinch release must not alter existing selection", setOf(1L), vm.selection.value)
 
@@ -315,8 +322,7 @@ class GridDensityTest {
             vm.gridDensity.value == GridDensity.SMALL
         }
         pump(4)
-        val smallWidth = compose.onAllNodes(cellQuery)
-            .fetchSemanticsNodes().first().boundsInRoot.width
+        val smallWidth = visibleCellWidth(cellQuery)
         assertTrue("Expected smaller cells in SMALL density ($smallWidth >= $mediumWidth)", smallWidth < mediumWidth)
         assertEquals("Pinching inward must keep existing selection", setOf(1L), vm.selection.value)
     }

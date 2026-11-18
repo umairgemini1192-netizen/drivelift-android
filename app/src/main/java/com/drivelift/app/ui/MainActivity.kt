@@ -86,7 +86,12 @@ class MainActivity : FragmentActivity() {
         })
         setContent {
             DriveLiftTheme {
-                GlassBackdrop { LockGate(graph.lock, graph.authenticator) { AppRoot(vm) } }
+                GlassBackdrop {
+                    // Outside the lock gate: a phone trash request keeps its result handler if the
+                    // app locks while Android's dialog is open (issue #36).
+                    PhoneTrashHost(vm)
+                    LockGate(graph.lock, graph.authenticator) { AppRoot(vm) }
+                }
             }
         }
     }

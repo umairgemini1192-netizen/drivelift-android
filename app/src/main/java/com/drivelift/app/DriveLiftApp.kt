@@ -35,6 +35,15 @@ class Graph(app: Application) {
     var authenticator: Authenticator = BiometricAuthenticator(lock)
     /** Replaced in tests; the app asks Android whether Media management was granted. */
     var canManageMedia: (Context) -> Boolean = { com.drivelift.app.data.MediaAccess.canManageMedia(it) }
+    /**
+     * Builds Android's request that moves phone files to the trash (user-directed delete, issue
+     * #36). Replaced in tests, which cannot show Android's dialog.
+     */
+    var trashRequest: (android.content.ContentResolver, List<android.net.Uri>) -> android.app.PendingIntent =
+        { resolver, uris -> android.provider.MediaStore.createTrashRequest(resolver, uris, true) }
+    /** Reads one file's trash state back from MediaStore after a trash request. Replaced in tests. */
+    var trashState: (android.content.ContentResolver, android.net.Uri) -> com.drivelift.app.data.TrashState =
+        { resolver, uri -> com.drivelift.app.data.queryTrashState(resolver, uri) }
 
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph

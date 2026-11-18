@@ -133,6 +133,27 @@ Selecting: hold a thumbnail to select it (hold and drag selects a range); while 
 selected, taps add or remove items. **Select all** and **Select day** work as before. With
 TalkBack, a thumbnail's click opens it and its **Select** action selects it.
 
+## Moving phone files to the trash
+
+In a Phone folder, select files (hold a thumbnail) and tap the trash icon in the bottom bar, or
+open a photo or video and tap the trash icon at the top. The files go to Android's trash
+(`MediaStore.createTrashRequest`): they leave the phone's folders, and Android keeps them for a
+limited time, usually 30 days, before deleting them for good. Restoring them needs a gallery app
+that shows the phone's trash. Nothing on Google Drive changes, and no Google account or network
+is needed.
+
+Confirmation: with Media management allowed (Settings), DriveLift lists the files by name with
+count and size and Android then completes the request without its preview. Without it, Android
+shows its own dialog. Cancel changes nothing.
+
+Files that are part of a transfer (waiting, uploading, being checked, or verified and waiting for
+removal on Transfers) are left out of the batch and named; finish or cancel them in Transfers
+first. DriveLift remembers exactly which files it sent to Android. After Android completes the
+request, it reads each of those files back from MediaStore and reports how many are confirmed in
+the trash, how many are still on the phone and how many could not be checked (for example after
+media access was withdrawn). Files that left the folder before the request was sent are not
+sent and are reported as such. A file missing from the listing is never counted as trashed.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the

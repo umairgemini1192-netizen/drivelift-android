@@ -35,6 +35,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
@@ -54,6 +55,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -307,6 +309,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     // Set when a long press selected a cell, so the finger lifting from that press does not
     // also count as a tap on it. Cleared at the start of every touch.
     val longPress = remember { LongPressGuard() }
+    // A user-directed delete in progress (issue #36): the items asked about, in selection order.
+    // Saved, so a rotation while Android's dialog is open keeps the flow and its result handler.
+    var deleting by rememberSaveable(bucketId) { mutableStateOf<LongArray?>(null) }
+    val deletingIds = remember(deleting) { deleting?.toList() }
     fun tapCell(item: MediaItem) {
         if (longPress.consume(item.id)) return
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
@@ -446,10 +452,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
             if (selection.isNotEmpty()) {
                 Box(Modifier.fillMaxWidth().glassBar()) {
-                    // With large text or a narrow phone the two buttons would squeeze the count into
-                    // a sliver, so the count goes on its own line above them.
-                    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-                        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+                    // The count and size sit on their own line above the three actions (Clear, trash,
+                    // Move to Drive), so they are never squeezed at any text size or width.
                     val summary: @Composable () -> Unit = {
                         Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
                         Text(
@@ -458,38 +462,50 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (stacked) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-                            summary()
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = Tokens.Small),
-                                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                            ) {
-                                OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                                Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
-                            }
-                        }
-                    } else {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                        summary()
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                            Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Column(Modifier.weight(1f)) { summary() }
                             OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                            Spacer(Modifier.width(Tokens.Small))
-                            Button(onClick = onMove) { Text("Move to Drive") }
+                            DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
+                            Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
                         }
                     }
                 }
             }
         }
         viewing?.let { item ->
-            LocalMediaViewer(vm = vm, item = item, onClose = { viewingId = NOT_VIEWING })
+            LocalMediaViewer(
+                vm = vm,
+                item = item,
+                onClose = { viewingId = NOT_VIEWING },
+                onDelete = { deleting = longArrayOf(item.id) },
+            )
+        }
+        deletingIds?.let { ids ->
+            // A viewed file that goes to the trash drops out of [items] when the listing reloads,
+            // which closes the viewer by itself.
+            PhoneDeleteFlow(vm = vm, ids = ids, onDone = { deleting = null })
         }
     }
 }
 
 private const val NOT_VIEWING = -1L
+
+/** Moves the selected files to the phone's trash, after confirmation (issue #36). */
+@Composable
+private fun DeleteSelectedButton(onClick: () -> Unit) {
+    IconButton(onClick = onClick, modifier = Modifier.size(Tokens.TouchTarget)) {
+        Icon(
+            Icons.Outlined.DeleteOutline,
+            contentDescription = "Move selected to this phone's trash",
+            tint = MaterialTheme.colorScheme.error,
+        )
+    }
+}
 
 /** Remembers which cell a long press selected during the current touch. */
 private class LongPressGuard {

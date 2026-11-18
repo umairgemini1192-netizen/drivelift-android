@@ -106,6 +106,7 @@ import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowDialog
 import kotlin.math.roundToInt
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.async
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
@@ -341,6 +342,220 @@ class ScreenshotTest {
             waitFor("Could not play video")
             compose.onNodeWithText("Open in another app").assertExists()
         }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+    }
+
+    /** Opens Camera and selects IMG_0001 and IMG_0002 (the second is part of a transfer in these tests). */
+    private fun selectTwoForDelete() {
+        waitFor("Camera")
+        compose.onNodeWithText("Camera").performClick()
+        waitFor("Select all")
+        selectCell("IMG_0001.jpg")
+        compose.onAllNodesWithContentDescription("IMG_0002.jpg").onFirst().performClick()
+        waitFor("2 selected")
+    }
+
+    /** Records the files handed to Android's trash request; there is no Android dialog here. */
+    private fun recordTrashRequests(): MutableList<List<String>> {
+        val asked = mutableListOf<List<String>>()
+        Graph.get(app).trashRequest = { _, uris ->
+            asked += uris.map { it.toString() }
+            throw IllegalStateException("No Android trash dialog in tests")
+        }
+        return asked
+    }
+
+    /** Issue #36: DriveLift's text-only trash confirmation, with a file left out by a transfer. */
+    @Test
+    fun phoneDeleteConfirmation() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        eachVariant(
+            "phone-delete-confirm", expect = "Move 1 file to this phone's trash?", connected = true, overlay = true,
+            act = {
+                selectTwoForDelete()
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
+                waitFor("Move 1 file to this phone's trash?")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #36: Cancel changes nothing; Move to trash hands Android exactly the eligible files and
+     * never the one a transfer still needs; a batch of only held files asks nothing of Android.
+     */
+    @Test
+    fun phoneDeleteAsksAndroidForExactlyTheEligibleFiles() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        val asked = recordTrashRequests()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-delete-flow", expect = null, connected = true, capture = false,
+            act = {
+                asked.clear()
+                selectTwoForDelete()
+                // Cancel: nothing asked of Android, the selection stays.
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
+                waitFor("Move 1 file to this phone's trash?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue("Cancel must not ask Android to trash anything", asked.isEmpty())
+                assertEquals(2, currentVm!!.selection.value.size)
+
+                // Confirm: exactly IMG_0001, never the file in a transfer. (The click action is used
+                // because the "Nothing was moved" message from Cancel covers the bottom bar for a while.)
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
+                waitFor("Move 1 file to this phone's trash?")
+                compose.onNodeWithText("Left out because", substring = true).assertExists()
+                tap("Move to trash")
+                pump(DIALOG_FRAMES)
+                assertEquals(listOf(listOf(img1)), asked)
+
+                // Only the held file: DriveLift explains, Android is not asked.
+                asked.clear()
+                currentVm!!.clearSelection()
+                pump(4)
+                selectCell("IMG_0002.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
+                waitFor("This file can't go to the trash yet")
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                assertTrue(asked.isEmpty())
+                currentVm!!.clearSelection()
+                pump(4)
+            },
+        ) { vm ->
+            PhoneTrashHost(vm)
+            AppRoot(vm)
+        }
+    }
+
+    /**
+     * Codex review on ed59721: the app locking while Android's trash dialog is open removes the
+     * screen, but the pending batch lives in the view model and its answer still completes it.
+     */
+    @Test
+    fun aPendingPhoneTrashRequestSurvivesTheAppLocking() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        compose.waitUntil(5_000) { pump(1); vm.media.value.any { it.id == img1.id } }
+        // IMG_0001 is in the folder; id 999999 left it after the user confirmed.
+        vm.requestPhoneTrash(listOf(img1.id, 999_999L))
+        assertEquals(listOf(img1.id, 999_999L), vm.pendingTrash.value?.ids)
+        // Started once only, even if asked again (as after recomposition), with exactly the file
+        // still present; the one that left is counted as not sent.
+        Graph.get(app).trashRequest = { _, _ -> throw IllegalStateException("No Android trash dialog in tests") }
+        runCatching { vm.startPendingTrash() }
+        assertEquals(true, vm.pendingTrash.value?.launched)
+        assertEquals(listOf(img1.uri.toString()), vm.pendingTrash.value?.submitted)
+        assertEquals(1, vm.pendingTrash.value?.notSent)
+        assertEquals(null, vm.startPendingTrash())
+        // The lock removes AppRoot; nothing in the screen holds the request. Android answers.
+        Graph.get(app).lock.lock()
+        vm.pendingTrashFinished(confirmed = false)
+        assertEquals(null, vm.pendingTrash.value)
+
+        // Process recreated while Android's dialog was open: a fresh view model has no batch,
+        // and the host's saved copy completes it; a restored selection drops files that are gone.
+        val fresh = AppViewModel(app)
+        pump(12)
+        compose.waitUntil(5_000) { pump(1); fresh.media.value.isNotEmpty() }
+        assertEquals(null, fresh.pendingTrash.value)
+        fresh.setSelected(listOf(img1.id, 999_999L), true)
+        compose.waitUntil(5_000) { pump(1); fresh.selection.value == setOf(img1.id) }
+        // Android confirmed after recreation: only the saved submitted URI is checked, and its
+        // state comes from MediaStore, not from the listing.
+        val checked = mutableListOf<String>()
+        Graph.get(app).trashState = { _, uri -> checked += uri.toString(); com.drivelift.app.data.TrashState.TRASHED }
+        fresh.pendingTrashFinished(confirmed = true, savedSubmitted = listOf(img1.uri.toString()))
+        compose.waitUntil(5_000) { pump(1); fresh.lastTrashOutcome != null }
+        assertEquals(listOf(img1.uri.toString()), checked)
+        assertEquals(com.drivelift.app.data.TrashOutcome(trashed = 1, stillPresent = 0, unknown = 0, notSent = 0), fresh.lastTrashOutcome)
+        assertEquals(null, fresh.pendingTrash.value)
+    }
+
+    /** Codex review on d3948d5: a delete plan restored before the listing loads waits for it. */
+    @Test
+    fun aRestoredDeletePlanWaitsForTheListing() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        // Asked at once, as after process recreation, before the listing has necessarily loaded.
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).async {
+            vm.planPhoneDelete(listOf(img1.id))
+        }
+        compose.waitUntil(10_000) { pump(1); job.isCompleted }
+        val plan = kotlinx.coroutines.runBlocking { job.await() }
+        assertEquals(listOf(img1.id), plan.eligible.map { it.id })
+    }
+
+    /**
+     * ChatGPT review on 27ea5ba: results are counted only over submitted files and read back from
+     * MediaStore. A file that vanished from the listing (here: media access withdrawn, so the
+     * listing is empty) is "could not be checked", never "moved to the trash".
+     */
+    @Test
+    fun phoneTrashResultsAreReadBackPerSubmittedFile() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val imgs = FakeMediaStore.files.filter { !it.video }.take(3)
+        compose.waitUntil(5_000) { pump(1); imgs.all { f -> vm.media.value.any { it.id == f.id } } }
+        Graph.get(app).trashRequest = { _, _ -> throw IllegalStateException("No Android trash dialog in tests") }
+        vm.requestPhoneTrash(imgs.map { it.id })
+        runCatching { vm.startPendingTrash() }
+        assertEquals(imgs.map { it.uri.toString() }, vm.pendingTrash.value?.submitted)
+        // One confirmed in the trash, one still present, one unreadable after access was withdrawn.
+        val states = mapOf(
+            imgs[0].uri.toString() to com.drivelift.app.data.TrashState.TRASHED,
+            imgs[1].uri.toString() to com.drivelift.app.data.TrashState.PRESENT,
+            imgs[2].uri.toString() to com.drivelift.app.data.TrashState.UNKNOWN,
+        )
+        Graph.get(app).trashState = { _, uri -> states.getValue(uri.toString()) }
+        shadowOf(app).denyPermissions(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        vm.pendingTrashFinished(confirmed = true)
+        compose.waitUntil(5_000) { pump(1); vm.lastTrashOutcome != null }
+        val outcome = vm.lastTrashOutcome!!
+        assertEquals(com.drivelift.app.data.TrashOutcome(trashed = 1, stillPresent = 1, unknown = 1, notSent = 0), outcome)
+        assertEquals("1 moved to this phone's trash; 1 still on the phone; 1 could not be checked", outcome.message())
+    }
+
+    /** Without Media management and nothing held back, Android's own dialog confirms (invariant 3). */
+    @Test
+    fun phoneDeleteWithoutMediaManagementGoesStraightToAndroid() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { false }
+        val asked = recordTrashRequests()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-delete-android", expect = null, connected = true, capture = false,
+            act = {
+                asked.clear()
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                // From the viewer: its trash icon asks about this one file.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithContentDescription("Move to this phone's trash").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Move to this phone's trash").performClick()
+                pump(DIALOG_FRAMES)
+                assertTrue(
+                    "No DriveLift dialog without Media management",
+                    compose.onAllNodesWithTag("phone-delete").fetchSemanticsNodes().isEmpty(),
+                )
+                assertEquals(listOf(listOf(img1)), asked)
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                pump(4)
+            },
+        ) { vm ->
+            PhoneTrashHost(vm)
+            AppRoot(vm)
+        }
     }
 
     @Test
@@ -885,7 +1100,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.15 (build 14)",
+            "build-id", expect = "DriveLift 1.0.0-preview.16 (build 15)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
