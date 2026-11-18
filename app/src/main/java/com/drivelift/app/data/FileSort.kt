@@ -55,6 +55,9 @@ fun <T> sortedFiles(
 /**
  * Compares names the way people read them: without regard to case, and with runs of digits
  * compared as numbers, so "IMG_2" comes before "IMG_10" (as Drive's natural name order does).
+ * Only ASCII digits form numbers; every other character, including digits of other scripts, is
+ * compared as a character. A number run therefore always ranks the same way against any other
+ * character (its first digit's code), which keeps the order consistent for any mix of names.
  */
 object NaturalOrder : Comparator<String> {
     override fun compare(a: String, b: String): Int {
@@ -63,7 +66,7 @@ object NaturalOrder : Comparator<String> {
         while (i < a.length && j < b.length) {
             val ca = a[i]
             val cb = b[j]
-            if (ca.isDigit() && cb.isDigit()) {
+            if (ca.isAsciiDigit() && cb.isAsciiDigit()) {
                 val endA = digitsEnd(a, i)
                 val endB = digitsEnd(b, j)
                 val numA = a.substring(i, endA).trimStart('0')
@@ -85,9 +88,11 @@ object NaturalOrder : Comparator<String> {
 
     private fun digitsEnd(s: String, from: Int): Int {
         var k = from
-        while (k < s.length && s[k].isDigit()) k++
+        while (k < s.length && s[k].isAsciiDigit()) k++
         return k
     }
+
+    private fun Char.isAsciiDigit(): Boolean = this in '0'..'9'
 }
 
 /** True when [name] contains [query], ignoring case and surrounding spaces. A blank query matches all. */

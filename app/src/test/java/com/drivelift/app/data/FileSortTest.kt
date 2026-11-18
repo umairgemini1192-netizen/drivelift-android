@@ -51,6 +51,26 @@ class FileSortTest {
         assertEquals(sorted(twins, FileSort.NAME_AZ), sorted(twins.reversed(), FileSort.NAME_AZ))
     }
 
+    /** Codex on 507a10c: digits of other scripts must not break the comparator's contract. */
+    @Test
+    fun mixedDigitScriptsOrderConsistently() {
+        val names = listOf("10.jpg", "A.jpg", "٢.jpg", "2.jpg", "a10", "a٢", "_x", " y")
+        // Every pair agrees in both directions, and every triple is transitive.
+        for (a in names) for (b in names) {
+            assertEquals(Integer.signum(NaturalOrder.compare(a, b)), -Integer.signum(NaturalOrder.compare(b, a)))
+            for (c in names) {
+                if (NaturalOrder.compare(a, b) <= 0 && NaturalOrder.compare(b, c) <= 0) {
+                    assertTrue("$a <= $b <= $c", NaturalOrder.compare(a, c) <= 0)
+                }
+            }
+        }
+        // Sorting any arrangement gives one order and never throws.
+        val expected = names.sortedWith(NaturalOrder)
+        for (shift in names.indices) {
+            assertEquals(expected, (names.drop(shift) + names.take(shift)).sortedWith(NaturalOrder))
+        }
+    }
+
     @Test
     fun searchMatchesPartOfTheNameIgnoringCaseAndSpaces() {
         assertTrue(matchesQuery("Sunset_0019.jpg", " sunset "))
