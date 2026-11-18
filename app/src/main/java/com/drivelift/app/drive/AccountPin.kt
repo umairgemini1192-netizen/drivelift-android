@@ -2,6 +2,12 @@ package com.drivelift.app.drive
 
 import java.io.IOException
 
+/**
+ * The connected account is no longer the one a confirmed change was made for. Thrown before
+ * anything is sent, so the change was not attempted.
+ */
+class AccountChangedException : IOException("The connected Google account changed")
+
 /** Where the email of the connected Drive account is kept. */
 interface AccountPinStore {
     var accountEmail: String?

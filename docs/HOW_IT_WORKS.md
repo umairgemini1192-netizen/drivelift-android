@@ -154,6 +154,34 @@ the trash, how many are still on the phone and how many could not be checked (fo
 media access was withdrawn). Files that left the folder before the request was sent are not
 sent and are reported as such. A file missing from the listing is never counted as trashed.
 
+## Moving Drive files to the trash
+
+In the Drive tab, hold a file to select it (tap more to add them, or use Select all) and tap the
+trash icon in the bottom bar; or open a file and tap the trash icon at the top. DriveLift names
+the files with count and size and asks before doing anything. Confirmed files are moved to Google
+Drive's trash with the connected account (`files.update trashed=true`): Google keeps them for 30
+days, where they can be restored from Drive's trash, then deletes them for good. DriveLift never
+deletes permanently or empties the trash, and nothing on the phone changes.
+
+Left out and named: folders (trashing one would take everything inside it), and files a transfer
+still depends on (being uploaded or checked, or verified and waiting for removal on Transfers),
+so phone removal never relies on a copy that has gone to the trash. If the phone original was
+already removed after verification, the confirmation warns that the Drive copy is the only one.
+Each file is moved separately and the result is reported per file; files that moved disappear
+from the folder and their thumbnails are dropped from the cache.
+
+The batch belongs to the account that was connected when the confirmation was shown. Switching
+accounts is refused while it runs. Each request is sent with a token for that account, which
+Drive itself confirms belongs to it (also after a token refresh). If the saved account changes
+anyway, the remaining files are not tried and are reported as not tried.
+
+A trash and the phone-removal flow never act on the same Drive copy at once
+(`transfer/DriveCopyFence.kt`). While a copy is being trashed, the verifier cannot mark it
+verified, and Transfers leaves its phone file out of any removal request. A copy trashed during
+this session is never verified again; the next check finds it in the trash and uploads the file
+again. While a removal request is open (including while the user is deciding), a trash leaves
+the copies it relies on alone.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the

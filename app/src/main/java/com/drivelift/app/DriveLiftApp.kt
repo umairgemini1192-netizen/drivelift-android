@@ -28,7 +28,9 @@ class Graph(app: Application) {
     val prefs = Prefs(app)
     val media = MediaRepository(app)
     val drive = DriveClient(app, prefs)
-    val transfers = TransferRepository(app, db, prefs, media)
+    /** Keeps a user-directed Drive trash apart from verification and phone removal (issue #36). */
+    val driveCopyFence = com.drivelift.app.transfer.DriveCopyFence()
+    val transfers = TransferRepository(app, db, prefs, media, driveCopyFence)
     /** In memory only, so a new process starts locked. */
     val lock = AppLock()
     /** Replaced by a fake in tests; the app uses Android's BiometricPrompt. */

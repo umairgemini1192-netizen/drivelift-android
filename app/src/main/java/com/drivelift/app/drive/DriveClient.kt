@@ -106,6 +106,15 @@ interface DriveFolders {
     /** A stream for the in-app video player, authorised for the connected account. */
     suspend fun openVideoStream(file: DriveFile): DriveVideoStream =
         throw IOException("Video playback is not available")
+
+    /**
+     * Moves one file to Google Drive's trash as [account], the account that listed the file and
+     * whose confirmation the user gave (user-directed, issue #36). Recoverable from Drive's trash;
+     * never a permanent delete. Throws [AccountChangedException], without sending anything, when
+     * the connected account is no longer [account] or Google hands out a token for another one.
+     */
+    suspend fun moveToTrash(fileId: String, account: String): Unit =
+        throw IOException("Moving to the trash is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -138,13 +147,52 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
     }
 
-    private suspend fun <T> execute(request: () -> Request.Builder, handle: (Response) -> T): T {
-        var token = token()
+    /**
+     * A token for exactly [account], for a change the user confirmed while [account] was
+     * connected. Refused when the saved pin has moved to another account since, and every new
+     * token is checked with Drive to belong to [account] before it is used, so neither a switch
+     * nor a token refresh can carry the change to another identity.
+     */
+    private suspend fun tokenFor(account: String): String {
+        if (!account.equals(prefs.accountEmail, ignoreCase = true)) throw AccountChangedException()
+        // A cached token Drive rejects during the ownership check is dropped and replaced once;
+        // the replacement is proven the same way before anything is sent.
+        for (attempt in 0..1) {
+            val token = try {
+                DriveAuth.tokenOrNull(context, account) ?: throw AuthRequiredException()
+            } catch (e: ApiException) {
+                throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
+            }
+            val owner = provenTokens[token] ?: try {
+                about(token).email.also { provenTokens[token] = it }
+            } catch (e: DriveHttpException) {
+                if (e.code != 401) throw e
+                DriveAuth.invalidate(context, token)
+                continue
+            }
+            if (!owner.equals(account, ignoreCase = true)) throw AccountChangedException()
+            return token
+        }
+        throw AuthRequiredException()
+    }
+
+    /** Tokens already checked with Drive, and the account each belongs to. */
+    private val provenTokens = java.util.Collections.synchronizedMap(HashMap<String, String>())
+
+    private suspend fun <T> execute(
+        request: () -> Request.Builder,
+        /** Set for a confirmed change bound to one account; see [tokenFor]. */
+        account: String? = null,
+        handle: (Response) -> T,
+    ): T {
+        val nextToken: suspend () -> String = { if (account != null) tokenFor(account) else token() }
+        var token = nextToken()
         var response = send(request, token)
         if (response.code == 401) {
             response.close()
             DriveAuth.invalidate(context, token)
-            token = token()
+            provenTokens.remove(token)
+            token = nextToken()
             response = send(request, token)
             if (response.code == 401) {
                 response.close()
@@ -457,6 +505,14 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                 !r.isSuccessful -> fail(r)
                 else -> parseFile(JSONObject(r.body!!.string()))
             }
+        }
+    }
+
+    override suspend fun moveToTrash(fileId: String, account: String) {
+        // Unlike cleanup of a bad copy, a file that is already gone is reported, not ignored.
+        val body = JSONObject().put("trashed", true).toString().toRequestBody(JSON)
+        execute({ Request.Builder().url("$API/files/$fileId").patch(body) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
         }
     }
 

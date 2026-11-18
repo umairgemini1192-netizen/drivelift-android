@@ -90,6 +90,7 @@ class VerifyWorker(context: Context, params: WorkerParameters) : CoroutineWorker
                 LocalCopy(size = pfd.statSize, md5 = md5(pfd, item))
             }
         },
+        fence = graph.driveCopyFence,
     )
 
     /** Returns true when the file had to be sent back to the upload queue. */

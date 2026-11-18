@@ -46,6 +46,8 @@ class Verifier(
     private val ledger: VerifyLedger,
     private val remote: RemoteCopies,
     private val readLocal: suspend (TransferEntity) -> LocalCopy,
+    /** Keeps VERIFIED off a copy the user is moving, or moved, to Drive's trash (issue #36). */
+    private val fence: DriveCopyFence? = null,
 ) {
     /** Returns true when the file was sent back to the upload queue. */
     suspend fun verify(item: TransferEntity): Boolean {
@@ -63,7 +65,15 @@ class Verifier(
         }
 
         if (copiesMatch(local, copy)) {
-            ledger.setStatus(item.id, TransferStatus.VERIFIED, null)
+            // The copy read above may be trashed by the user meanwhile. The VERIFIED write and the
+            // trash reservation share one lock, so a trashed copy is never marked VERIFIED; the
+            // row stays UPLOADED and the next pass reads the copy again.
+            val written = if (fence == null) {
+                ledger.setStatus(item.id, TransferStatus.VERIFIED, null)
+            } else {
+                fence.unlessTrashed(copy.id) { ledger.setStatus(item.id, TransferStatus.VERIFIED, null) }
+            }
+            if (written == null) throw CopyBeingTrashedException()
             return false
         }
 

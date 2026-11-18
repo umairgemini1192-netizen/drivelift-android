@@ -9,6 +9,12 @@ import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import com.drivelift.app.data.DriveTrashPlan
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.border
+import androidx.compose.material.icons.outlined.RadioButtonUnchecked
+import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,6 +82,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -107,6 +114,9 @@ import kotlinx.coroutines.withContext
 import kotlin.math.roundToInt
 
 private data class Crumb(val id: String, val name: String)
+
+/** Keeps the selected Drive file ids across rotation and process recreation. */
+private val StringSetSaver = listSaver<Set<String>, String>(save = { it.toList() }, restore = { it.toSet() })
 
 /** Keeps the folder path across rotation and process recreation. */
 private val CrumbStackSaver = listSaver<List<Crumb>, String>(
@@ -182,6 +192,18 @@ fun DriveBrowser(
     var gridView by rememberSaveable { mutableStateOf(true) }
     var viewerFile by rememberSaveable(stateSaver = OpenDriveFileSaver) { mutableStateOf<DriveFile?>(null) }
     var thumbAuthExpired by remember { mutableStateOf(false) }
+    // Files selected for a file-manager action (issue #36). Folders are not selectable.
+    var selectedIds by rememberSaveable(stateSaver = StringSetSaver) { mutableStateOf(emptySet<String>()) }
+    var trashPlan by remember { mutableStateOf<DriveTrashPlan?>(null) }
+    // The confirmed batch runs in the view model, so a rotation does not cancel it halfway.
+    val trashRun by vm.driveTrashRun.collectAsStateWithLifecycle()
+    val trashing = trashRun?.working == true
+    val selecting = selectedIds.isNotEmpty() && !pickMode
+    // The tab bar steps aside while a file is open or files are selected, as in Phone folders,
+    // so the selection bar has the bottom of the screen to itself.
+    LaunchedEffect(viewerFile != null || selecting) {
+        onViewingFileChange?.invoke(viewerFile != null || selecting)
+    }
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
     val thumbCache = remember { LruCache<String, ImageBitmap>(120) }
@@ -195,9 +217,7 @@ fun DriveBrowser(
         thumbAuthExpired = false
     }
 
-    LaunchedEffect(viewerFile != null) {
-        onViewingFileChange?.invoke(viewerFile != null)
-    }
+
     DisposableEffect(Unit) {
         onDispose { onViewingFileChange?.invoke(false) }
     }
@@ -240,7 +260,35 @@ fun DriveBrowser(
         }
     }
 
-    BackHandler(enabled = viewerFile == null && (stack.size > 1 || onClose != null)) {
+    fun openFolder(file: DriveFile) {
+        selectedIds = emptySet()
+        stack = stack + Crumb(file.id, file.name)
+    }
+    fun tapFile(file: DriveFile) {
+        if (selecting) {
+            selectedIds = if (file.id in selectedIds) selectedIds - file.id else selectedIds + file.id
+        } else {
+            viewerFile = file
+        }
+    }
+    fun askTrash(files: List<DriveFile>) {
+        scope.launch { trashPlan = vm.planDriveTrash(files) }
+    }
+    fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan)
+    // Applies a finished batch, including one that finished while the screen was recreated.
+    LaunchedEffect(trashRun?.outcome) {
+        val outcome = trashRun?.outcome ?: return@LaunchedEffect
+        trashPlan = null
+        val gone = outcome.trashed.map { it.id }.toSet()
+        outcome.trashed.forEach { thumbCache.remove(driveMemoryCacheKey(accountKey, it)) }
+        selectedIds = selectedIds - gone
+        entries = entries?.filterNot { it.id in gone }
+        if (viewerFile?.id in gone) viewerFile = null
+        vm.driveTrashApplied()
+    }
+
+    BackHandler(enabled = selecting && viewerFile == null) { selectedIds = emptySet() }
+    BackHandler(enabled = !selecting && viewerFile == null && (stack.size > 1 || onClose != null)) {
         if (stack.size > 1) stack = stack.dropLast(1) else onClose?.invoke()
     }
 
@@ -261,7 +309,9 @@ fun DriveBrowser(
                     scrolledContainerColor = Color.Transparent,
                 ),
                 title = {
-                    Column {
+                    if (selecting) {
+                        Text("${selectedIds.size} selected", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    } else Column {
                         Text(here.name, maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
                             if (stack.size > 1) path else account?.email ?: "Google Drive",
@@ -274,6 +324,9 @@ fun DriveBrowser(
                 },
                 navigationIcon = {
                     when {
+                        selecting -> IconButton(onClick = { selectedIds = emptySet() }) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
+                        }
                         stack.size > 1 -> IconButton(onClick = { stack = stack.dropLast(1) }) {
                             Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Up one folder")
                         }
@@ -283,7 +336,13 @@ fun DriveBrowser(
                     }
                 },
                 actions = {
-                    if (conn == DriveConn.CONNECTED) {
+                    if (selecting) {
+                        val files = entries.orEmpty().filterNot { it.isFolder }
+                        val all = files.isNotEmpty() && files.all { it.id in selectedIds }
+                        TextButton(onClick = { selectedIds = if (all) emptySet() else files.map { it.id }.toSet() }) {
+                            Text(if (all) "Select none" else "Select all")
+                        }
+                    } else if (conn == DriveConn.CONNECTED) {
                         if (!pickMode) {
                             IconButton(onClick = { gridView = !gridView }) {
                                 Icon(
@@ -409,7 +468,7 @@ fun DriveBrowser(
                                         sizeLabel = null,
                                         thumb = null,
                                         padded = false,
-                                        onClick = { stack = stack + Crumb(file.id, file.name) },
+                                        onClick = { openFolder(file) },
                                     )
                                 } else {
                                     val thumb = rememberDriveThumb(
@@ -424,7 +483,9 @@ fun DriveBrowser(
                                         file = file,
                                         thumb = thumb,
                                         sizeLabel = formatBytes(context, file.size),
-                                        onClick = { viewerFile = file },
+                                        selected = if (selecting) file.id in selectedIds else null,
+                                        onClick = { tapFile(file) },
+                                        onLongClick = { selectedIds = selectedIds + file.id },
                                     )
                                 }
                             }
@@ -452,11 +513,44 @@ fun DriveBrowser(
                                 thumb = thumb,
                                 padded = true,
                                 onClick = when {
-                                    file.isFolder -> { { stack = stack + Crumb(file.id, file.name) } }
+                                    file.isFolder -> { { openFolder(file) } }
                                     // The picker chooses folders only; a file there is not a target.
                                     pickMode -> null
-                                    else -> { { viewerFile = file } }
+                                    else -> { { tapFile(file) } }
                                 },
+                                selected = if (selecting && !file.isFolder) file.id in selectedIds else null,
+                                onLongClick = if (file.isFolder || pickMode) null else { { selectedIds = selectedIds + file.id } },
+                            )
+                        }
+                    }
+                }
+            }
+
+            if (selecting) {
+                val chosen = entries.orEmpty().filter { it.id in selectedIds }
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .glassBar()
+                        .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                ) {
+                    Text("${chosen.size} items", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        formatBytes(context, chosen.sumOf { it.size }),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Row(
+                        Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        OutlinedButton(onClick = { selectedIds = emptySet() }) { Text("Clear") }
+                        IconButton(onClick = { askTrash(chosen) }, modifier = Modifier.size(Tokens.TouchTarget)) {
+                            Icon(
+                                Icons.Outlined.DeleteOutline,
+                                contentDescription = "Move selected to Google Drive's trash",
+                                tint = MaterialTheme.colorScheme.error,
                             )
                         }
                     }
@@ -523,8 +617,17 @@ fun DriveBrowser(
                     onOpenExternally = {
                         openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
                     },
+                    onDelete = { askTrash(listOf(openFile)) },
                 )
             }
+        }
+        trashPlan?.let { plan ->
+            DriveTrashDialog(
+                plan = plan,
+                working = trashing,
+                onConfirm = { confirmTrash(plan) },
+                onDismiss = { if (!trashing) trashPlan = null },
+            )
         }
     }
 
@@ -633,7 +736,10 @@ private fun DriveMediaGridCard(
     file: DriveFile,
     thumb: ThumbState,
     sizeLabel: String,
+    /** Null when not selecting; otherwise whether this file is selected. */
+    selected: Boolean? = null,
     onClick: () -> Unit,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val kind = classifyDriveFile(file.mimeType)
     val icon = fileTypeIcon(kind)
@@ -641,9 +747,29 @@ private fun DriveMediaGridCard(
         modifier = Modifier.fillMaxWidth().aspectRatio(1f),
         shape = Tokens.ThumbShape,
         onClick = onClick,
-        onClickLabel = "Open ${file.name}",
+        onClickLabel = when (selected) {
+            null -> "Open ${file.name}"
+            true -> "Deselect ${file.name}"
+            false -> "Select ${file.name}"
+        },
+        onLongClick = onLongClick,
+        onLongClickLabel = "Select",
     ) {
         Box(Modifier.fillMaxSize().background(GlassPalette.Thumb)) {
+            // Drawn above the thumbnail and captions (zIndex), so a selected photo always shows it.
+            if (selected == true) {
+                Box(
+                    Modifier.fillMaxSize().zIndex(1f)
+                        .border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary, Tokens.ThumbShape),
+                )
+                Icon(
+                    Icons.Outlined.CheckCircle,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.align(Alignment.TopStart).zIndex(1f).padding(Tokens.Snug).size(Tokens.Icon)
+                        .background(MaterialTheme.colorScheme.primary, CircleShape),
+                )
+            }
             when (thumb) {
                 is ThumbState.Ready -> Image(
                     bitmap = thumb.bitmap,
@@ -711,6 +837,8 @@ private fun DriveRow(
     thumb: ThumbState?,
     padded: Boolean,
     onClick: (() -> Unit)?,
+    selected: Boolean? = null,
+    onLongClick: (() -> Unit)? = null,
 ) {
     val icon = if (file.isFolder) Icons.Outlined.Folder else fileTypeIcon(classifyDriveFile(file.mimeType))
     val rowPadding = if (padded) {
@@ -721,12 +849,27 @@ private fun DriveRow(
     GlassPanel(
         modifier = rowPadding,
         onClick = onClick,
-        onClickLabel = if (!file.isFolder && onClick != null) "Open ${file.name}" else null,
+        onClickLabel = when {
+            file.isFolder || onClick == null -> null
+            selected == true -> "Deselect ${file.name}"
+            selected == false -> "Select ${file.name}"
+            else -> "Open ${file.name}"
+        },
+        onLongClick = onLongClick,
+        onLongClickLabel = "Select",
     ) {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.RowLoose),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            if (selected != null) {
+                Icon(
+                    if (selected) Icons.Outlined.CheckCircle else Icons.Outlined.RadioButtonUnchecked,
+                    contentDescription = null,
+                    tint = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = Tokens.Medium).size(Tokens.Icon),
+                )
+            }
             if (!file.isFolder && thumb is ThumbState.Ready) {
                 Image(
                     bitmap = thumb.bitmap,
