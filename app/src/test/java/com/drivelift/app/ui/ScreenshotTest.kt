@@ -54,6 +54,7 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -210,8 +211,71 @@ class ScreenshotTest {
                 settle { compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("Camera").performClick()
                 settle { compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty() }
-                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                // A tap opens a photo now, so the first item is selected by holding it.
+                selectCell("IMG_0001.jpg")
                 compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #29: a photo on the phone opens inside DriveLift. */
+    @Test
+    fun phonePhotoViewer() {
+        grantMedia()
+        eachVariant(
+            "phone-photo-viewer", expect = null, connected = true,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Photo on this phone", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #29: tap opens photos and videos from the phone; Back returns to the same folder with
+     * nothing selected; holding a thumbnail selects it and taps then add to the selection.
+     */
+    @Test
+    fun phoneMediaOpensInsideDriveLift() {
+        grantMedia()
+        eachVariant(
+            "phone-open-flow", expect = null, connected = true, capture = false,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+
+                // Photo: opens in the viewer, Back closes it, the folder is still open.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Open in another app").assertExists()
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty() }
+                compose.onNodeWithText("Select all").assertExists()
+                assertTrue("Opening a photo must not select it", currentVm!!.selection.value.isEmpty())
+
+                // Video: plays from the phone, no Drive connection used.
+                compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+                settle { compose.onAllNodesWithText("Video on this phone", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Close viewer").performClick()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty() }
+
+                // Holding a thumbnail selects it; the lift does not toggle it off again.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performTouchInput { longClick() }
+                waitFor("1 selected")
+                // While selecting, a tap adds to the selection instead of opening.
+                compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+                waitFor("2 selected")
+                assertTrue(
+                    "A tap while selecting must not open the viewer",
+                    compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty(),
+                )
+                currentVm!!.clearSelection()
+                pump(4)
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -729,7 +793,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.12 (build 11)",
+            "build-id", expect = "DriveLift 1.0.0-preview.13 (build 12)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -905,6 +969,17 @@ class ScreenshotTest {
      */
     private fun SemanticsNodeInteraction.press() = performSemanticsAction(SemanticsActions.OnClick)
 
+    /**
+     * Selects a thumbnail through its "Select" accessibility action, the same path TalkBack uses.
+     * The touch path (holding a thumbnail) is covered by [phoneMediaOpensInsideDriveLift].
+     */
+    private fun selectCell(name: String) {
+        val node = compose.onAllNodesWithContentDescription(name).onFirst().fetchSemanticsNode()
+        val select = node.config[SemanticsActions.CustomActions].first { it.label == "Select" }
+        compose.runOnUiThread { select.action() }
+        pump(4)
+    }
+
     private fun tap(text: String) {
         waitFor(text)
         compose.onNodeWithText(text).press()
@@ -915,7 +990,7 @@ class ScreenshotTest {
         waitFor("Camera")
         compose.onNodeWithText("Camera").performClick()
         waitFor("Select all")
-        compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+        selectCell("IMG_0001.jpg")
         compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
         tap("Move to Drive")
         waitFor("Move 2 items to Drive")
