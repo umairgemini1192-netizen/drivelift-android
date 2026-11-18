@@ -130,11 +130,16 @@ Step speed: each step is a precise seek, so the player decodes from the nearest 
 up to the target frame; on a Drive video that may also mean fetching media again. To keep this
 bounded, only one step seek runs at a time. Taps made while it runs move the target on (so five
 quick taps still land five frames on) and the newest target is sought as soon as the current frame
-is shown. The player keeps 15 seconds of already-streamed media behind the playing position, so a
-step or skip back within it does not fetch from Drive again. A step that shows no new frame within
-2 seconds stops holding back the next one. Step latency has not been measured on a phone yet; each
-step writes its tap-to-frame time to the local log (`adb logcat -s DriveLiftStep`), nothing leaves
-the phone.
+is shown. A step counts as done only when the player reports a rendered frame at that step's own
+target, so a late frame from an older seek cannot release a newer one. The player keeps 15 seconds
+of already-streamed media behind the playing position, so a step or skip back within it does not
+fetch from Drive again. A step that shows no frame within 2 seconds stops holding back the next one;
+that timer belongs to its own step and cannot affect a later one.
+
+Step latency has not been measured on a phone yet. Each step writes to the local log only
+(`adb logcat -s DriveLiftStep`; nothing leaves the phone): its target, how many taps it covers, and
+the time from its first tap, its last tap and its seek to the frame. Timed-out and superseded steps
+are logged as such.
 
 Known limit: a step is computed from the video's reported frame rate (30 fps when the file does
 not report one). For constant-frame-rate video each step lands exactly on the neighbouring frame.
