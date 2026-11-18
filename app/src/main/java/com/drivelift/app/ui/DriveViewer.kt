@@ -83,8 +83,8 @@ import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import kotlin.math.max
 
-private const val MAX_IMAGE_VIEWER_BYTES = 32L * 1024L * 1024L
-private const val MAX_IMAGE_DECODE_EDGE = 2048
+internal const val MAX_IMAGE_VIEWER_BYTES = 32L * 1024L * 1024L
+internal const val MAX_IMAGE_DECODE_EDGE = 2048
 
 private sealed interface ImageViewerState {
     data object Loading : ImageViewerState
@@ -220,20 +220,7 @@ fun DriveFileViewer(
         // Place the background pointer barrier as a sibling behind viewer content and controls so
         // empty-backdrop taps/drags never reach DriveBrowser beneath while child button taps stay
         // tolerant of small finger jitter.
-        Box(
-            Modifier
-                .fillMaxSize()
-                .pointerInput(Unit) {
-                    awaitEachGesture {
-                        awaitFirstDown(requireUnconsumed = false)
-                        while (true) {
-                            val event = awaitPointerEvent()
-                            event.changes.forEach { it.consume() }
-                            if (event.changes.none { it.pressed }) break
-                        }
-                    }
-                },
-        )
+        Box(Modifier.fillMaxSize().viewerPointerBarrier())
         when (kind) {
             DrivePreviewKind.VIDEO -> VideoPreviewContent(
                 vm = vm,
@@ -262,60 +249,123 @@ fun DriveFileViewer(
             )
         }
 
-        // Top overlay control bar stays clear and accessible at >= 48 dp touch targets.
-        if (chromeVisible) GlassPanel(
-            modifier = Modifier
-                .align(Alignment.TopCenter)
-                .fillMaxWidth()
-                .padding(Tokens.Edge),
-            shape = Tokens.PanelShape,
-        ) {
-            Row(
-                Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                IconButton(onClick = onClose, modifier = Modifier.size(Tokens.ViewerControl)) {
-                    Icon(Icons.Outlined.Close, contentDescription = "Close viewer")
-                }
-                Column(Modifier.weight(1f).padding(horizontal = Tokens.Small)) {
-                    Text(
-                        file.name,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    val subtitle = buildString {
-                        append(drivePreviewTypeLabel(file))
-                        if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
-                    }
-                    Text(
-                        subtitle,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                if (kind == DrivePreviewKind.IMAGE && transform.scale > 1.05f) {
-                    IconButton(
-                        onClick = { transform.reset() },
-                        modifier = Modifier.size(Tokens.ViewerControl),
-                    ) {
-                        Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
-                    }
-                }
-                IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {
-                    Icon(
-                        Icons.AutoMirrored.Outlined.OpenInNew,
-                        contentDescription = "Open in Google Drive",
-                    )
-                }
-            }
-        }
+        if (chromeVisible) ViewerTopBar(
+            title = file.name,
+            subtitle = buildString {
+                append(drivePreviewTypeLabel(file))
+                if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
+            },
+            showResetZoom = kind == DrivePreviewKind.IMAGE && transform.scale > 1.05f,
+            onResetZoom = { transform.reset() },
+            onClose = onClose,
+            externalLabel = "Open in Google Drive",
+            onOpenExternally = onOpenExternally,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
         }
     }
+}
+
+/**
+ * The viewer's top bar, shared by the Drive and Phone viewers: close, name and details, reset
+ * zoom while zoomed, and opening the file in another app. Touch targets are at least 48 dp.
+ */
+@Composable
+internal fun ViewerTopBar(
+    title: String,
+    subtitle: String,
+    showResetZoom: Boolean,
+    onResetZoom: () -> Unit,
+    onClose: () -> Unit,
+    externalLabel: String,
+    onOpenExternally: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    GlassPanel(
+        modifier = modifier
+            .fillMaxWidth()
+            .padding(Tokens.Edge),
+        shape = Tokens.PanelShape,
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            IconButton(onClick = onClose, modifier = Modifier.size(Tokens.ViewerControl)) {
+                Icon(Icons.Outlined.Close, contentDescription = "Close viewer")
+            }
+            Column(Modifier.weight(1f).padding(horizontal = Tokens.Small)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            if (showResetZoom) {
+                IconButton(onClick = onResetZoom, modifier = Modifier.size(Tokens.ViewerControl)) {
+                    Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
+                }
+            }
+            IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {
+                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = externalLabel)
+            }
+        }
+    }
+}
+
+/** Stops taps and drags on the viewer's empty backdrop from reaching the screen beneath it. */
+internal fun Modifier.viewerPointerBarrier(): Modifier = pointerInput(Unit) {
+    awaitEachGesture {
+        awaitFirstDown(requireUnconsumed = false)
+        while (true) {
+            val event = awaitPointerEvent()
+            event.changes.forEach { it.consume() }
+            if (event.changes.none { it.pressed }) break
+        }
+    }
+}
+
+/** A picture fitted to the screen with pinch zoom, pan and double-tap zoom. */
+@Composable
+internal fun ZoomableImage(
+    bitmap: ImageBitmap,
+    contentDescription: String,
+    key: Any,
+    transform: ImageTransformState,
+    bounds: () -> IntSize,
+) {
+    Image(
+        bitmap = bitmap,
+        contentDescription = contentDescription,
+        contentScale = ContentScale.Fit,
+        modifier = Modifier
+            .fillMaxSize()
+            .testTag("viewer-image")
+            .pointerInput(key, transform) {
+                detectTapGestures(onDoubleTap = { transform.toggleDoubleTap() })
+            }
+            .pointerInput(key, transform) {
+                detectTransformGestures { _, pan, zoom, _ ->
+                    transform.applyGesture(pan = pan, zoom = zoom, bounds = bounds())
+                }
+            }
+            .graphicsLayer(
+                scaleX = transform.scale,
+                scaleY = transform.scale,
+                translationX = transform.offset.x,
+                translationY = transform.offset.y,
+            ),
+    )
 }
 
 @Composable
@@ -376,28 +426,7 @@ private fun ImagePreviewContent(
         }
 
         if (displayBitmap != null) {
-            Image(
-                bitmap = displayBitmap,
-                contentDescription = file.name,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier
-                    .fillMaxSize()
-                    .testTag("viewer-image")
-                    .pointerInput(file.id, transform) {
-                        detectTapGestures(onDoubleTap = { transform.toggleDoubleTap() })
-                    }
-                    .pointerInput(file.id, transform) {
-                        detectTransformGestures { _, pan, zoom, _ ->
-                            transform.applyGesture(pan = pan, zoom = zoom, bounds = currentBoxSize)
-                        }
-                    }
-                    .graphicsLayer(
-                        scaleX = transform.scale,
-                        scaleY = transform.scale,
-                        translationX = transform.offset.x,
-                        translationY = transform.offset.y,
-                    ),
-            )
+            ZoomableImage(displayBitmap, file.name, file.id, transform) { currentBoxSize }
         }
 
         // Until the full image is ready the cached thumbnail is only context. Dim it with the shared

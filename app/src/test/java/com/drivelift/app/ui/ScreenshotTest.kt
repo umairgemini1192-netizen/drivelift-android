@@ -54,6 +54,8 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertHeightIsAtLeast
+import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onFirst
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
@@ -210,10 +212,135 @@ class ScreenshotTest {
                 settle { compose.onAllNodesWithText("Camera").fetchSemanticsNodes().isNotEmpty() }
                 compose.onNodeWithText("Camera").performClick()
                 settle { compose.onAllNodesWithText("Select all").fetchSemanticsNodes().isNotEmpty() }
-                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                // A tap opens a photo now, so the first item is selected by holding it.
+                selectCell("IMG_0001.jpg")
                 compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
             },
         ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #29: a photo on the phone opens inside DriveLift. */
+    @Test
+    fun phonePhotoViewer() {
+        grantMedia()
+        eachVariant(
+            "phone-photo-viewer", expect = null, connected = true,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Photo on this phone", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #29: tap opens photos and videos from the phone; Back returns to the same folder with
+     * nothing selected; holding a thumbnail selects it and taps then add to the selection.
+     */
+    @Test
+    fun phoneMediaOpensInsideDriveLift() {
+        grantMedia()
+        eachVariant(
+            // Drive is not connected: opening phone media must not need the account.
+            "phone-open-flow", expect = null, connected = false, capture = false,
+            act = {
+                // No account at all (the app's silent sign-in attempt has nothing to find here).
+                assertEquals(null, currentVm!!.account.value)
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+
+                // Photo: opens in the viewer, Back closes it, the folder is still open.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Open in another app").assertExists()
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty() }
+                compose.onNodeWithText("Select all").assertExists()
+                assertTrue("Opening a photo must not select it", currentVm!!.selection.value.isEmpty())
+
+                // Video: plays from the phone, no Drive connection used.
+                compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+                settle { compose.onAllNodesWithText("Video on this phone", substring = true).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Close viewer").performClick()
+                settle { compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty() }
+
+                // Holding a thumbnail selects it; the lift does not toggle it off again.
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performTouchInput { longClick() }
+                waitFor("1 selected")
+                // While selecting, a tap adds to the selection instead of opening.
+                compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
+                waitFor("2 selected")
+                assertTrue(
+                    "A tap while selecting must not open the viewer",
+                    compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty(),
+                )
+                currentVm!!.clearSelection()
+                pump(4)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** A synthetic phone item for the viewer's failure states; no file or photo is involved. */
+    private fun localItem(id: Long, name: String, video: Boolean, size: Long) = com.drivelift.app.data.MediaItem(
+        id = id,
+        uri = android.net.Uri.parse("content://media/external/${if (video) "video" else "images"}/media/$id"),
+        name = name, size = size, mime = if (video) "video/mp4" else "image/jpeg",
+        dateTakenMs = 0, dateModifiedMs = 0, bucketId = 1, bucketName = "Camera",
+        relativePath = "DCIM/Camera/", isVideo = video, durationMs = if (video) 5_000 else 0,
+    )
+
+    /** Issue #29 review: the local photo viewer while the file is still being read. */
+    @Test
+    fun localPhotoLoading() {
+        val item = localItem(901, "IMG_0901.jpg", video = false, size = 3_400_000)
+        val release = CountDownLatch(1)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) {
+            release.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            ByteArrayInputStream(ByteArray(0))
+        }
+        try {
+            eachVariant("local-photo-loading", expect = "Opening photo") { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+        } finally {
+            release.countDown()
+        }
+    }
+
+    /** Issue #29 review: a phone photo that cannot be read offers Try again and another app. */
+    @Test
+    fun localPhotoUnreadable() {
+        val item = localItem(902, "IMG_0902.jpg", video = false, size = 3_400_000)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) { throw java.io.FileNotFoundException() }
+        eachVariant("local-photo-unreadable", expect = "Could not open photo") { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+    }
+
+    /** Issue #29 review: a photo over the viewer's 32 MB limit is not read at all. */
+    @Test
+    fun localPhotoTooLarge() {
+        val item = localItem(903, "PANO_0903.jpg", video = false, size = 40_000_000)
+        eachVariant("local-photo-too-large", expect = "Could not open photo") { vm ->
+            LocalMediaViewer(vm, item, onClose = {})
+        }
+        // Also checked without a capture: the message names the limit.
+        eachVariant("local-photo-too-large-copy", expect = null, capture = false, act = {
+            waitFor("Could not open photo")
+            compose.onNodeWithText("larger than", substring = true).assertExists()
+        }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+    }
+
+    /** Issue #29 review: a phone video that cannot be read shows a plain notice, not an error code. */
+    @Test
+    fun localVideoError() {
+        val item = localItem(904, "VID_0904.mp4", video = true, size = 12_000_000)
+        // The file has gone: opening it fails, as for a video moved or deleted after the list loaded.
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) { throw java.io.FileNotFoundException() }
+        eachVariant("local-video-error", expect = "Could not play video", act = {
+            waitFor("Could not play video")
+            compose.onNodeWithText("Open in another app").assertExists()
+        }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
     }
 
     @Test
@@ -758,7 +885,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.12 (build 11)",
+            "build-id", expect = "DriveLift 1.0.0-preview.13 (build 12)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -934,6 +1061,17 @@ class ScreenshotTest {
      */
     private fun SemanticsNodeInteraction.press() = performSemanticsAction(SemanticsActions.OnClick)
 
+    /**
+     * Selects a thumbnail through its "Select" accessibility action, the same path TalkBack uses.
+     * The touch path (holding a thumbnail) is covered by [phoneMediaOpensInsideDriveLift].
+     */
+    private fun selectCell(name: String) {
+        val node = compose.onAllNodesWithContentDescription(name).onFirst().fetchSemanticsNode()
+        val select = node.config[SemanticsActions.CustomActions].first { it.label == "Select" }
+        compose.runOnUiThread { select.action() }
+        pump(4)
+    }
+
     private fun tap(text: String) {
         waitFor(text)
         compose.onNodeWithText(text).press()
@@ -944,7 +1082,7 @@ class ScreenshotTest {
         waitFor("Camera")
         compose.onNodeWithText("Camera").performClick()
         waitFor("Select all")
-        compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+        selectCell("IMG_0001.jpg")
         compose.onAllNodesWithContentDescription("VID_0003.mp4").onFirst().performClick()
         tap("Move to Drive")
         waitFor("Move 2 items to Drive")

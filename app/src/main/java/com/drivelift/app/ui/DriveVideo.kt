@@ -73,9 +73,23 @@ internal sealed interface VideoProblem {
     data class Failed(val message: String) : VideoProblem
 }
 
+/**
+ * What the shared player plays: a Drive stream (with the account's authorized connection) or a
+ * video on this phone (read through its content URI, no account or network involved).
+ */
+internal class VideoSource(
+    /** Stable identity for saved position, speed and zoom. */
+    val key: String,
+    /** File name, used for saved frames. */
+    val name: String,
+    val uri: String,
+    val dataSourceFactory: androidx.media3.datasource.DataSource.Factory,
+    val local: Boolean,
+)
+
 /** Turns a player error into what the viewer shows. */
 @OptIn(UnstableApi::class)
-internal fun videoProblemFor(error: PlaybackException): VideoProblem {
+internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): VideoProblem {
     var cause: Throwable? = error
     while (cause != null) {
         if (cause is HttpDataSource.InvalidResponseCodeException) {
@@ -87,6 +101,9 @@ internal fun videoProblemFor(error: PlaybackException): VideoProblem {
         }
         cause = cause.cause
     }
+    if (local && error.errorCode in LOCAL_READ_ERRORS) {
+        return VideoProblem.Failed(LOCAL_VIDEO_UNREADABLE)
+    }
     return when (error.errorCode) {
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
@@ -94,7 +111,10 @@ internal fun videoProblemFor(error: PlaybackException): VideoProblem {
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_UNSUPPORTED,
         PlaybackException.ERROR_CODE_PARSING_CONTAINER_MALFORMED,
         PlaybackException.ERROR_CODE_DECODING_FAILED ->
-            VideoProblem.Failed("This phone can't play this video's format. You can open it in Google Drive instead.")
+            VideoProblem.Failed(
+                if (local) "This phone can't play this video's format. You can open it in another app instead."
+                else "This phone can't play this video's format. You can open it in Google Drive instead.",
+            )
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_FAILED,
         PlaybackException.ERROR_CODE_IO_NETWORK_CONNECTION_TIMEOUT ->
             VideoProblem.Failed("Connection problem while streaming. Check the connection and try again.")
@@ -104,11 +124,20 @@ internal fun videoProblemFor(error: PlaybackException): VideoProblem {
     }
 }
 
+/** Player errors that, for a file on this phone, mean it could not be read. */
+private val LOCAL_READ_ERRORS = setOf(
+    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+    PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+    PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+    PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE,
+)
+
 /**
  * Streams a Drive video inside DriveLift with the connected account. Nothing is downloaded in
  * full first, playback pauses when the app leaves the screen, and the player is released when
  * the viewer closes.
  */
+@OptIn(UnstableApi::class)
 @Composable
 internal fun VideoPreviewContent(
     vm: AppViewModel,
@@ -140,7 +169,10 @@ internal fun VideoPreviewContent(
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
         val current = stream
         if (current != null && problem == null) {
-            VideoPlayer(vm, file, current, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
+            val source = remember(current) {
+                VideoSource(file.id, file.name, current.url, OkHttpDataSource.Factory(current.callFactory), local = false)
+            }
+            VideoPlayer(vm, source, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
         } else {
             if (cachedThumb != null) {
                 Image(
@@ -183,25 +215,24 @@ internal fun VideoPreviewContent(
 
 @OptIn(UnstableApi::class)
 @Composable
-private fun VideoPlayer(
+internal fun VideoPlayer(
     vm: AppViewModel,
-    file: DriveFile,
-    stream: DriveVideoStream,
+    source: VideoSource,
     onProblem: (VideoProblem) -> Unit,
     onChromeVisibleChange: (Boolean) -> Unit,
 ) {
     val context = LocalContext.current
     val activity = remember(context) { context.findActivity() }
     // Survive rotation and process recreation: where the video was, its speed and whether it played.
-    var savedPosition by rememberSaveable(file.id) { mutableLongStateOf(0L) }
-    var savedSpeed by rememberSaveable(file.id) { mutableFloatStateOf(1f) }
-    var savedPlay by rememberSaveable(file.id) { mutableStateOf(true) }
+    var savedPosition by rememberSaveable(source.key) { mutableLongStateOf(0L) }
+    var savedSpeed by rememberSaveable(source.key) { mutableFloatStateOf(1f) }
+    var savedPlay by rememberSaveable(source.key) { mutableStateOf(true) }
     val currentOnChrome by rememberUpdatedState(onChromeVisibleChange)
     val scope = rememberCoroutineScope()
     val currentOnProblem by rememberUpdatedState(onProblem)
-    val player = remember(stream) {
+    val player = remember(source) {
         ExoPlayer.Builder(context)
-            .setMediaSourceFactory(DefaultMediaSourceFactory(OkHttpDataSource.Factory(stream.callFactory)))
+            .setMediaSourceFactory(DefaultMediaSourceFactory(source.dataSourceFactory))
             // Takes audio focus like any media app: other audio pauses or ducks, and a call or
             // another player pauses this one. Unplugging headphones pauses instead of blaring.
             .setAudioAttributes(
@@ -221,7 +252,7 @@ private fun VideoPlayer(
             )
             .build()
             .apply {
-                setMediaItem(MediaItem.fromUri(stream.url), savedPosition)
+                setMediaItem(MediaItem.fromUri(source.uri), savedPosition)
                 setPlaybackSpeed(savedSpeed)
                 prepare()
                 playWhenReady = savedPlay
@@ -279,10 +310,10 @@ private fun VideoPlayer(
     var viewport by remember(player) { mutableStateOf(IntSize.Zero) }
     // Zoom stays exactly where the user leaves it (through hiding controls, seeking, pausing and
     // rotation) until they pinch again or tap Fit.
-    var savedZoom by rememberSaveable(file.id) { mutableFloatStateOf(1f) }
-    var savedPanX by rememberSaveable(file.id) { mutableFloatStateOf(0f) }
-    var savedPanY by rememberSaveable(file.id) { mutableFloatStateOf(0f) }
-    val zoom = remember(file.id) {
+    var savedZoom by rememberSaveable(source.key) { mutableFloatStateOf(1f) }
+    var savedPanX by rememberSaveable(source.key) { mutableFloatStateOf(0f) }
+    var savedPanY by rememberSaveable(source.key) { mutableFloatStateOf(0f) }
+    val zoom = remember(source.key) {
         ImageTransformState().apply {
             scale = savedZoom
             offset = Offset(savedPanX, savedPanY)
@@ -296,7 +327,7 @@ private fun VideoPlayer(
 
     DisposableEffect(player) {
         val listener = object : Player.Listener {
-            override fun onPlayerError(error: PlaybackException) = currentOnProblem(videoProblemFor(error))
+            override fun onPlayerError(error: PlaybackException) = currentOnProblem(videoProblemFor(error, source.local))
 
             override fun onPlayWhenReadyChanged(playWhenReady: Boolean, reason: Int) {
                 savedPlay = playWhenReady
@@ -415,7 +446,7 @@ private fun VideoPlayer(
         val bitmap = view.getBitmap(size.width, size.height)
         scope.launch {
             if (bitmap != null) {
-                vm.saveVideoFrame(bitmap, file.name, at)
+                vm.saveVideoFrame(bitmap, source.name, at)
             } else {
                 vm.messages.emit("Couldn't capture this frame.")
             }
