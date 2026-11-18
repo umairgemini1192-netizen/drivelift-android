@@ -47,6 +47,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
+import androidx.compose.ui.test.performScrollTo
 import com.drivelift.app.data.Prefs
 import androidx.work.WorkManager
 import androidx.work.NetworkType
@@ -709,6 +710,33 @@ class ScreenshotTest {
                 compose.onNodeWithContentDescription("Settings").performClick()
             },
         ) { vm -> AppRoot(vm) }
+    }
+
+    /** Settings names who confirms removal according to Media management access (issue #25 follow-up). */
+    @Test
+    fun settingsRemovalWordingFollowsMediaManagementAccess() {
+        grantMedia()
+        for (granted in listOf(false, true)) {
+            Graph.get(app).canManageMedia = { granted }
+            eachVariant(
+                "settings-wording-$granted", expect = null, tab = AppViewModel.TAB_TRANSFERS, capture = false,
+                act = {
+                    waitFor("Nothing in transit")
+                    compose.onNodeWithContentDescription("Settings").performClick()
+                    waitFor("Offer removal when verified")
+                    compose.onNodeWithText(autoRemoveDescription(granted)).assertExists()
+                    assertTrue(
+                        "The other access state's wording must not show",
+                        compose.onAllNodesWithText(autoRemoveDescription(!granted)).fetchSemanticsNodes().isEmpty(),
+                    )
+                    compose.onNodeWithText(REMOVAL_ABOUT).performScrollTo().assertExists()
+                    assertTrue(
+                        "No text may claim Android always confirms",
+                        compose.onAllNodesWithText("always asks Android", substring = true).fetchSemanticsNodes().isEmpty(),
+                    )
+                },
+            ) { vm -> AppRoot(vm) }
+        }
     }
 
     @Test
