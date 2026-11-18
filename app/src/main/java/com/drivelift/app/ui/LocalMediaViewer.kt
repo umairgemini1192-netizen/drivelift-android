@@ -60,29 +60,28 @@ fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit) {
         openLocalExternally(context, item)?.let { vm.messages.tryEmit(it) }
     }
 
-    GlassBackdrop {
-        Box(Modifier.fillMaxSize()) {
-            // Taps on the empty backdrop never reach the folder grid beneath.
-            Box(Modifier.fillMaxSize().viewerPointerBarrier())
-            if (item.isVideo) {
-                LocalVideoContent(vm, item, openElsewhere, onChromeVisibleChange = { chromeVisible = it })
-            } else {
-                LocalImageContent(item, transform, onClose, openElsewhere)
-            }
-            if (chromeVisible) ViewerTopBar(
-                title = item.name,
-                subtitle = buildString {
-                    append(if (item.isVideo) "Video on this phone" else "Photo on this phone")
-                    if (item.size > 0) append("  ·  ${formatBytes(context, item.size)}")
-                },
-                showResetZoom = !item.isVideo && transform.scale > 1.05f,
-                onResetZoom = { transform.reset() },
-                onClose = onClose,
-                externalLabel = "Open in another app",
-                onOpenExternally = openElsewhere,
-                modifier = Modifier.align(Alignment.TopCenter),
-            )
+    // Drawn on the root backdrop (rule 3): this viewer is part of the app window, not a dialog.
+    Box(Modifier.fillMaxSize()) {
+        // Taps on the empty backdrop never reach the folder grid beneath.
+        Box(Modifier.fillMaxSize().viewerPointerBarrier())
+        if (item.isVideo) {
+            LocalVideoContent(vm, item, openElsewhere, onChromeVisibleChange = { chromeVisible = it })
+        } else {
+            LocalImageContent(item, transform, onClose, openElsewhere)
         }
+        if (chromeVisible) ViewerTopBar(
+            title = item.name,
+            subtitle = buildString {
+                append(if (item.isVideo) "Video on this phone" else "Photo on this phone")
+                if (item.size > 0) append("  ·  ${formatBytes(context, item.size)}")
+            },
+            showResetZoom = !item.isVideo && transform.scale > 1.05f,
+            onResetZoom = { transform.reset() },
+            onClose = onClose,
+            externalLabel = "Open in another app",
+            onOpenExternally = openElsewhere,
+            modifier = Modifier.align(Alignment.TopCenter),
+        )
     }
 }
 

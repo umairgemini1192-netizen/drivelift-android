@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
@@ -72,6 +73,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.customActions
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
@@ -323,7 +325,13 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     }
 
     Box(Modifier.fillMaxSize()) {
-        Column(Modifier.fillMaxSize()) {
+        // While the viewer is open the grid stays composed, so its scroll position is kept, but it
+        // is not drawn and not offered to TalkBack: the viewer sits on the root backdrop alone.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (viewing != null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier),
+        ) {
             TopAppBar(
                 colors = TopAppBarDefaults.topAppBarColors(
                     containerColor = Color.Transparent,
