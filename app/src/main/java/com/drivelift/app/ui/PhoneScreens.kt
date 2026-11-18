@@ -452,10 +452,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
             if (selection.isNotEmpty()) {
                 Box(Modifier.fillMaxWidth().glassBar()) {
-                    // With large text or a narrow phone the two buttons would squeeze the count into
-                    // a sliver, so the count goes on its own line above them.
-                    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-                        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+                    // The count and size sit on their own line above the three actions (Clear, trash,
+                    // Move to Drive), so they are never squeezed at any text size or width.
                     val summary: @Composable () -> Unit = {
                         Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
                         Text(
@@ -464,27 +462,16 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    if (stacked) {
-                        Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-                            summary()
-                            Row(
-                                Modifier.fillMaxWidth().padding(top = Tokens.Small),
-                                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                            ) {
-                                OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                                DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
-                                Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
-                            }
-                        }
-                    } else {
+                    Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                        summary()
                         Row(
-                            Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                            Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Column(Modifier.weight(1f)) { summary() }
                             OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
                             DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
-                            Button(onClick = onMove) { Text("Move to Drive") }
+                            Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
                         }
                     }
                 }
