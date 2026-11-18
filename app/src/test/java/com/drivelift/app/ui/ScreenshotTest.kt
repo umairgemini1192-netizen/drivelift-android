@@ -247,7 +247,8 @@ class ScreenshotTest {
             // Drive is not connected: opening phone media must not need the account.
             "phone-open-flow", expect = null, connected = false, capture = false,
             act = {
-                assertEquals(DriveConn.DISCONNECTED, currentVm!!.driveConn.value)
+                // No account at all (the app's silent sign-in attempt has nothing to find here).
+                assertEquals(null, currentVm!!.account.value)
                 waitFor("Camera")
                 compose.onNodeWithText("Camera").performClick()
                 waitFor("Select all")
@@ -334,6 +335,8 @@ class ScreenshotTest {
     @Test
     fun localVideoError() {
         val item = localItem(904, "VID_0904.mp4", video = true, size = 12_000_000)
+        // The file has gone: opening it fails, as for a video moved or deleted after the list loaded.
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) { throw java.io.FileNotFoundException() }
         eachVariant("local-video-error", expect = "Could not play video", act = {
             waitFor("Could not play video")
             compose.onNodeWithText("Open in another app").assertExists()

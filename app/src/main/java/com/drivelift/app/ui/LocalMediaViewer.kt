@@ -97,6 +97,23 @@ private fun LocalVideoContent(
     val context = LocalContext.current
     var problem by remember(item.id) { mutableStateOf<VideoProblem?>(null) }
     var reload by remember(item.id) { mutableIntStateOf(0) }
+    // Checked before the player starts: a video moved or deleted since the folder loaded gets a
+    // plain notice at once instead of a player error.
+    var readable by remember(item.id) { mutableStateOf<Boolean?>(null) }
+    LaunchedEffect(item.id, reload) {
+        readable = null
+        val ok = withContext(Dispatchers.IO) {
+            try {
+                context.contentResolver.openInputStream(item.uri)?.use { true } ?: false
+            } catch (e: CancellationException) {
+                throw e
+            } catch (_: Exception) {
+                false
+            }
+        }
+        readable = ok
+        if (!ok) problem = VideoProblem.Failed(LOCAL_VIDEO_UNREADABLE)
+    }
     // A new source on Try again gives a fresh player.
     val source = remember(item.id, reload) {
         VideoSource(
@@ -109,15 +126,15 @@ private fun LocalVideoContent(
         )
     }
     Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-        when (val p = problem) {
-            null -> VideoPlayer(vm, source, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
+        val p = problem
+        when {
+            p == null && readable == true ->
+                VideoPlayer(vm, source, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
+            p == null -> CircularProgressIndicator()
             else -> ViewerNoticeCard(
                 title = "Could not play video",
-                body = when (p) {
-                    is VideoProblem.Failed -> p.message
-                    // A local file never needs Google authorization; kept so every state reads sensibly.
-                    VideoProblem.AuthExpired -> "This video could not be read from this phone."
-                },
+                // A local file never needs Google authorization, so every problem here is a failure.
+                body = (p as? VideoProblem.Failed)?.message ?: LOCAL_VIDEO_UNREADABLE,
                 primaryLabel = "Try again",
                 onPrimary = {
                     problem = null
@@ -188,6 +205,8 @@ private fun LocalImageContent(
 }
 
 private class TooLargeForViewerException : IOException()
+
+internal const val LOCAL_VIDEO_UNREADABLE = "This video could not be read from this phone. It may have been moved or deleted."
 
 /** Reads the whole file, refusing anything over [maxBytes] so a huge file cannot exhaust memory. */
 private fun readLocalBytes(context: Context, item: MediaItem, maxBytes: Long): ByteArray {

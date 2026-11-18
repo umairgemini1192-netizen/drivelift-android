@@ -102,7 +102,7 @@ internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): 
         cause = cause.cause
     }
     if (local && error.errorCode in LOCAL_READ_ERRORS) {
-        return VideoProblem.Failed("This video could not be read from this phone. It may have been moved or deleted.")
+        return VideoProblem.Failed(LOCAL_VIDEO_UNREADABLE)
     }
     return when (error.errorCode) {
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
