@@ -155,14 +155,25 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
      */
     private suspend fun tokenFor(account: String): String {
         if (!account.equals(prefs.accountEmail, ignoreCase = true)) throw AccountChangedException()
-        val token = try {
-            DriveAuth.tokenOrNull(context, account) ?: throw AuthRequiredException()
-        } catch (e: ApiException) {
-            throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
+        // A cached token Drive rejects during the ownership check is dropped and replaced once;
+        // the replacement is proven the same way before anything is sent.
+        for (attempt in 0..1) {
+            val token = try {
+                DriveAuth.tokenOrNull(context, account) ?: throw AuthRequiredException()
+            } catch (e: ApiException) {
+                throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
+            }
+            val owner = provenTokens[token] ?: try {
+                about(token).email.also { provenTokens[token] = it }
+            } catch (e: DriveHttpException) {
+                if (e.code != 401) throw e
+                DriveAuth.invalidate(context, token)
+                continue
+            }
+            if (!owner.equals(account, ignoreCase = true)) throw AccountChangedException()
+            return token
         }
-        val owner = provenTokens[token] ?: about(token).email.also { provenTokens[token] = it }
-        if (!owner.equals(account, ignoreCase = true)) throw AccountChangedException()
-        return token
+        throw AuthRequiredException()
     }
 
     /** Tokens already checked with Drive, and the account each belongs to. */
