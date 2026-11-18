@@ -230,6 +230,14 @@ private fun VideoPlayer(
     var interaction by remember(player) { mutableIntStateOf(0) }
     // While a finger is on the scrubber the controls never hide, so the seek is not lost.
     var scrubbing by remember(player) { mutableStateOf(false) }
+    // The last position this player was told to seek to. While the video is still there, the
+    // frame on screen is the one at or after it; after playback it is the one at or before.
+    // Restoring after rotation or recreation is itself a seek to the saved position.
+    var lastSeekTarget by remember(player) { mutableStateOf<Long?>(savedPosition) }
+    fun seekTo(target: Long) {
+        player.seekTo(target)
+        lastSeekTarget = target
+    }
     var textureView by remember(player) { mutableStateOf<TextureView?>(null) }
     var videoAspect by remember(player) { mutableFloatStateOf(DEFAULT_ASPECT) }
     // False until the player reports the real picture size; until then the default shape is only
@@ -401,7 +409,7 @@ private fun VideoPlayer(
                         },
                         onDoubleTap = { offset ->
                             val delta = if (offset.x < size.width / 2f) -SKIP_MS else SKIP_MS
-                            player.seekTo(skipTarget(player.currentPosition, duration, delta))
+                            seekTo(skipTarget(player.currentPosition, duration, delta))
                             touched()
                         },
                     )
@@ -424,13 +432,13 @@ private fun VideoPlayer(
                         player.pause()
                     } else {
                         // After the end, Play starts the video again from the beginning.
-                        if (player.playbackState == Player.STATE_ENDED) player.seekTo(0)
+                        if (player.playbackState == Player.STATE_ENDED) seekTo(0)
                         player.play()
                     }
                     touched()
                 },
                 onSeek = {
-                    player.seekTo(it)
+                    seekTo(it)
                     position = it
                     touched()
                 },
@@ -441,6 +449,18 @@ private fun VideoPlayer(
                 },
                 onCapture = {
                     captureFrame()
+                    touched()
+                },
+                onStepFrame = { forward ->
+                    // Stepping implies a still picture: pause first, then move exactly one frame.
+                    player.pause()
+                    val now = player.currentPosition
+                    val target = frameStepTarget(
+                        now, duration, player.videoFormat?.frameRate ?: -1f, forward,
+                        afterSeek = lastSeekTarget == now,
+                    )
+                    seekTo(target)
+                    position = target
                     touched()
                 },
                 onScrubbingChange = { active ->

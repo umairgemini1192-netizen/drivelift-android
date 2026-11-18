@@ -89,7 +89,8 @@ class VideoControlsTest {
             compose.onNodeWithText("Original  ·  3840x2160  ·  60 fps").assertExists()
             compose.onNodeWithText("0:30").assertExists()
             compose.onNodeWithText("-1:30").assertExists()
-            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo")) {
+            // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
+            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Playback speed 1x")) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
@@ -142,6 +143,106 @@ class VideoControlsTest {
             }
         } finally {
             org.robolectric.RuntimeEnvironment.setFontScale(1f)
+        }
+    }
+
+    @Test
+    fun frameStepMovesOneFrameAndIsOfferedOnlyWhilePaused() {
+        // Single steps from a frame start (frame 60 at 60 fps is 1000 ms). Targets are at or just
+        // before the frame's timestamp (1016.67 ms and 983.33 ms), never after it.
+        assertEquals(1_016L, frameStepTarget(1_000, 10_000, 60f, forward = true))
+        assertEquals(983L, frameStepTarget(1_000, 10_000, 60f, forward = false))
+        assertEquals(1_033L, frameStepTarget(1_000, 10_000, -1f, forward = true))
+        assertEquals(0L, frameStepTarget(10, 10_000, 30f, forward = false))
+        // The last frame of a 10 s clip at 30 fps is frame 299 (9966 ms); Next stays there.
+        assertEquals(9_966L, frameStepTarget(9_990, 10_000, 30f, forward = true))
+        // Straight after scrubbing between frames: 1001 ms at 60 fps shows frame 61 (1016.67 ms), so
+        // Next goes to frame 62 and Previous to frame 60, neither repeating nor skipping.
+        assertEquals(61L, frameIndexAt(1_001, 60.0))
+        assertEquals(1_033L, frameStepTarget(1_001, 10_000, 60f, forward = true))
+        assertEquals(1_000L, frameStepTarget(1_001, 10_000, 60f, forward = false))
+        // Straight after pausing ordinary playback: 1250 ms at 2 fps still shows the 1000 ms frame,
+        // so Previous goes to 500 ms and Next to 1500 ms.
+        assertEquals(2L, frameIndexAt(1_250, 2.0, afterSeek = false))
+        assertEquals(500L, frameStepTarget(1_250, 10_000, 2f, forward = false, afterSeek = false))
+        assertEquals(1_500L, frameStepTarget(1_250, 10_000, 2f, forward = true, afterSeek = false))
+        assertEquals(60L, frameIndexAt(1_010, 60.0, afterSeek = false))
+        // At the end: a 2000 ms clip at 2 fps has frames 0 to 3. After it finishes (position 2000)
+        // or after stepping onto the last frame, Previous goes to frame 2 and Next stays on frame 3.
+        assertEquals(1_000L, frameStepTarget(2_000, 2_000, 2f, forward = false, afterSeek = false))
+        assertEquals(1_000L, frameStepTarget(2_000, 2_000, 2f, forward = false, afterSeek = true))
+        assertEquals(1_500L, frameStepTarget(1_500, 2_000, 2f, forward = true))
+        assertEquals(1_000L, frameStepTarget(frameStepTarget(1_500, 2_000, 2f, forward = true), 2_000, 2f, forward = false))
+        // A paused player restored after rotation at 1016 ms (a seek) shows frame 61 at 60 fps.
+        assertEquals(1_033L, frameStepTarget(1_016, 10_000, 60f, forward = true, afterSeek = true))
+        assertEquals(1_000L, frameStepTarget(1_016, 10_000, 60f, forward = false, afterSeek = true))
+        // Repeated steps visit every frame in turn, each seek no later than that frame's timestamp.
+        for ((fps, taps) in listOf(60f to 50, 30f to 100, 29.97f to 300, 24f to 240, 59.94f to 120, 120f to 240, 240f to 480)) {
+            var position = 0L
+            repeat(taps) { i ->
+                position = frameStepTarget(position, 3_600_000, fps, forward = true)
+                val expected = (i + 1).toLong()
+                assertEquals("frame after ${i + 1} taps at $fps fps", expected, frameIndexAt(position, fps.toDouble()))
+                org.junit.Assert.assertTrue(
+                    "seek $position ms must not pass frame $expected at $fps fps",
+                    position <= expected * 1000.0 / fps,
+                )
+            }
+            repeat(taps) { position = frameStepTarget(position, 3_600_000, fps, forward = false) }
+            assertEquals("back to the first frame at $fps fps", 0L, position)
+        }
+
+        val steps = mutableListOf<Boolean>()
+        var playing by androidx.compose.runtime.mutableStateOf(false)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(
+                                playing = playing, position = 1_000, duration = 10_000,
+                                speed = 1f, quality = qualityLabel(1920, 1080, 30f),
+                            ),
+                            onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                            onStepFrame = { steps += it },
+                        )
+                    }
+                }
+            }
+            pump()
+            for (label in listOf("Step back about one frame", "Step forward about one frame")) {
+                compose.onNodeWithContentDescription(label)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+            }
+            compose.onNodeWithContentDescription("Step back about one frame").performClick()
+            compose.onNodeWithContentDescription("Step forward about one frame").performClick()
+            pump()
+            assertEquals(listOf(false, true), steps)
+        }
+        playing = true
+    }
+
+    @Test
+    fun frameStepIsHiddenWhilePlaying() {
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(
+                                playing = true, position = 1_000, duration = 10_000,
+                                speed = 1f, quality = qualityLabel(1920, 1080, 30f),
+                            ),
+                            onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                        )
+                    }
+                }
+            }
+            pump()
+            assertEquals(0, compose.onAllNodesWithText("Step").fetchSemanticsNodes().size)
         }
     }
 

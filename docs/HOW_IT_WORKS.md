@@ -120,6 +120,18 @@ prompt, but only while the app can see every photo and every video. If access wa
 covers photos only, videos only or selected items, "not visible" does not mean "gone", so those
 files go to Android's prompt instead.
 
+## Viewing Drive videos
+
+Drive videos stream inside DriveLift in their original quality (Google's API serves only the
+original file). While a video is paused, **Step back** and **Step forward** move by about one
+frame.
+
+Known limit: a step is computed from the video's reported frame rate (30 fps when the file does
+not report one). For constant-frame-rate video each step lands exactly on the neighbouring frame.
+For variable-frame-rate video (phones record this way in low light) or a file with no reported
+rate, a step can occasionally repeat or skip a frame. Exact adjacent-frame navigation needs the
+real timestamp of each frame and is not finished; it is tracked on issue #21.
+
 ## Source map
 
 | File | Responsibility |

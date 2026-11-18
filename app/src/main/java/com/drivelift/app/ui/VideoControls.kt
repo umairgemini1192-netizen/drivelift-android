@@ -4,9 +4,12 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Forward10
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
@@ -63,6 +66,50 @@ internal fun qualityLabel(width: Int, height: Int, frameRate: Float): String {
     return "Original  ·  ${width}x$height$fps"
 }
 
+/** Frames per second assumed when the video does not say. */
+internal const val DEFAULT_FRAME_RATE = 30f
+
+/**
+ * Where one frame forward or back lands, clamped to the video. The frame on screen is worked out
+ * from the position (see [frameIndexAt]), the neighbouring frame number is taken, and the seek
+ * goes to that frame's timestamp rounded down. Media3 skips frames earlier than the seek
+ * position, so seeking at or just before the timestamp shows exactly that frame; working from
+ * frame numbers means repeated steps never drift.
+ *
+ * [afterSeek] says whether the position is a seek target the player just went to (scrub, skip or
+ * an earlier step) rather than where ordinary playback was paused.
+ */
+internal fun frameStepTarget(
+    position: Long,
+    duration: Long,
+    frameRate: Float,
+    forward: Boolean,
+    afterSeek: Boolean = true,
+): Long {
+    val fps = (if (frameRate > 0f) frameRate else DEFAULT_FRAME_RATE).toDouble()
+    // Frames exist only before the end: a 2000 ms clip at 2 fps has frames 0 to 3 (0 to 1500 ms).
+    val lastFrame = if (duration > 0) (Math.ceil(duration * fps / 1000.0 - FRAME_EPSILON).toLong() - 1).coerceAtLeast(0) else Long.MAX_VALUE
+    val frame = frameIndexAt(position, fps, afterSeek).coerceAtMost(lastFrame)
+    val next = (if (forward) frame + 1 else frame - 1).coerceIn(0, lastFrame)
+    val target = Math.floor(next * 1000.0 / fps).toLong()
+    return if (duration > 0) target.coerceAtMost(duration) else target
+}
+
+/**
+ * The frame on screen at [position] ms.
+ * - After a seek, Media3 shows the first frame whose timestamp is at or after the seek position,
+ *   so this rounds up: 1001 ms at 60 fps shows frame 61, and an earlier step target (a frame
+ *   timestamp rounded down by under 1 ms) maps back to its own frame at any rate below 1000 fps.
+ * - After ordinary playback is paused, Media3 keeps showing the last frame it released, the one
+ *   at or before the position, so this rounds down: 1250 ms at 2 fps shows the 1000 ms frame.
+ */
+internal fun frameIndexAt(position: Long, fps: Double, afterSeek: Boolean = true): Long {
+    val exact = position.coerceAtLeast(0) * fps / 1000.0
+    return if (afterSeek) Math.ceil(exact - FRAME_EPSILON).toLong() else Math.floor(exact + FRAME_EPSILON).toLong()
+}
+
+private const val FRAME_EPSILON = 1e-9
+
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
     return if (duration > 0) target.coerceAtMost(duration) else target
@@ -95,6 +142,8 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
+    /** One frame back (false) or forward (true); offered while the video is paused. */
+    onStepFrame: (Boolean) -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
     var dragTarget by remember { mutableStateOf<Long?>(null) }
@@ -111,12 +160,12 @@ internal fun VideoControls(
                 if (state.zoomed) {
                     TextButton(
                         onClick = onFit,
-                        modifier = Modifier.semantics { contentDescription = "Fit the whole picture" },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Fit the whole picture" },
                     ) { Text("Fit") }
                 }
                 TextButton(
                     onClick = onSpeed,
-                    modifier = Modifier.semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
                 ) { Text(speedLabel(state.speed)) }
             }
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -166,6 +215,31 @@ internal fun VideoControls(
                     modifier = Modifier.weight(1f).padding(start = Tokens.Small),
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
+            }
+            // Small steps of about one frame, on their own row so the transport buttons keep 48 dp.
+            // Exact for constant frame rate; variable-rate or unknown-rate files can occasionally
+            // repeat or skip a frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
+            if (!state.playing) {
+                Row(
+                    Modifier.fillMaxWidth().testTag("frame-step"),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TextButton(
+                        onClick = { onStepFrame(false) },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
+                    ) {
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
+                        Text("Step")
+                    }
+                    TextButton(
+                        onClick = { onStepFrame(true) },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
+                    ) {
+                        Text("Step")
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
+                    }
+                }
             }
             Row(
                 Modifier.fillMaxWidth(),
