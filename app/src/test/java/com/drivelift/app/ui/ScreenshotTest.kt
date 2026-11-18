@@ -756,6 +756,286 @@ class ScreenshotTest {
         assertEquals(listOf("d2", "d1"), none.notTried.map { it.id })
     }
 
+    // ------------------------------------------------------------------ rename (issue #42)
+
+    /** Records the phone renames sent to MediaStore: (file, new name). There is no Android dialog here. */
+    private fun recordPhoneRenames(): MutableList<Pair<String, String>> {
+        val sent = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val names = java.util.concurrent.ConcurrentHashMap<String, String>()
+        Graph.get(app).renameMedia = { _, uri, name ->
+            sent += uri.toString() to name
+            names[uri.toString()] = name
+        }
+        Graph.get(app).mediaName = { _, uri -> names[uri.toString()] }
+        return sent
+    }
+
+    /** Opens Camera, selects only IMG_0001 and opens the rename dialog. */
+    private fun openPhoneRename() {
+        waitFor("Camera")
+        compose.onNodeWithText("Camera").performClick()
+        waitFor("Select all")
+        selectCell("IMG_0001.jpg")
+        waitFor("1 selected")
+        compose.onNodeWithTag("rename-selected").press()
+        waitFor("Rename file")
+    }
+
+    /**
+     * Types [name] into the open rename dialog and presses Rename. After the text changes, Compose
+     * test calls that wait for idle never return here, so the button is found first and touched
+     * directly (see [openNewFolderDialog]).
+     */
+    private fun typeNameAndRename(name: String) {
+        val rename = compose.onNodeWithTag("rename-confirm").fetchSemanticsNode().boundsInRoot.center
+        compose.onNodeWithText("New name").performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(name)) }
+        pump(DIALOG_FRAMES)
+        touchLatestDialog(rename)
+        pump(DIALOG_FRAMES)
+    }
+
+    /** Issue #42: the phone rename dialog, name filled in, its ending kept. */
+    @Test
+    fun phoneRenameDialog() {
+        grantMedia()
+        eachVariant(
+            "phone-rename", expect = "Rename file", connected = true, overlay = true,
+            act = {
+                openPhoneRename()
+                compose.onNodeWithText("The ending .jpg stays", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #42: a name already in the folder is refused with a reason; nothing is sent. */
+    @Test
+    fun phoneRenameRefusesANameAlreadyInTheFolder() {
+        grantMedia()
+        val sent = recordPhoneRenames()
+        eachVariant(
+            "phone-rename-taken", expect = null, connected = true, overlay = true,
+            act = {
+                sent.clear()
+                openPhoneRename()
+                typeNameAndRename("IMG_0002.jpg")
+                assertTrue("A taken name must never be sent", sent.isEmpty())
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #42: Cancel renames nothing; confirming renames exactly the one selected file to the
+     * typed name; a file a transfer depends on is refused before any dialog asks for a name.
+     */
+    @Test
+    fun phoneRenameRenamesExactlyTheConfirmedFile() {
+        grantMedia()
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        val sent = recordPhoneRenames()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-rename-flow", expect = null, connected = true, capture = false,
+            act = {
+                sent.clear()
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+
+                // Held by a transfer: refused with the reason, no name asked.
+                selectCell("IMG_0002.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("This file can't be renamed yet")
+                assertTrue(compose.onAllNodesWithTag("rename").fetchSemanticsNodes().isEmpty())
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                currentVm!!.clearSelection()
+                pump(4)
+
+                // Cancel: nothing sent, the selection stays.
+                selectCell("IMG_0001.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("Rename file")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue("Cancel must not rename anything", sent.isEmpty())
+                assertEquals(setOf(1L), currentVm!!.selection.value)
+
+                // Confirm: exactly IMG_0001, to exactly the typed name.
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("Rename file")
+                typeNameAndRename("Beach day.jpg")
+                val deadline = System.currentTimeMillis() + 5_000
+                while (currentVm!!.lastPhoneRename == null && System.currentTimeMillis() < deadline) pump(1)
+                assertEquals(listOf(img1 to "Beach day.jpg"), sent.toList())
+                assertEquals("Renamed to Beach day.jpg", currentVm!!.lastPhoneRename)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #42: a file DriveLift does not own needs Android's write consent. The request names
+     * exactly that file; a refusal renames nothing; consent sends the name once more.
+     */
+    @Test
+    fun phoneRenameAsksAndroidForConsentWhenNeeded() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        compose.waitUntil(5_000) { pump(1); vm.media.value.any { it.id == img1.id } }
+        var owned = false
+        val sent = mutableListOf<String>()
+        Graph.get(app).renameMedia = { _, _, name ->
+            if (!owned) throw SecurityException("not the owner")
+            sent += name
+        }
+        Graph.get(app).mediaName = { _, _ -> sent.lastOrNull() }
+        val asked = mutableListOf<List<String>>()
+        Graph.get(app).writeRequest = { _, uris ->
+            asked += uris.map { it.toString() }
+            throw IllegalStateException("No Android consent dialog in tests")
+        }
+        val plan = checkNotNull(runBlocking { vm.planPhoneRename(img1.id) })
+        assertTrue("Names in the folder are known to the plan", "IMG_0002.jpg" in plan.siblings)
+        assertFalse("The file itself is not its own sibling", "IMG_0001.jpg" in plan.siblings)
+
+        // Refused by Android: nothing renamed.
+        vm.startPhoneRename(plan, "Beach.jpg")
+        compose.waitUntil(5_000) { pump(1); vm.pendingRename.value != null }
+        runCatching { vm.startPendingRename() }
+        assertEquals(listOf(listOf(img1.uri.toString())), asked)
+        assertEquals(null, vm.startPendingRename())
+        vm.pendingRenameFinished(confirmed = false)
+        compose.waitUntil(5_000) { pump(1); !vm.phoneRenameWorking.value }
+        assertTrue(sent.isEmpty())
+        assertEquals("Nothing was renamed.", vm.lastPhoneRename)
+
+        // Consent given: the name is sent and read back.
+        vm.startPhoneRename(plan, "Beach.jpg")
+        compose.waitUntil(5_000) { pump(1); vm.pendingRename.value != null }
+        runCatching { vm.startPendingRename() }
+        owned = true
+        vm.pendingRenameFinished(confirmed = true)
+        compose.waitUntil(5_000) { pump(1); !vm.phoneRenameWorking.value }
+        assertEquals(listOf("Beach.jpg"), sent)
+        assertEquals("Renamed to Beach.jpg", vm.lastPhoneRename)
+    }
+
+    /** Issue #42: the Drive rename dialog for one selected file. */
+    @Test
+    fun driveRenameDialog() {
+        grantMedia()
+        eachVariant(
+            "drive-rename", expect = "Rename file", connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
+            act = {
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Scan_0042.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("Rename file")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #42: a Drive copy a transfer depends on is refused; Cancel renames nothing; confirming
+     * renames exactly the selected file, in this folder, for the confirmed account.
+     */
+    @Test
+    fun driveRenameRenamesExactlyTheConfirmedFile() {
+        grantMedia()
+        seedTransfers(driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED))
+        val drive = FakeDrive()
+        eachVariant(
+            "drive-rename-flow", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE,
+            capture = false, drive = drive,
+            act = {
+                drive.renames.clear()
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Sunset_0019.jpg")
+                waitFor("1 selected")
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("This file can't be renamed yet")
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                compose.onNodeWithText("Clear").press()
+                pump(4)
+
+                compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst()
+                    .performSemanticsAction(SemanticsActions.OnLongClick)
+                waitFor("1 selected")
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("Rename file")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue("Cancel must not rename anything", drive.renames.isEmpty())
+
+                compose.onNodeWithTag("rename-selected").press()
+                waitFor("Rename file")
+                typeNameAndRename("Receipt.jpg")
+                val deadline = System.currentTimeMillis() + 5_000
+                while (drive.renames.isEmpty() && System.currentTimeMillis() < deadline) pump(1)
+                pump(DIALOG_FRAMES)
+                assertEquals(listOf(Triple("d2", DriveClient.ROOT, "Receipt.jpg")), drive.renames.toList())
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #42: a Drive rename runs for the account it was confirmed for; a name Drive reports as
+     * taken keeps the file as it was; a held file and a name a transfer is uploading are refused.
+     */
+    @Test
+    fun driveRenameStaysOnTheAccountAndNeverOverwrites() {
+        grantMedia()
+        val prefs = Graph.get(app).prefs
+        prefs.accountEmail = TEST_EMAIL
+        val vm = AppViewModel(app)
+        pump(12)
+        val calls = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        var taken = false
+        vm.driveFolders = object : DriveFolders by FakeDrive() {
+            override suspend fun renameFile(fileId: String, folderId: String, newName: String, account: String): DriveFile {
+                calls += fileId to account
+                if (taken) throw com.drivelift.app.drive.NameTakenException(newName)
+                return DriveFile(fileId, newName, "image/jpeg", 2_100_000, "00", false)
+            }
+        }
+        val scan = DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false)
+        val plan = runBlocking { vm.planDriveRename(scan, DriveClient.ROOT, listOf("Packing list.pdf")) }
+        assertEquals(TEST_EMAIL, plan.account)
+
+        taken = true
+        val refused = runBlocking { vm.renameDriveFile(plan, "Receipt.jpg") }
+        assertTrue(refused.nameTaken)
+        assertEquals(null, refused.renamed)
+
+        taken = false
+        prefs.accountEmail = "other.user@example.com"
+        val other = runBlocking { vm.renameDriveFile(plan, "Receipt.jpg") }
+        assertEquals(AppViewModel.ACCOUNT_CHANGED, other.failure)
+        assertEquals(1, calls.size)
+
+        prefs.accountEmail = TEST_EMAIL
+        // A file now uploading under the new name: refused before Drive is asked.
+        seedTransfers(row(7, "Receipt.jpg", TransferStatus.UPLOADING))
+        val uploading = runBlocking { vm.renameDriveFile(plan, "Receipt.jpg") }
+        assertEquals(null, uploading.renamed)
+        assertEquals(1, calls.size)
+        val done = runBlocking { vm.renameDriveFile(plan, "Receipt 2.jpg") }
+        assertEquals("Receipt 2.jpg", done.renamed?.name)
+        assertEquals(listOf("d2" to TEST_EMAIL, "d2" to TEST_EMAIL), calls.toList())
+
+        // A copy a transfer came to depend on after the plan was made is left alone.
+        seedTransfers(driveRow(8, "Scan_0042.jpg", "d2", TransferStatus.UPLOADED))
+        val held = runBlocking { vm.renameDriveFile(plan, "Receipt 3.jpg") }
+        assertEquals(null, held.renamed)
+        assertEquals(2, calls.size)
+        prefs.accountEmail = null
+    }
+
     /** Issue #36: Drive trash confirmation with a file a transfer still depends on left out. */
     @Test
     fun driveTrashConfirmation() {
@@ -1541,7 +1821,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.19 (build 18)",
+            "build-id", expect = "DriveLift 1.0.0-preview.21 (build 20)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -2033,6 +2313,13 @@ class ScreenshotTest {
         override suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String) {
             assertEquals("Every move call names the confirmed account", TEST_EMAIL, account)
             moves += Triple(fileId, fromFolderId, toFolderId)
+        }
+        /** Files the app asked to rename: (file, folder, new name), in order. */
+        val renames = java.util.Collections.synchronizedList(mutableListOf<Triple<String, String, String>>())
+        override suspend fun renameFile(fileId: String, folderId: String, newName: String, account: String): DriveFile {
+            assertEquals("Every rename call names the confirmed account", TEST_EMAIL, account)
+            renames += Triple(fileId, folderId, newName)
+            return FILES.first { it.id == fileId }.copy(name = newName)
         }
         override suspend fun createFolder(name: String, parentId: String) = create(name)
 

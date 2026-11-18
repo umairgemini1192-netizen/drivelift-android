@@ -313,6 +313,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     // Saved, so a rotation while Android's dialog is open keeps the flow and its result handler.
     var deleting by rememberSaveable(bucketId) { mutableStateOf<LongArray?>(null) }
     val deletingIds = remember(deleting) { deleting?.toList() }
+    // A rename in progress (issue #42): the one file asked about. Saved across rotation.
+    var renaming by rememberSaveable(bucketId) { mutableStateOf<Long?>(null) }
     fun tapCell(item: MediaItem) {
         if (longPress.consume(item.id)) return
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
@@ -463,7 +465,17 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         )
                     }
                     Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-                        summary()
+                        // Rename sits beside the count when exactly one file is selected, so the
+                        // action row below keeps its width at every text size.
+                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) { summary() }
+                            if (selection.size == 1) {
+                                TextButton(
+                                    onClick = { renaming = selection.first() },
+                                    modifier = Modifier.testTag("rename-selected"),
+                                ) { Text("Rename") }
+                            }
+                        }
                         Row(
                             Modifier.fillMaxWidth().padding(top = Tokens.Small),
                             horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -486,6 +498,9 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                     onDelete = { deleting = longArrayOf(item.id) },
                 )
             }
+        }
+        renaming?.let { id ->
+            PhoneRenameFlow(vm = vm, id = id, onDone = { renaming = null })
         }
         deletingIds?.let { ids ->
             // A viewed file that goes to the trash drops out of [items] when the listing reloads,
