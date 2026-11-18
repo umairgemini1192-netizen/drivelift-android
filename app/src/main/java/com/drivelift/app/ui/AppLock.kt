@@ -34,7 +34,7 @@ sealed interface LockProblem {
  *   removal consent or an external viewer keep the session, because none of them ends it.
  *
  * Locking only hides the UI. Uploads, retries and verification carry on, and unlocking grants
- * nothing beyond showing the app: removal still needs Android's own confirmation.
+ * nothing beyond showing the app: removal still needs its own confirmation.
  */
 class AppLock {
     data class State(
