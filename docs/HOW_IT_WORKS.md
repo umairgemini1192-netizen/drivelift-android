@@ -130,8 +130,9 @@ Step speed: each step is a precise seek, so the player decodes from the nearest 
 up to the target frame; on a Drive video that may also mean fetching media again. To keep this
 bounded, only one step seek runs at a time. Taps made while it runs move the target on (so five
 quick taps still land five frames on) and the newest target is sought as soon as the current frame
-is shown. A step counts as done only when the player reports a rendered frame at that step's own
-target, so a late frame from an older seek cannot release a newer one. The player keeps 15 seconds
+is shown. A step counts as done only when a frame whose own presentation time is that step's target is
+shown (Media3 reports each frame's timestamp), so a late frame from an older seek cannot release
+a newer one. Taps that return to the frame already on screen need no second seek. The player keeps 15 seconds
 of already-streamed media behind the playing position, so a step or skip back within it does not
 fetch from Drive again. A step that shows no frame within 2 seconds stops holding back the next one;
 that timer belongs to its own step and cannot affect a later one.

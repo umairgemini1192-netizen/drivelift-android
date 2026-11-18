@@ -267,7 +267,7 @@ class VideoControlsTest {
         val controller = StepController(
             now = { clock },
             issue = { target, generation -> seeks += target to generation },
-            toleranceMs = { (500f / fps).toLong() },
+            frameDurationMs = { 1000.0 / fps },
             log = { log += it },
         )
         val fps = fps
@@ -345,6 +345,48 @@ class VideoControlsTest {
         assertEquals(3, rig.seeks.size)
         assertEquals(33L, rig.frameOf(rig.seeks[2].first))
         assertTrue(rig.log.any { "timed out" in it && "gen ${a.second}" in it })
+    }
+
+    /**
+     * Codex finding on 16a43bd: forward, back, forward before the first frame leaves the waiting
+     * target equal to the running one. Its frame completes both; no second seek to the same
+     * position is made (it would draw nothing), and the next tap seeks at once.
+     */
+    @Test
+    fun tapsThatReturnToTheShownFrameNeedNoSecondSeek() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = true, afterSeek = false)
+        rig.tap(1_000, forward = false, afterSeek = false)
+        rig.tap(1_000, forward = true, afterSeek = false)
+        val a = rig.seeks.single()
+        assertEquals(a.first, rig.controller.latest)
+        // The frame at 1033.3 ms (frame 31) is rendered once; no second render is synthesized.
+        rig.controller.rendered(1_033)
+        assertEquals("no redundant seek", 1, rig.seeks.size)
+        assertEquals(null, rig.controller.latest)
+        assertEquals(null, rig.controller.inFlightGeneration)
+        assertEquals(2, rig.log.count { "frame shown" in it })
+        // The next tap is not held back by a timeout.
+        rig.tap(1_033, forward = true, afterSeek = true)
+        assertEquals(2, rig.seeks.size)
+    }
+
+    /** A frame one whole frame away is a different frame: stepping back, A's late frame is rejected. */
+    @Test
+    fun aNeighbouringFrameNeverCompletesAStep() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = false, afterSeek = false) // A: frame 29 (966 ms)
+        val a = rig.seeks.single()
+        rig.tap(1_000, forward = false, afterSeek = false) // B waits: frame 28 (933 ms)
+        rig.controller.timedOut(a.second)
+        val b = rig.seeks[1]
+        assertEquals(28L, rig.frameOf(b.first))
+        // A's frame (966.7 ms) appears late, one frame after B's target.
+        rig.controller.rendered(966)
+        assertEquals(b.second, rig.controller.inFlightGeneration)
+        // A frame slightly late within the same frame slot still counts for B.
+        rig.controller.rendered(b.first + 20)
+        assertEquals(null, rig.controller.inFlightGeneration)
     }
 
     /** A scrub or skip clears the steps; old timeouts and late frames then do nothing. */

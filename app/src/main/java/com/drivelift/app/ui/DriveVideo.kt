@@ -60,7 +60,7 @@ import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
 import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
-import androidx.media3.exoplayer.analytics.AnalyticsListener
+import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveFile
@@ -246,6 +246,8 @@ private fun VideoPlayer(
     // Step seeks run one at a time; see StepController. [stepGeneration] starts the give-up
     // timer for the step seek that is running now, and only that one.
     var stepGeneration by remember(player) { mutableIntStateOf(0) }
+    // Read on the playback thread: frame times are only passed on while a step seek runs.
+    val stepRunning = remember(player) { java.util.concurrent.atomic.AtomicBoolean(false) }
     val steps = remember(player) {
         StepController(
             now = { android.os.SystemClock.elapsedRealtime() },
@@ -253,11 +255,11 @@ private fun VideoPlayer(
                 player.seekTo(target)
                 lastSeekTarget = target
                 stepGeneration = generation
+                stepRunning.set(true)
             },
-            // Half a frame either side still identifies the target frame.
-            toleranceMs = {
+            frameDurationMs = {
                 val fps = player.videoFormat?.frameRate?.takeIf { it > 0f } ?: DEFAULT_FRAME_RATE
-                (500f / fps).toLong().coerceAtLeast(1L)
+                1000.0 / fps
             },
             // Local log only, to measure step latency on a phone (adb logcat -s DriveLiftStep).
             log = { android.util.Log.d("DriveLiftStep", it) },
@@ -265,6 +267,7 @@ private fun VideoPlayer(
     }
     fun seekTo(target: Long) {
         steps.clear()
+        stepRunning.set(false)
         player.seekTo(target)
         lastSeekTarget = target
     }
@@ -319,17 +322,24 @@ private fun VideoPlayer(
                 }
             }
         }
-        // After a seek the player draws the first frame at the new position. The position the
-        // frame was rendered at tells which step it belongs to; see StepController.rendered.
-        val analytics = object : AnalyticsListener {
-            override fun onRenderedFirstFrame(eventTime: AnalyticsListener.EventTime, output: Any, renderTimeMs: Long) {
-                steps.rendered(eventTime.eventPlaybackPositionMs)
+        // Each frame the player is about to show reports its own presentation time (on the
+        // playback thread). While a step runs, that time goes to the main thread, where the
+        // step controller decides whether it is the step's frame. The player's reported position
+        // is not used: it already moves to a newer seek target before an older frame appears.
+        val mainThread = android.os.Handler(android.os.Looper.getMainLooper())
+        val frames = VideoFrameMetadataListener { presentationTimeUs, _, _, _ ->
+            if (stepRunning.get()) {
+                val frameMs = presentationTimeUs / 1000
+                mainThread.post {
+                    steps.rendered(frameMs)
+                    stepRunning.set(steps.inFlightGeneration != null)
+                }
             }
         }
         player.addListener(listener)
-        player.addAnalyticsListener(analytics)
+        player.setVideoFrameMetadataListener(frames)
         onDispose {
-            player.removeAnalyticsListener(analytics)
+            player.clearVideoFrameMetadataListener(frames)
             player.removeListener(listener)
             player.release()
         }
@@ -350,6 +360,7 @@ private fun VideoPlayer(
         if (steps.inFlightGeneration != generation) return@LaunchedEffect
         delay(Tokens.Motion.VIDEO_STEP_TIMEOUT.toLong())
         steps.timedOut(generation)
+        stepRunning.set(steps.inFlightGeneration != null)
     }
     // Controls step aside after a few seconds of playback without a touch.
     LaunchedEffect(controlsVisible, playing, interaction, scrubbing) {
@@ -484,7 +495,10 @@ private fun VideoPlayer(
                         val waiting = steps.pendingTarget
                         if (player.playbackState == Player.STATE_ENDED) seekTo(0)
                         else if (waiting != null) seekTo(waiting)
-                        else steps.clear()
+                        else {
+                            steps.clear()
+                            stepRunning.set(false)
+                        }
                         player.play()
                     }
                     touched()
