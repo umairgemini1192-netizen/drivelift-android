@@ -38,6 +38,7 @@ import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -193,93 +194,101 @@ fun AppRoot(vm: AppViewModel) {
     val inFlight = (counts[TransferStatus.QUEUED.name]?.count ?: 0) +
         (counts[TransferStatus.UPLOADING.name]?.count ?: 0)
 
-    Scaffold(
-        // Transparent, so the backdrop drawn at the root shows through the glass.
-        containerColor = Color.Transparent,
-        contentColor = MaterialTheme.colorScheme.onSurface,
-        contentWindowInsets = WindowInsets.safeDrawing,
-        snackbarHost = { SnackbarHost(snackbar) },
-        bottomBar = {
-            if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
-                NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
-                    NavigationBarItem(
-                        selected = tab == AppViewModel.TAB_PHONE,
-                        onClick = { vm.tab.value = AppViewModel.TAB_PHONE },
-                        icon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null) },
-                        label = { Text("Phone") },
-                    )
-                    NavigationBarItem(
-                        selected = tab == AppViewModel.TAB_DRIVE,
-                        onClick = { vm.tab.value = AppViewModel.TAB_DRIVE },
-                        icon = { Icon(Icons.Outlined.Cloud, contentDescription = null) },
-                        label = { Text("Drive") },
-                    )
-                    NavigationBarItem(
-                        selected = tab == AppViewModel.TAB_TRANSFERS,
-                        onClick = { vm.tab.value = AppViewModel.TAB_TRANSFERS },
-                        icon = {
-                            BadgedBox(badge = { if (inFlight > 0) Badge { Text("$inFlight") } }) {
-                                Icon(Icons.Outlined.SwapVert, contentDescription = null)
-                            }
-                        },
-                        label = { Text("Transfers") },
-                    )
-                }
-            }
-        },
-    ) { padding ->
-        Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
-            when {
-                // Render the folder picker directly inside the root Activity window instead of a
-                // nested Dialog above the bottom sheet, so edge-to-edge system bars and display
-                // cutouts are measured and respected consistently across Android versions.
-                pickingDestination -> DriveBrowser(
-                    vm = vm,
-                    pickMode = true,
-                    onClose = {
-                        pickingDestination = false
-                        showDestination = true
-                    },
-                    onPick = { dest, pin ->
-                        if (pin && dest.folderId != null) {
-                            vm.pin(PresetEntity(dest.folderId, dest.label.substringAfterLast(" / "), dest.label))
+    // Viewers draw through this root slot, outside the Scaffold's system-bar padding, so they fill
+    // the whole screen (see FullScreenOverlay).
+    val overlay = remember { FullScreenOverlayState() }
+    CompositionLocalProvider(LocalFullScreenOverlay provides overlay) {
+        Box(Modifier.fillMaxSize()) {
+            Scaffold(
+                // Transparent, so the backdrop drawn at the root shows through the glass.
+                containerColor = Color.Transparent,
+                contentColor = MaterialTheme.colorScheme.onSurface,
+                contentWindowInsets = WindowInsets.safeDrawing,
+                snackbarHost = { SnackbarHost(snackbar) },
+                bottomBar = {
+                    if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
+                        NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
+                            NavigationBarItem(
+                                selected = tab == AppViewModel.TAB_PHONE,
+                                onClick = { vm.tab.value = AppViewModel.TAB_PHONE },
+                                icon = { Icon(Icons.Outlined.PhoneAndroid, contentDescription = null) },
+                                label = { Text("Phone") },
+                            )
+                            NavigationBarItem(
+                                selected = tab == AppViewModel.TAB_DRIVE,
+                                onClick = { vm.tab.value = AppViewModel.TAB_DRIVE },
+                                icon = { Icon(Icons.Outlined.Cloud, contentDescription = null) },
+                                label = { Text("Drive") },
+                            )
+                            NavigationBarItem(
+                                selected = tab == AppViewModel.TAB_TRANSFERS,
+                                onClick = { vm.tab.value = AppViewModel.TAB_TRANSFERS },
+                                icon = {
+                                    BadgedBox(badge = { if (inFlight > 0) Badge { Text("$inFlight") } }) {
+                                        Icon(Icons.Outlined.SwapVert, contentDescription = null)
+                                    }
+                                },
+                                label = { Text("Transfers") },
+                            )
                         }
-                        pickingDestination = false
-                        showDestination = false
-                        openBucket = NO_BUCKET
-                        vm.startTransfer(dest)
-                    },
-                )
-                tab == AppViewModel.TAB_PHONE -> when {
-                    !hasPermission -> PermissionGate(
-                        onGrant = { permissionLauncher.launch(MediaAccess.runtimePermissions()) }
-                    )
-                    inFolder -> FolderScreen(
-                        vm = vm,
-                        bucketId = openBucket,
-                        onBack = {
-                            vm.clearSelection()
-                            openBucket = NO_BUCKET
-                        },
-                        onMove = { showDestination = true },
-                    )
-                    else -> PhoneScreen(
-                        vm = vm,
-                        onOpen = { openBucket = it },
-                        onMoveFolder = {
-                            vm.selectFolder(it)
-                            showDestination = true
-                        },
-                    )
+                    }
+                },
+            ) { padding ->
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                    when {
+                        // Render the folder picker directly inside the root Activity window instead of a
+                        // nested Dialog above the bottom sheet, so edge-to-edge system bars and display
+                        // cutouts are measured and respected consistently across Android versions.
+                        pickingDestination -> DriveBrowser(
+                            vm = vm,
+                            pickMode = true,
+                            onClose = {
+                                pickingDestination = false
+                                showDestination = true
+                            },
+                            onPick = { dest, pin ->
+                                if (pin && dest.folderId != null) {
+                                    vm.pin(PresetEntity(dest.folderId, dest.label.substringAfterLast(" / "), dest.label))
+                                }
+                                pickingDestination = false
+                                showDestination = false
+                                openBucket = NO_BUCKET
+                                vm.startTransfer(dest)
+                            },
+                        )
+                        tab == AppViewModel.TAB_PHONE -> when {
+                            !hasPermission -> PermissionGate(
+                                onGrant = { permissionLauncher.launch(MediaAccess.runtimePermissions()) }
+                            )
+                            inFolder -> FolderScreen(
+                                vm = vm,
+                                bucketId = openBucket,
+                                onBack = {
+                                    vm.clearSelection()
+                                    openBucket = NO_BUCKET
+                                },
+                                onMove = { showDestination = true },
+                            )
+                            else -> PhoneScreen(
+                                vm = vm,
+                                onOpen = { openBucket = it },
+                                onMoveFolder = {
+                                    vm.selectFolder(it)
+                                    showDestination = true
+                                },
+                            )
+                        }
+                        inSettings -> SettingsScreen(vm = vm, onBack = { showSettings = false })
+                        tab == AppViewModel.TAB_DRIVE -> DriveBrowser(
+                            vm = vm,
+                            pickMode = false,
+                            onViewingFileChange = { viewingDriveFile = it },
+                        )
+                        else -> TransfersScreen(vm, onOpenSettings = { showSettings = true })
+                    }
                 }
-                inSettings -> SettingsScreen(vm = vm, onBack = { showSettings = false })
-                tab == AppViewModel.TAB_DRIVE -> DriveBrowser(
-                    vm = vm,
-                    pickMode = false,
-                    onViewingFileChange = { viewingDriveFile = it },
-                )
-                else -> TransfersScreen(vm, onOpenSettings = { showSettings = true })
             }
+            FullScreenOverlayHost(overlay)
         }
     }
 

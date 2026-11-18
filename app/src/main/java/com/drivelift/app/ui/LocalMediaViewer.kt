@@ -28,6 +28,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.IntSize
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.DefaultDataSource
@@ -61,7 +62,7 @@ fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit, onD
     }
 
     // Drawn on the root backdrop (rule 3): this viewer is part of the app window, not a dialog.
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().testTag("local-viewer")) {
         // Taps on the empty backdrop never reach the folder grid beneath.
         Box(Modifier.fillMaxSize().viewerPointerBarrier())
         if (item.isVideo) {

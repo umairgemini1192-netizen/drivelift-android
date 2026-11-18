@@ -514,15 +514,17 @@ fun DriveBrowser(
 
         val openFile = viewerFile
         if (openFile != null && !pickMode) {
-            DriveFileViewer(
-                vm = vm,
-                file = openFile,
-                cachedThumb = thumbCache.get(driveMemoryCacheKey(accountKey, openFile)),
-                onClose = { viewerFile = null },
-                onOpenExternally = {
-                    openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
-                },
-            )
+            FullScreenOverlay {
+                DriveFileViewer(
+                    vm = vm,
+                    file = openFile,
+                    cachedThumb = thumbCache.get(driveMemoryCacheKey(accountKey, openFile)),
+                    onClose = { viewerFile = null },
+                    onOpenExternally = {
+                        openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
+                    },
+                )
+            }
         }
     }
 
