@@ -244,8 +244,10 @@ class ScreenshotTest {
     fun phoneMediaOpensInsideDriveLift() {
         grantMedia()
         eachVariant(
-            "phone-open-flow", expect = null, connected = true, capture = false,
+            // Drive is not connected: opening phone media must not need the account.
+            "phone-open-flow", expect = null, connected = false, capture = false,
             act = {
+                assertEquals(DriveConn.DISCONNECTED, currentVm!!.driveConn.value)
                 waitFor("Camera")
                 compose.onNodeWithText("Camera").performClick()
                 waitFor("Select all")
@@ -279,6 +281,63 @@ class ScreenshotTest {
                 pump(4)
             },
         ) { vm -> AppRoot(vm) }
+    }
+
+    /** A synthetic phone item for the viewer's failure states; no file or photo is involved. */
+    private fun localItem(id: Long, name: String, video: Boolean, size: Long) = com.drivelift.app.data.MediaItem(
+        id = id,
+        uri = android.net.Uri.parse("content://media/external/${if (video) "video" else "images"}/media/$id"),
+        name = name, size = size, mime = if (video) "video/mp4" else "image/jpeg",
+        dateTakenMs = 0, dateModifiedMs = 0, bucketId = 1, bucketName = "Camera",
+        relativePath = "DCIM/Camera/", isVideo = video, durationMs = if (video) 5_000 else 0,
+    )
+
+    /** Issue #29 review: the local photo viewer while the file is still being read. */
+    @Test
+    fun localPhotoLoading() {
+        val item = localItem(901, "IMG_0901.jpg", video = false, size = 3_400_000)
+        val release = CountDownLatch(1)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) {
+            release.await(30, java.util.concurrent.TimeUnit.SECONDS)
+            ByteArrayInputStream(ByteArray(0))
+        }
+        try {
+            eachVariant("local-photo-loading", expect = "Opening photo") { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+        } finally {
+            release.countDown()
+        }
+    }
+
+    /** Issue #29 review: a phone photo that cannot be read offers Try again and another app. */
+    @Test
+    fun localPhotoUnreadable() {
+        val item = localItem(902, "IMG_0902.jpg", video = false, size = 3_400_000)
+        shadowOf(app.contentResolver).registerInputStreamSupplier(item.uri) { throw java.io.FileNotFoundException() }
+        eachVariant("local-photo-unreadable", expect = "Could not open photo") { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+    }
+
+    /** Issue #29 review: a photo over the viewer's 32 MB limit is not read at all. */
+    @Test
+    fun localPhotoTooLarge() {
+        val item = localItem(903, "PANO_0903.jpg", video = false, size = 40_000_000)
+        eachVariant("local-photo-too-large", expect = "Could not open photo") { vm ->
+            LocalMediaViewer(vm, item, onClose = {})
+        }
+        // Also checked without a capture: the message names the limit.
+        eachVariant("local-photo-too-large-copy", expect = null, capture = false, act = {
+            waitFor("Could not open photo")
+            compose.onNodeWithText("larger than", substring = true).assertExists()
+        }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
+    }
+
+    /** Issue #29 review: a phone video that cannot be read shows a plain notice, not an error code. */
+    @Test
+    fun localVideoError() {
+        val item = localItem(904, "VID_0904.mp4", video = true, size = 12_000_000)
+        eachVariant("local-video-error", expect = "Could not play video", act = {
+            waitFor("Could not play video")
+            compose.onNodeWithText("Open in another app").assertExists()
+        }) { vm -> LocalMediaViewer(vm, item, onClose = {}) }
     }
 
     @Test

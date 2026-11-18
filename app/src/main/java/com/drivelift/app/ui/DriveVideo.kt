@@ -101,6 +101,9 @@ internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): 
         }
         cause = cause.cause
     }
+    if (local && error.errorCode in LOCAL_READ_ERRORS) {
+        return VideoProblem.Failed("This video could not be read from this phone. It may have been moved or deleted.")
+    }
     return when (error.errorCode) {
         PlaybackException.ERROR_CODE_DECODER_INIT_FAILED,
         PlaybackException.ERROR_CODE_DECODING_FORMAT_UNSUPPORTED,
@@ -120,6 +123,14 @@ internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): 
         )
     }
 }
+
+/** Player errors that, for a file on this phone, mean it could not be read. */
+private val LOCAL_READ_ERRORS = setOf(
+    PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
+    PlaybackException.ERROR_CODE_IO_NO_PERMISSION,
+    PlaybackException.ERROR_CODE_IO_UNSPECIFIED,
+    PlaybackException.ERROR_CODE_IO_READ_POSITION_OUT_OF_RANGE,
+)
 
 /**
  * Streams a Drive video inside DriveLift with the connected account. Nothing is downloaded in
