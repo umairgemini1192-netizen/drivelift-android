@@ -622,6 +622,139 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /** Selects Sunset and Scan in the Drive tab and opens the folder picker with Move. */
+    private fun openDriveMovePicker() {
+        waitFor("Scan_0042.jpg")
+        // Sunset first: once the selection bar shows, the shorter grid can scroll it out of view.
+        selectDriveFile("Sunset_0019.jpg")
+        compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst().performClick()
+        waitFor("2 selected")
+        compose.onNodeWithText("Move").press()
+        waitFor("Move here: My Drive")
+    }
+
+    /** Issue #36: the Drive folder picker opened from a selection; no preset option. */
+    @Test
+    fun driveMovePicker() {
+        grantMedia()
+        eachVariant(
+            "drive-move-picker", expect = "Move here: My Drive", connected = true, tab = AppViewModel.TAB_DRIVE,
+            act = {
+                openDriveMovePicker()
+                assertTrue(
+                    "Moving Drive files offers no transfer preset",
+                    compose.onAllNodesWithText("Keep this folder as a preset").fetchSemanticsNodes().isEmpty(),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #36: move confirmation with a file a transfer still depends on left in place. */
+    @Test
+    fun driveMoveConfirmation() {
+        grantMedia()
+        seedTransfers(driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED))
+        eachVariant(
+            "drive-move-confirm", expect = "Move 1 file to Archive 2024?", connected = true,
+            tab = AppViewModel.TAB_DRIVE, overlay = true,
+            act = {
+                openDriveMovePicker()
+                tap("Archive 2024")
+                tap("Move here: Archive 2024")
+                waitFor("Move 1 file to Archive 2024?")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #36: Back from the picker keeps the selection; Cancel moves nothing; confirming moves
+     * exactly the eligible file from this folder to the chosen one and it leaves the folder;
+     * choosing the folder the files are already in moves nothing.
+     */
+    @Test
+    fun driveMoveMovesExactlyTheConfirmedFiles() {
+        grantMedia()
+        seedTransfers(driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED))
+        val drive = FakeDrive()
+        eachVariant(
+            "drive-move-flow", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE,
+            capture = false, drive = drive,
+            act = {
+                drive.moves.clear()
+                openDriveMovePicker()
+
+                // Back from the picker: still selecting, nothing moved.
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                waitFor("2 selected")
+                assertTrue(drive.moves.isEmpty())
+
+                // The folder the files are in: nothing to do.
+                compose.onNodeWithText("Move").press()
+                tap("Move here: My Drive")
+                waitFor("Already in My Drive")
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                assertTrue(drive.moves.isEmpty())
+
+                // Cancel, then confirm: only Scan (d2); Sunset (d4) is held by a verified transfer.
+                compose.onNodeWithText("Move").press()
+                tap("Archive 2024")
+                tap("Move here: Archive 2024")
+                waitFor("Move 1 file to Archive 2024?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue(drive.moves.isEmpty())
+                waitFor("2 selected")
+
+                compose.onNodeWithText("Move").press()
+                tap("Archive 2024")
+                tap("Move here: Archive 2024")
+                waitFor("Move 1 file to Archive 2024?")
+                compose.onNodeWithText("Left in place because a transfer", substring = true).assertExists()
+                tap("Move to Archive 2024")
+                compose.waitUntil(5_000) { pump(1); compose.onAllNodesWithTag("drive-move").fetchSemanticsNodes().isEmpty() }
+                assertEquals(listOf(Triple("d2", DriveClient.ROOT, "f1")), drive.moves.toList())
+                assertTrue(
+                    "A moved file leaves the folder",
+                    compose.onAllNodesWithContentDescription("Scan_0042.jpg").fetchSemanticsNodes().isEmpty(),
+                )
+                waitFor("1 selected")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #36: a move runs for the account it was confirmed for; on a change the rest are not tried. */
+    @Test
+    fun driveMoveStaysOnTheAccountItWasConfirmedFor() {
+        grantMedia()
+        val prefs = Graph.get(app).prefs
+        prefs.accountEmail = TEST_EMAIL
+        val vm = AppViewModel(app)
+        pump(12)
+        val calls = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        vm.driveFolders = object : DriveFolders by FakeDrive() {
+            override suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String) {
+                calls += fileId to account
+                // The saved account changes while the first file is being moved.
+                prefs.accountEmail = "other.user@example.com"
+            }
+        }
+        val files = listOf(
+            DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false),
+            DriveFile("d1", "Packing list.pdf", "application/pdf", 84_000, "00", false),
+        )
+        val plan = runBlocking { vm.planDriveMove(files, DriveClient.ROOT, "f1", "My Drive / Archive 2024") }
+        val outcome = runBlocking { vm.moveDriveFiles(plan) }
+        assertEquals(listOf("d2" to TEST_EMAIL), calls.toList())
+        assertEquals(listOf("d2"), outcome.moved.map { it.id })
+        assertEquals(listOf("d1"), outcome.notTried.map { it.id })
+        assertEquals("1 file moved to Archive 2024; 1 not tried: ${AppViewModel.ACCOUNT_CHANGED}", outcome.message())
+        prefs.accountEmail = null
+        val none = runBlocking { vm.moveDriveFiles(vm.planDriveMove(files, DriveClient.ROOT, "f1", "Archive 2024")) }
+        assertEquals(1, calls.size)
+        assertEquals(listOf("d2", "d1"), none.notTried.map { it.id })
+    }
+
     /** Issue #36: Drive trash confirmation with a file a transfer still depends on left out. */
     @Test
     fun driveTrashConfirmation() {
@@ -1407,7 +1540,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.18 (build 17)",
+            "build-id", expect = "DriveLift 1.0.0-preview.19 (build 18)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -1892,6 +2025,13 @@ class ScreenshotTest {
         override suspend fun moveToTrash(fileId: String, account: String) {
             assertEquals("Every trash call names the confirmed account", TEST_EMAIL, account)
             trashedIds += fileId
+        }
+
+        /** Files the app asked to move: (file, from folder, to folder), in order. */
+        val moves = java.util.Collections.synchronizedList(mutableListOf<Triple<String, String, String>>())
+        override suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String) {
+            assertEquals("Every move call names the confirmed account", TEST_EMAIL, account)
+            moves += Triple(fileId, fromFolderId, toFolderId)
         }
         override suspend fun createFolder(name: String, parentId: String) = create(name)
 
