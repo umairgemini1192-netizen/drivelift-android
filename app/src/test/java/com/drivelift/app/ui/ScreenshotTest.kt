@@ -733,6 +733,27 @@ class ScreenshotTest {
         assertEquals("1 file moved to Google Drive's trash; 2 left in Drive because a transfer now depends on them", outcome.message())
     }
 
+    /**
+     * Codex review on 33d08d4: a check that finished as VERIFIED while the trash request was in
+     * flight is sent back to UPLOADED, so the verifier sees the trashed copy before any removal.
+     */
+    @Test
+    fun aCopyVerifiedDuringTrashIsCheckedAgain() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val scan = DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false)
+        // The verifier marks the row VERIFIED at the moment Drive is asked to trash the copy.
+        vm.driveFolders = object : DriveFolders by FakeDrive() {
+            override suspend fun moveToTrash(fileId: String) {
+                Graph.get(app).db.transfers().insertAll(listOf(driveRow(2, "Scan_0042.jpg", "d2", TransferStatus.VERIFIED)))
+            }
+        }
+        runBlocking { vm.trashDriveFiles(listOf(scan)) }
+        val after = runBlocking { Graph.get(app).db.transfers().byDriveFileIds(listOf("d2")) }
+        assertEquals(listOf(TransferStatus.UPLOADED.name), after.map { it.status })
+    }
+
     @Test
     fun folderLargeDensity() {
         grantMedia()

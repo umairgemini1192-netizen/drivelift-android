@@ -438,8 +438,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Transfer rows that could make [files] depend on a transfer: by Drive id, or active by name. */
     private suspend fun transferRowsFor(files: List<com.drivelift.app.drive.DriveFile>): List<com.drivelift.app.data.TransferEntity> {
         val dao = graph.db.transfers()
-        return files.map { it.id }.chunked(400).flatMap { dao.byDriveFileIds(it) } +
-            files.map { it.name }.distinct().chunked(400).flatMap { dao.activeByNames(it) }
+        return files.chunked(200).flatMap { batch ->
+            dao.dependingOnDriveFiles(batch.map { it.id }, batch.map { it.name }.distinct())
+        }
     }
 
     /** Works out a user-directed Drive trash for [files] (issue #36). Nothing is changed. */
@@ -488,6 +489,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             try {
                 driveFolders.moveToTrash(file.id)
                 trashed += file
+                // A check that read this copy just before it was trashed could have marked it
+                // verified meanwhile; send any such row back so the verifier sees the trash.
+                if (graph.db.transfers().recheckTrashedCopy(file.id) > 0) graph.transfers.kickVerify()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: com.drivelift.app.drive.AuthRequiredException) {

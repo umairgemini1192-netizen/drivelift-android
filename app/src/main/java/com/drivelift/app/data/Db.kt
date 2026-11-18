@@ -90,9 +90,24 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE driveFileId IN (:ids)")
     suspend fun byDriveFileIds(ids: List<String>): List<TransferEntity>
 
-    /** Transfers still copying a file of one of these names (their Drive id may not be known yet). */
-    @Query("SELECT * FROM transfers WHERE status IN ('QUEUED', 'UPLOADING') AND name IN (:names)")
-    suspend fun activeByNames(names: List<String>): List<TransferEntity>
+    /**
+     * In one read: transfers with one of these Drive ids, and transfers still copying a file of
+     * one of these names (their Drive id may not be known yet). A single query, so a worker
+     * update between two separate reads cannot hide a row from both.
+     */
+    @Query(
+        """SELECT * FROM transfers WHERE driveFileId IN (:ids)
+           OR (status IN ('QUEUED', 'UPLOADING') AND name IN (:names))""",
+    )
+    suspend fun dependingOnDriveFiles(ids: List<String>, names: List<String>): List<TransferEntity>
+
+    /**
+     * Sends a verified row whose Drive copy the user has just trashed back to be checked again.
+     * The verifier then finds the copy trashed and requeues the upload, so the phone original is
+     * never offered for removal against a trashed copy.
+     */
+    @Query("UPDATE transfers SET status = 'UPLOADED' WHERE driveFileId = :driveFileId AND status = 'VERIFIED'")
+    suspend fun recheckTrashedCopy(driveFileId: String): Int
 
     @Query("SELECT COUNT(*) FROM transfers WHERE status IN (:statuses)")
     suspend fun count(statuses: List<String>): Int
