@@ -373,7 +373,7 @@ class ScreenshotTest {
             "phone-delete-confirm", expect = "Move 1 file to this phone's trash?", connected = true, overlay = true,
             act = {
                 selectTwoForDelete()
-                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
                 waitFor("Move 1 file to this phone's trash?")
             },
         ) { vm -> AppRoot(vm) }
@@ -396,15 +396,16 @@ class ScreenshotTest {
                 asked.clear()
                 selectTwoForDelete()
                 // Cancel: nothing asked of Android, the selection stays.
-                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
                 waitFor("Move 1 file to this phone's trash?")
                 tap("Cancel")
                 pump(DIALOG_FRAMES)
                 assertTrue("Cancel must not ask Android to trash anything", asked.isEmpty())
                 assertEquals(2, currentVm!!.selection.value.size)
 
-                // Confirm: exactly IMG_0001, never the file in a transfer.
-                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                // Confirm: exactly IMG_0001, never the file in a transfer. (The click action is used
+                // because the "Nothing was moved" message from Cancel covers the bottom bar for a while.)
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
                 waitFor("Move 1 file to this phone's trash?")
                 compose.onNodeWithText("Left out because", substring = true).assertExists()
                 tap("Move to trash")
@@ -417,7 +418,7 @@ class ScreenshotTest {
                 pump(4)
                 selectCell("IMG_0002.jpg")
                 waitFor("1 selected")
-                compose.onNodeWithContentDescription("Move selected to this phone's trash").performClick()
+                compose.onNodeWithContentDescription("Move selected to this phone's trash").press()
                 waitFor("This file can't go to the trash yet")
                 tap("OK")
                 pump(DIALOG_FRAMES)
