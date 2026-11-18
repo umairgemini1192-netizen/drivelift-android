@@ -595,7 +595,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val failed = mutableListOf<Pair<com.drivelift.app.drive.DriveFile, String>>()
         val skipped = mutableListOf<com.drivelift.app.drive.DriveFile>()
         fun stop(from: Int, reason: String) =
-            com.drivelift.app.data.DriveMoveOutcome(plan.toName, moved, failed, skipped, files.drop(from), reason)
+            com.drivelift.app.data.DriveMoveOutcome(
+                plan.toName, moved, failed, skipped, files.drop(from), reason, plan.fromFolderId, plan.toFolderId,
+            )
         if (account.isNullOrBlank()) return stop(0, NOT_CONNECTED)
         for ((i, file) in files.withIndex()) {
             if (!account.equals(prefs.accountEmail, ignoreCase = true)) return stop(i, ACCOUNT_CHANGED)
@@ -617,7 +619,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 failed += file to com.drivelift.app.transfer.describeError(e)
             }
         }
-        return com.drivelift.app.data.DriveMoveOutcome(plan.toName, moved, failed, skipped)
+        return com.drivelift.app.data.DriveMoveOutcome(
+            plan.toName, moved, failed, skipped, fromFolderId = plan.fromFolderId, toFolderId = plan.toFolderId,
+        )
     }
 
     companion object {

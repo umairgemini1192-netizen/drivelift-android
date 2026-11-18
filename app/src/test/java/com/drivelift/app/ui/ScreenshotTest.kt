@@ -662,6 +662,7 @@ class ScreenshotTest {
                 tap("Archive 2024")
                 tap("Move here: Archive 2024")
                 waitFor("Move 1 file to Archive 2024?")
+                compose.onNodeWithText("Access can change", substring = true).assertExists()
             },
         ) { vm -> AppRoot(vm) }
     }

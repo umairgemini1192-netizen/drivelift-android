@@ -283,13 +283,18 @@ fun DriveBrowser(
         scope.launch { trashPlan = vm.planDriveTrash(files) }
     }
     fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan)
-    // Applies a finished move: the moved files leave this folder.
+    // Applies a finished move to whichever folder is shown now, which may not be the one the move
+    // started in (the screen can be recreated and navigated while the batch runs): moved files
+    // leave the source folder's listing, and the destination's listing is read again.
     LaunchedEffect(moveRun?.outcome) {
         val outcome = moveRun?.outcome ?: return@LaunchedEffect
         movePlan = null
         val gone = outcome.moved.map { it.id }.toSet()
         selectedIds = selectedIds - gone
-        entries = entries?.filterNot { it.id in gone }
+        when (here.id) {
+            outcome.fromFolderId -> entries = entries?.filterNot { it.id in gone }
+            outcome.toFolderId -> if (gone.isNotEmpty()) reload++
+        }
         vm.driveMoveApplied()
     }
     // Applies a finished batch, including one that finished while the screen was recreated.

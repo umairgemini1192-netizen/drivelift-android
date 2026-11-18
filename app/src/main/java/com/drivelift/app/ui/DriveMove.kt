@@ -46,10 +46,17 @@ internal fun DriveMoveDialog(plan: DriveMovePlan, working: Boolean, onConfirm: (
                 }
                 if (count > 0) {
                     Text(
-                        "Moving to ${plan.toLabel}. Each file keeps its content, sharing and history in Drive; " +
-                            "nothing is copied or deleted, and nothing on this phone is changed. " +
+                        "Moving to ${plan.toLabel}. Each file keeps its content and history; nothing is copied " +
+                            "or deleted, and nothing on this phone is changed. " +
                             "${formatBytes(context, plan.eligible.sumOf { it.size })} in total.",
                         style = MaterialTheme.typography.bodyMedium,
+                    )
+                    Text(
+                        "Access can change: moved files take on the sharing of ${plan.toName}, so anyone who " +
+                            "can open that folder can open them, and access they had only from this folder ends.",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(top = Tokens.Small),
                     )
                     DriveNames(plan.eligible)
                 }

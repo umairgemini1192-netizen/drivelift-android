@@ -64,6 +64,9 @@ data class DriveMoveOutcome(
     /** Confirmed files Drive was never asked about, and why (for example the account changed). */
     val notTried: List<DriveFile> = emptyList(),
     val notTriedReason: String? = null,
+    /** The folders of the batch, so a screen applies the outcome to the right listing. */
+    val fromFolderId: String = "",
+    val toFolderId: String = "",
 ) {
     fun message(): String {
         val base = when {
