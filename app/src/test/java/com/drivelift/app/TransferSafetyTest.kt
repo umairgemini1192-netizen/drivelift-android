@@ -10,6 +10,8 @@ import com.drivelift.app.data.mediaVisibility
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.collectAllPages
+import com.drivelift.app.transfer.CopyBeingTrashedException
+import com.drivelift.app.transfer.DriveCopyFence
 import com.drivelift.app.transfer.LocalCopy
 import com.drivelift.app.transfer.RemoteCopies
 import com.drivelift.app.transfer.Verifier
@@ -80,6 +82,50 @@ class TransferSafetyTest {
 
     private fun verifier(ledger: Ledger, drive: Drive, local: suspend (TransferEntity) -> LocalCopy) =
         Verifier(ledger, drive, local)
+
+    // --- Issue #36 review on 92a1ba6: a copy being trashed is never verified or removed ---------
+
+    @Test
+    fun aCopyBeingTrashedIsNotMarkedVerified() = runBlocking {
+        val fence = DriveCopyFence()
+        val ledger = Ledger(uploadedRow())
+        val drive = Drive(driveFile())
+        val verifier = Verifier(ledger, drive, { LocalCopy(1000, goodMd5) }, fence)
+        // The trash reserved the copy after the verifier read it as not trashed.
+        assertTrue(fence.beginTrash("drive-7"))
+        assertThrows(CopyBeingTrashedException::class.java) { runBlocking { verifier.verify(ledger.row) } }
+        assertEquals(TransferStatus.UPLOADED.name, ledger.row.status)
+        // Trashed: still never VERIFIED in this process, even from a read made before the trash.
+        fence.endTrash("drive-7", trashedNow = true)
+        assertThrows(CopyBeingTrashedException::class.java) { runBlocking { verifier.verify(ledger.row) } }
+        assertTrue(ledger.writes.isEmpty())
+    }
+
+    @Test
+    fun aFailedTrashLetsTheCopyBeVerified() = runBlocking {
+        val fence = DriveCopyFence()
+        val ledger = Ledger(uploadedRow())
+        val verifier = Verifier(ledger, Drive(driveFile()), { LocalCopy(1000, goodMd5) }, fence)
+        assertTrue(fence.beginTrash("drive-7"))
+        fence.endTrash("drive-7", trashedNow = false)
+        assertFalse(verifier.verify(ledger.row))
+        assertEquals(TransferStatus.VERIFIED.name, ledger.row.status)
+    }
+
+    @Test
+    fun removalAndTrashNeverShareACopy() = runBlocking {
+        val fence = DriveCopyFence()
+        // A trash in flight: a removal request leaves its file out and keeps the others.
+        assertTrue(fence.beginTrash("drive-1"))
+        assertEquals(listOf("uri-2"), fence.beginRemoval(listOf("uri-1" to "drive-1", "uri-2" to "drive-2")))
+        // An open removal request (the user is still deciding): a trash of its copy is refused.
+        assertFalse(fence.beginTrash("drive-2"))
+        fence.endTrash("drive-1", trashedNow = true)
+        fence.endRemoval()
+        assertTrue(fence.beginTrash("drive-2"))
+        // A copy trashed in this process is never put in a removal request again.
+        assertEquals(emptyList<String>(), fence.beginRemoval(listOf("uri-1" to "drive-1")))
+    }
 
     // --- Finding 1: no success state without a comparison -------------------------------------
 

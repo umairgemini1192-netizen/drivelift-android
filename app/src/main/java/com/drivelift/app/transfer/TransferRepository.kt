@@ -31,6 +31,7 @@ class TransferRepository(
     private val db: AppDatabase,
     private val prefs: Prefs,
     private val media: MediaRepository,
+    private val fence: DriveCopyFence,
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dao get() = db.transfers()
@@ -126,6 +127,11 @@ class TransferRepository(
      * Verified files that are still on the phone, ready for the system delete
      * prompt. Rows whose file is already gone are closed out as removed, but only
      * while the app can see every photo and video: otherwise "not visible" is not "gone".
+     *
+     * The returned files are reserved in the [DriveCopyFence] until [removalFinished]: no Drive
+     * trash can take their copies while the request is open, and a file whose copy is being
+     * trashed is left out. The rows are read before the fence is asked, so a copy reserved for a
+     * trash after that read is seen by the trash as VERIFIED and left alone.
      */
     suspend fun verifiedForRemoval(limit: Int): List<String> {
         media.refresh()
@@ -137,8 +143,12 @@ class TransferRepository(
             visibility = MediaAccess.visibility(context),
         )
         markRemoved(gone)
-        return onPhone
+        val copyOf = rows.associate { it.mediaUri to it.driveFileId }
+        return fence.beginRemoval(onPhone.map { it to copyOf[it] })
     }
+
+    /** The removal request from [verifiedForRemoval] was answered, cancelled or never shown. */
+    suspend fun removalFinished() = fence.endRemoval()
 
     suspend fun markRemoved(uris: List<String>) {
         uris.chunked(400).forEach { dao.markRemoved(it) }

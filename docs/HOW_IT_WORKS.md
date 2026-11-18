@@ -170,6 +170,18 @@ already removed after verification, the confirmation warns that the Drive copy i
 Each file is moved separately and the result is reported per file; files that moved disappear
 from the folder and their thumbnails are dropped from the cache.
 
+The batch belongs to the account that was connected when the confirmation was shown. Switching
+accounts is refused while it runs. Each request is sent with a token for that account, which
+Drive itself confirms belongs to it (also after a token refresh). If the saved account changes
+anyway, the remaining files are not tried and are reported as not tried.
+
+A trash and the phone-removal flow never act on the same Drive copy at once
+(`transfer/DriveCopyFence.kt`). While a copy is being trashed, the verifier cannot mark it
+verified, and Transfers leaves its phone file out of any removal request. A copy trashed during
+this session is never verified again; the next check finds it in the trash and uploads the file
+again. While a removal request is open (including while the user is deciding), a trash leaves
+the copies it relies on alone.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the

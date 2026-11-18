@@ -274,7 +274,7 @@ fun DriveBrowser(
     fun askTrash(files: List<DriveFile>) {
         scope.launch { trashPlan = vm.planDriveTrash(files) }
     }
-    fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan.eligible)
+    fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan)
     // Applies a finished batch, including one that finished while the screen was recreated.
     LaunchedEffect(trashRun?.outcome) {
         val outcome = trashRun?.outcome ?: return@LaunchedEffect

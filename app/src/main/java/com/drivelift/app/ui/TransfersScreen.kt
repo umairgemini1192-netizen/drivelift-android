@@ -113,6 +113,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             lastAutoPrompt = -1
         }
         awaitingConfirm = emptyList()
+        // Android has answered: the Drive copies behind the request may be trashed again.
+        vm.removalFinished()
     }
     LaunchedEffect(removeRequest) {
         if (removeRequest == 0) return@LaunchedEffect
@@ -122,6 +124,7 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             // DriveLift asks first, in text; Android then completes the request without a preview.
             // Removal is limited to exactly the files the dialog will list.
             textOnlyBatch = vm.describeForRemoval(uris).takeIf { it.isNotEmpty() }
+            if (textOnlyBatch == null) vm.removalFinished()
             return@LaunchedEffect
         }
         awaitingConfirm = uris
@@ -130,6 +133,7 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
             removeLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
         }.onFailure {
             awaitingConfirm = emptyList()
+            vm.removalFinished()
             vm.messages.tryEmit("Android could not open the removal prompt: ${it.message}")
         }
     }
@@ -145,10 +149,14 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
                     removeLauncher.launch(IntentSenderRequest.Builder(request.intentSender).build())
                 }.onFailure {
                     awaitingConfirm = emptyList()
+                    vm.removalFinished()
                     vm.messages.tryEmit("Android could not remove the files: ${it.message}")
                 }
             },
-            onCancel = { textOnlyBatch = null },
+            onCancel = {
+                textOnlyBatch = null
+                vm.removalFinished()
+            },
         )
     }
     LaunchedEffect(idle, verified, autoRemove) {

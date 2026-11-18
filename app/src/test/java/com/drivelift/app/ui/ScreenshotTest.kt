@@ -94,6 +94,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Before
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -712,6 +713,7 @@ class ScreenshotTest {
     @Test
     fun driveTrashRechecksTransfersRightBeforeEachFile() {
         grantMedia()
+        Graph.get(app).prefs.accountEmail = TEST_EMAIL
         val vm = AppViewModel(app)
         pump(12)
         val drive = FakeDrive()
@@ -727,7 +729,7 @@ class ScreenshotTest {
             driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED),
             row(3, "Trip to the coast.mp4", TransferStatus.UPLOADING).copy(driveFileId = null),
         )
-        val outcome = runBlocking { vm.trashDriveFiles(plan.eligible) }
+        val outcome = runBlocking { vm.trashDriveFiles(plan.eligible, plan.account) }
         assertEquals(listOf("d2"), drive.trashedIds)
         assertEquals(listOf("d4", "d3"), outcome.skipped.map { it.id })
         assertEquals("1 file moved to Google Drive's trash; 2 left in Drive because a transfer now depends on them", outcome.message())
@@ -740,18 +742,127 @@ class ScreenshotTest {
     @Test
     fun aCopyVerifiedDuringTrashIsCheckedAgain() {
         grantMedia()
+        Graph.get(app).prefs.accountEmail = TEST_EMAIL
         val vm = AppViewModel(app)
         pump(12)
         val scan = DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false)
         // The verifier marks the row VERIFIED at the moment Drive is asked to trash the copy.
         vm.driveFolders = object : DriveFolders by FakeDrive() {
-            override suspend fun moveToTrash(fileId: String) {
+            override suspend fun moveToTrash(fileId: String, account: String) {
                 Graph.get(app).db.transfers().insertAll(listOf(driveRow(2, "Scan_0042.jpg", "d2", TransferStatus.VERIFIED)))
             }
         }
-        runBlocking { vm.trashDriveFiles(listOf(scan)) }
+        runBlocking { vm.trashDriveFiles(listOf(scan), TEST_EMAIL) }
         val after = runBlocking { Graph.get(app).db.transfers().byDriveFileIds(listOf("d2")) }
         assertEquals(listOf(TransferStatus.UPLOADED.name), after.map { it.status })
+    }
+
+    /**
+     * ChatGPT review on 92a1ba6 [P1]: a confirmed batch runs for the account it was confirmed
+     * for. While the first request is slow, switching accounts is refused; if the saved account
+     * changes anyway, the remaining files are not tried, and no call ever names another account.
+     */
+    @Test
+    fun driveTrashStaysOnTheAccountItWasConfirmedFor() {
+        grantMedia()
+        val prefs = Graph.get(app).prefs
+        prefs.accountEmail = TEST_EMAIL
+        val vm = AppViewModel(app)
+        pump(12)
+        val gate = kotlinx.coroutines.CompletableDeferred<Unit>()
+        val calls = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        vm.driveFolders = object : DriveFolders by FakeDrive() {
+            override suspend fun moveToTrash(fileId: String, account: String) {
+                calls += fileId to account
+                if (calls.size == 1) gate.await()
+            }
+        }
+        val files = listOf(
+            DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false),
+            DriveFile("d3", "Trip to the coast.mp4", "video/mp4", 182_000_000, "00", false),
+            DriveFile("d1", "Packing list.pdf", "application/pdf", 84_000, "00", false),
+        )
+        val plan = runBlocking { vm.planDriveTrash(files) }
+        assertEquals(TEST_EMAIL, plan.account)
+        vm.startDriveTrash(plan)
+        settle { calls.size == 1 }
+        // The first request is in flight: an account switch is refused while the batch runs.
+        assertTrue(runBlocking { vm.accountSwitchBlockers() } > 0)
+        // The saved account changes anyway; the slow request then finishes.
+        prefs.accountEmail = "other.user@example.com"
+        gate.complete(Unit)
+        settle { vm.driveTrashRun.value?.outcome != null }
+        val outcome = vm.driveTrashRun.value!!.outcome!!
+        assertEquals(listOf("d2" to TEST_EMAIL), calls.toList())
+        assertEquals(listOf("d2"), outcome.trashed.map { it.id })
+        assertEquals(listOf("d3", "d1"), outcome.notTried.map { it.id })
+        assertEquals(
+            "1 file moved to Google Drive's trash; 2 not tried: ${AppViewModel.ACCOUNT_CHANGED}",
+            outcome.message(),
+        )
+        assertEquals(0, runBlocking { vm.accountSwitchBlockers() })
+        // A plan made with no account connected moves nothing and says so.
+        prefs.accountEmail = null
+        val none = runBlocking { vm.trashDriveFiles(files, vm.planDriveTrash(files).account) }
+        assertEquals(1, calls.size)
+        assertEquals(files.map { it.id }, none.notTried.map { it.id })
+    }
+
+    /**
+     * ChatGPT review on 92a1ba6 [P2]: while a copy is being trashed, the Transfers removal query
+     * leaves out the phone file that relies on it, even when the copy turned VERIFIED during the
+     * request; and while a removal request is open, the trash leaves its copies alone.
+     */
+    @Test
+    fun removalAndDriveTrashNeverOverlap() {
+        grantMedia()
+        Graph.get(app).prefs.accountEmail = TEST_EMAIL
+        val vm = AppViewModel(app)
+        pump(12)
+        val dao = Graph.get(app).db.transfers()
+        // File 1 is verified against copy d1 and unrelated to the first trash.
+        seedTransfers(driveRow(1, "IMG_0001.jpg", "d1", TransferStatus.VERIFIED))
+        val scan = DriveFile("d2", "IMG_0002.jpg", "image/jpeg", 3_420_000, "00", false)
+        var offeredDuringTrash: List<String>? = null
+        val trashed = java.util.Collections.synchronizedList(mutableListOf<String>())
+        vm.driveFolders = object : DriveFolders by FakeDrive() {
+            override suspend fun moveToTrash(fileId: String, account: String) {
+                trashed += fileId
+                if (fileId == "d2") {
+                    // The verifier finishes for file 2 while Drive is trashing its copy, and the
+                    // Transfers screen asks for files to put in a removal request.
+                    dao.insertAll(listOf(driveRow(2, "IMG_0002.jpg", "d2", TransferStatus.VERIFIED)))
+                    offeredDuringTrash = vm.verifiedForRemoval(50)
+                    Graph.get(app).transfers.removalFinished()
+                }
+            }
+        }
+        val first = runBlocking { vm.trashDriveFiles(listOf(scan), TEST_EMAIL) }
+        assertEquals(listOf("d2"), first.trashed.map { it.id })
+        val uri1 = "content://media/external/images/media/1"
+        val uri2 = "content://media/external/images/media/2"
+        assertEquals(listOf(uri1), offeredDuringTrash)
+        // Afterwards the row is back to be checked and is never offered against the trashed copy.
+        assertEquals(
+            listOf(TransferStatus.UPLOADED.name),
+            runBlocking { dao.byDriveFileIds(listOf("d2")) }.map { it.status },
+        )
+        assertFalse(uri2 in runBlocking { vm.verifiedForRemoval(50) })
+        runBlocking { Graph.get(app).transfers.removalFinished() }
+
+        // A removal request is open for file 1 (the user is deciding). Even if its row stopped
+        // being VERIFIED meanwhile, the trash leaves copy d1 alone until Android answers.
+        assertEquals(listOf(uri1), runBlocking { vm.verifiedForRemoval(50) })
+        runBlocking { dao.recheckTrashedCopy("d1") }
+        val first1 = DriveFile("d1", "IMG_0001.jpg", "image/jpeg", 3_410_000, "00", false)
+        val held = runBlocking { vm.trashDriveFiles(listOf(first1), TEST_EMAIL) }
+        assertEquals(listOf("d1"), held.skipped.map { it.id })
+        assertEquals(listOf("d2"), trashed.toList())
+        // Android answered: the copy is free for a trash again.
+        runBlocking { Graph.get(app).transfers.removalFinished() }
+        val fence = Graph.get(app).driveCopyFence
+        assertTrue(runBlocking { fence.beginTrash("d1") })
+        runBlocking { fence.endTrash("d1", trashedNow = false) }
     }
 
     @Test
@@ -1662,8 +1773,10 @@ class ScreenshotTest {
                 else -> DriveConn.DISCONNECTED
             }
             vm.account.value = if (connected) {
-                DriveAbout("Test User", "test.user@example.com", 21_000_000_000, 100_000_000_000)
+                DriveAbout("Test User", TEST_EMAIL, 21_000_000_000, 100_000_000_000)
             } else null
+            // The saved account pin, which a confirmed Drive trash is bound to.
+            if (connected) Graph.get(app).prefs.accountEmail = TEST_EMAIL
 
             currentVm = vm
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
@@ -1776,7 +1889,8 @@ class ScreenshotTest {
 
         /** Files the app asked to move to Drive's trash, in order. */
         val trashedIds = mutableListOf<String>()
-        override suspend fun moveToTrash(fileId: String) {
+        override suspend fun moveToTrash(fileId: String, account: String) {
+            assertEquals("Every trash call names the confirmed account", TEST_EMAIL, account)
             trashedIds += fileId
         }
         override suspend fun createFolder(name: String, parentId: String) = create(name)
@@ -1912,6 +2026,7 @@ class ScreenshotTest {
         // Fixed dates, so day headers are the same on every run: 14 and 15 March 2026, noon UTC.
         const val DAY_ONE = 1_773_489_600_000L
         const val DAY_TWO = 1_773_576_000_000L
+        const val TEST_EMAIL = "test.user@example.com"
 
         const val PICTURE_SIZE = 256
 

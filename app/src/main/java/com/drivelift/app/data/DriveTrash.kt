@@ -19,6 +19,11 @@ data class DriveTrashPlan(
      * the Drive copy is the only one, so the confirmation says so.
      */
     val onlyCopy: List<DriveFile>,
+    /**
+     * The connected account when the plan was made: the files listed belong to it and the batch
+     * runs for it only. Null when no account is connected, and then nothing is moved.
+     */
+    val account: String? = null,
 )
 
 /** Transfer states in which the Drive copy must stay where it is. */
@@ -38,13 +43,20 @@ fun transferHolds(file: DriveFile, transfers: List<TransferEntity>): Boolean = t
         (t.name == file.name && t.status in setOf(TransferStatus.QUEUED.name, TransferStatus.UPLOADING.name))
 }
 
-fun planDriveTrash(selected: List<DriveFile>, transfers: List<TransferEntity>): DriveTrashPlan {
+fun planDriveTrash(
+    selected: List<DriveFile>,
+    transfers: List<TransferEntity>,
+    account: String? = null,
+): DriveTrashPlan {
     val byDriveId = transfers.filter { it.driveFileId != null }.groupBy { it.driveFileId!! }
     val folders = selected.filter { it.isFolder }
     val files = selected.filterNot { it.isFolder }
     val (held, eligible) = files.partition { f -> transferHolds(f, transfers) }
     val onlyCopy = eligible.filter { f -> byDriveId[f.id].orEmpty().any { it.status == TransferStatus.REMOVED.name } }
-    return DriveTrashPlan(eligible = eligible, folders = folders, heldByTransfer = held, onlyCopy = onlyCopy)
+    return DriveTrashPlan(
+        eligible = eligible, folders = folders, heldByTransfer = held, onlyCopy = onlyCopy,
+        account = account?.takeIf { it.isNotBlank() },
+    )
 }
 
 /** What happened to each file of a Drive trash request. */
@@ -53,6 +65,9 @@ data class DriveTrashOutcome(
     val failed: List<Pair<DriveFile, String>>,
     /** Confirmed files left alone because a transfer came to depend on them before their turn. */
     val skipped: List<DriveFile> = emptyList(),
+    /** Confirmed files Drive was never asked about, and why (for example the account changed). */
+    val notTried: List<DriveFile> = emptyList(),
+    val notTriedReason: String? = null,
 ) {
     fun message(): String {
         val base = when {
@@ -67,6 +82,11 @@ data class DriveTrashOutcome(
             1 -> "1 left in Drive because a transfer now depends on it"
             else -> "${skipped.size} left in Drive because a transfer now depends on them"
         }
-        return listOfNotNull(base, held).joinToString("; ").ifEmpty { "Nothing was moved to the trash." }
+        val untried = when (notTried.size) {
+            0 -> null
+            1 -> "1 not tried: ${notTriedReason ?: "stopped"}"
+            else -> "${notTried.size} not tried: ${notTriedReason ?: "stopped"}"
+        }
+        return listOfNotNull(base, held, untried).joinToString("; ").ifEmpty { "Nothing was moved to the trash." }
     }
 }

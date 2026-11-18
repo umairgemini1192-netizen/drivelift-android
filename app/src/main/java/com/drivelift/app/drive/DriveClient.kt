@@ -108,10 +108,13 @@ interface DriveFolders {
         throw IOException("Video playback is not available")
 
     /**
-     * Moves one file to Google Drive's trash for the connected account (user-directed, issue
-     * #36). Recoverable from Drive's trash; never a permanent delete.
+     * Moves one file to Google Drive's trash as [account], the account that listed the file and
+     * whose confirmation the user gave (user-directed, issue #36). Recoverable from Drive's trash;
+     * never a permanent delete. Throws [AccountChangedException], without sending anything, when
+     * the connected account is no longer [account] or Google hands out a token for another one.
      */
-    suspend fun moveToTrash(fileId: String): Unit = throw IOException("Moving to the trash is not available")
+    suspend fun moveToTrash(fileId: String, account: String): Unit =
+        throw IOException("Moving to the trash is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -144,13 +147,41 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
     }
 
-    private suspend fun <T> execute(request: () -> Request.Builder, handle: (Response) -> T): T {
-        var token = token()
+    /**
+     * A token for exactly [account], for a change the user confirmed while [account] was
+     * connected. Refused when the saved pin has moved to another account since, and every new
+     * token is checked with Drive to belong to [account] before it is used, so neither a switch
+     * nor a token refresh can carry the change to another identity.
+     */
+    private suspend fun tokenFor(account: String): String {
+        if (!account.equals(prefs.accountEmail, ignoreCase = true)) throw AccountChangedException()
+        val token = try {
+            DriveAuth.tokenOrNull(context, account) ?: throw AuthRequiredException()
+        } catch (e: ApiException) {
+            throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
+        }
+        val owner = provenTokens[token] ?: about(token).email.also { provenTokens[token] = it }
+        if (!owner.equals(account, ignoreCase = true)) throw AccountChangedException()
+        return token
+    }
+
+    /** Tokens already checked with Drive, and the account each belongs to. */
+    private val provenTokens = java.util.Collections.synchronizedMap(HashMap<String, String>())
+
+    private suspend fun <T> execute(
+        request: () -> Request.Builder,
+        /** Set for a confirmed change bound to one account; see [tokenFor]. */
+        account: String? = null,
+        handle: (Response) -> T,
+    ): T {
+        val nextToken: suspend () -> String = { if (account != null) tokenFor(account) else token() }
+        var token = nextToken()
         var response = send(request, token)
         if (response.code == 401) {
             response.close()
             DriveAuth.invalidate(context, token)
-            token = token()
+            provenTokens.remove(token)
+            token = nextToken()
             response = send(request, token)
             if (response.code == 401) {
                 response.close()
@@ -466,10 +497,10 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         }
     }
 
-    override suspend fun moveToTrash(fileId: String) {
+    override suspend fun moveToTrash(fileId: String, account: String) {
         // Unlike cleanup of a bad copy, a file that is already gone is reported, not ignored.
         val body = JSONObject().put("trashed", true).toString().toRequestBody(JSON)
-        execute({ Request.Builder().url("$API/files/$fileId").patch(body) }) { r ->
+        execute({ Request.Builder().url("$API/files/$fileId").patch(body) }, account = account) { r ->
             if (!r.isSuccessful) fail(r)
         }
     }

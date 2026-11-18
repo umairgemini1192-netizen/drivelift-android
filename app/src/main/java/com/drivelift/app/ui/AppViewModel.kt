@@ -136,13 +136,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { graph.media.refresh() }
     }
 
+    /**
+     * Work that belongs to the connected account and blocks switching to another one: transfers
+     * that can still call Drive, and a confirmed Drive trash batch that is still running.
+     */
+    suspend fun accountSwitchBlockers(): Int =
+        dao.count(ACCOUNT_BOUND_STATUSES) + if (driveTrashRun.value?.working == true) 1 else 0
+
     /** Account this session has a working authorization for. Null until a connection succeeds. */
     private var provenEmail: String? = null
 
     private val connector = AccountConnector(
         pin = prefs,
         identify = { token -> drive.about(token) },
-        openTransfers = { dao.count(ACCOUNT_BOUND_STATUSES) },
+        // A running Drive trash batch belongs to the account it was confirmed for, so it blocks a
+        // switch the same way transfers do (issue #36).
+        openTransfers = { accountSwitchBlockers() },
         forgetDestinations = {
             graph.db.presets().clear()
             drive.clearPreviewCache()
@@ -221,8 +230,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is ConnectOutcome.SwitchRefused -> {
                 settleUnchanged()
                 messages.emit(
-                    "Still using ${outcome.current}. Finish, cancel or clear its transfers " +
-                        "before switching to ${outcome.requested}."
+                    "Still using ${outcome.current}. Finish, cancel or clear its transfers, and let a " +
+                        "Drive trash finish, before switching to ${outcome.requested}."
                 )
             }
         }
@@ -305,6 +314,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     suspend fun verifiedForRemoval(limit: Int): List<String> = graph.transfers.verifiedForRemoval(limit)
+
+    /** The removal request built from [verifiedForRemoval] was answered, cancelled or not shown. */
+    fun removalFinished() {
+        viewModelScope.launch { graph.transfers.removalFinished() }
+    }
 
     /**
      * The exact files in [uris] that are still VERIFIED, with name and size, looked up by their
@@ -443,9 +457,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
-    /** Works out a user-directed Drive trash for [files] (issue #36). Nothing is changed. */
+    /**
+     * Works out a user-directed Drive trash for [files] (issue #36). Nothing is changed. The plan
+     * records the connected account; the batch runs for that account only.
+     */
     suspend fun planDriveTrash(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashPlan =
-        com.drivelift.app.data.planDriveTrash(files, transferRowsFor(files))
+        com.drivelift.app.data.planDriveTrash(files, transferRowsFor(files), prefs.accountEmail)
 
     /** A confirmed Drive trash batch: running, then its outcome until the screen applies it. */
     data class DriveTrashRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveTrashOutcome? = null)
@@ -456,11 +473,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * Runs a confirmed Drive trash batch in the view model's scope, so a rotation or screen
      * change does not cancel it halfway. The screen observes [driveTrashRun] for the outcome.
      */
-    fun startDriveTrash(files: List<com.drivelift.app.drive.DriveFile>) {
+    fun startDriveTrash(plan: com.drivelift.app.data.DriveTrashPlan) {
         if (driveTrashRun.value?.working == true) return
         driveTrashRun.value = DriveTrashRun(working = true)
         viewModelScope.launch {
-            val outcome = trashDriveFiles(files)
+            val outcome = trashDriveFiles(plan.eligible, plan.account)
             driveTrashRun.value = DriveTrashRun(working = false, outcome = outcome)
             messages.emit(outcome.message())
         }
@@ -472,33 +489,59 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * Moves exactly [files] to Google Drive's trash, one call per file, and reports each result.
-     * Stops at an authorization problem so the rest are not tried with a failing account.
+     * Moves exactly [files] to Google Drive's trash as [account], one call per file, and reports
+     * each result. For each file, in this order:
+     * 1. its copy is reserved in the [com.drivelift.app.transfer.DriveCopyFence], unless an open
+     *    phone-removal request relies on it (then it is left alone);
+     * 2. transfers are read again: a file a transfer now depends on is left alone;
+     * 3. the connected account must still be [account], or this and the remaining files are not
+     *    tried; Drive is asked with a token proven to belong to [account];
+     * 4. a row verified meanwhile is sent back to be checked, and only then is the copy released.
+     * While the copy is reserved no removal request can include a file that relies on it, and the
+     * verifier cannot mark it VERIFIED. Stops at an authorization problem.
      */
-    suspend fun trashDriveFiles(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashOutcome {
+    suspend fun trashDriveFiles(
+        files: List<com.drivelift.app.drive.DriveFile>,
+        account: String?,
+    ): com.drivelift.app.data.DriveTrashOutcome {
         val trashed = mutableListOf<com.drivelift.app.drive.DriveFile>()
         val failed = mutableListOf<Pair<com.drivelift.app.drive.DriveFile, String>>()
         val skipped = mutableListOf<com.drivelift.app.drive.DriveFile>()
+        val fence = graph.driveCopyFence
+        fun stop(from: Int, reason: String) =
+            com.drivelift.app.data.DriveTrashOutcome(trashed, failed, skipped, files.drop(from), reason)
+        if (account.isNullOrBlank()) return stop(0, NOT_CONNECTED)
         for ((i, file) in files.withIndex()) {
-            // Checked again right before the change: a transfer may have come to depend on this
-            // file since the confirmation was shown (for example its upload id was just recorded).
-            if (com.drivelift.app.data.transferHolds(file, transferRowsFor(listOf(file)))) {
+            if (!account.equals(prefs.accountEmail, ignoreCase = true)) return stop(i, ACCOUNT_CHANGED)
+            if (!fence.beginTrash(file.id)) {
                 skipped += file
                 continue
             }
+            var trashedNow = false
             try {
-                driveFolders.moveToTrash(file.id)
+                // Checked again right before the change: a transfer may have come to depend on this
+                // file since the confirmation was shown (for example its upload id was just recorded).
+                if (com.drivelift.app.data.transferHolds(file, transferRowsFor(listOf(file)))) {
+                    skipped += file
+                    continue
+                }
+                driveFolders.moveToTrash(file.id, account)
+                trashedNow = true
                 trashed += file
                 // A check that read this copy just before it was trashed could have marked it
                 // verified meanwhile; send any such row back so the verifier sees the trash.
                 if (graph.db.transfers().recheckTrashedCopy(file.id) > 0) graph.transfers.kickVerify()
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
+            } catch (e: com.drivelift.app.drive.AccountChangedException) {
+                return stop(i, ACCOUNT_CHANGED)
             } catch (e: com.drivelift.app.drive.AuthRequiredException) {
                 files.drop(i).forEach { failed += it to "Google Drive authorization expired. Reconnect and try again." }
                 break
             } catch (e: Exception) {
                 failed += file to com.drivelift.app.transfer.describeError(e)
+            } finally {
+                fence.endTrash(file.id, trashedNow)
             }
         }
         return com.drivelift.app.data.DriveTrashOutcome(trashed, failed, skipped)
@@ -508,5 +551,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         const val TAB_PHONE = 0
         const val TAB_DRIVE = 1
         const val TAB_TRANSFERS = 2
+        const val ACCOUNT_CHANGED =
+            "the connected Google account changed. Reconnect the account you confirmed with and try again."
+        const val NOT_CONNECTED = "Google Drive is not connected. Connect and try again."
     }
 }
