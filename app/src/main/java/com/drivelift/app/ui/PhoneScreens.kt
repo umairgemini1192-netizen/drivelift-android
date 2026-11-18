@@ -85,6 +85,9 @@ import coil.request.ImageRequest
 import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaFolder
 import com.drivelift.app.data.MediaItem
+import com.drivelift.app.data.SortField
+import com.drivelift.app.data.matchesQuery
+import com.drivelift.app.data.sortedFiles
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -285,18 +288,33 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
 
     val items = remember(media, bucketId) { media.filter { it.bucketId == bucketId } }
-    val entries = remember(items) {
-        val zone = ZoneId.systemDefault()
-        val out = ArrayList<GridEntry>(items.size + 32)
+    val sort by vm.phoneSort.collectAsStateWithLifecycle()
+    var query by rememberSaveable(bucketId) { mutableStateOf("") }
+    // The files on screen: those whose name matches the search, in the chosen order. Selection,
+    // range drag and Select all act on these; the folder itself is [items].
+    val shown = remember(items, query, sort) {
+        sortedFiles(
+            items.filter { matchesQuery(it.name, query) }, sort,
+            name = { it.name }, id = { it.id.toString() }, date = { it.dateTakenMs }, size = { it.size },
+        )
+    }
+    val entries = remember(shown, sort) {
+        val out = ArrayList<GridEntry>(shown.size + 32)
         var index = 0
-        items.groupBy { Instant.ofEpochMilli(it.dateTakenMs).atZone(zone).toLocalDate() }
-            .forEach { (day, list) ->
-                out += GridEntry.Header(day, day.format(DAY_FORMAT), list.map { it.id })
-                list.forEach { out += GridEntry.Cell(it, index++) }
-            }
+        if (sort.field == SortField.DATE) {
+            // Day headers only make sense in date order; the days follow the chosen direction.
+            val zone = ZoneId.systemDefault()
+            shown.groupBy { Instant.ofEpochMilli(it.dateTakenMs).atZone(zone).toLocalDate() }
+                .forEach { (day, list) ->
+                    out += GridEntry.Header(day, day.format(DAY_FORMAT), list.map { it.id })
+                    list.forEach { out += GridEntry.Cell(it, index++) }
+                }
+        } else {
+            shown.forEach { out += GridEntry.Cell(it, index++) }
+        }
         out
     }
-    val indexById = remember(items) { HashMap<Long, Int>().apply { items.forEachIndexed { i, m -> put(m.id, i) } } }
+    val indexById = remember(shown) { HashMap<Long, Int>().apply { shown.forEachIndexed { i, m -> put(m.id, i) } } }
     val selectedBytes = remember(selection, items) { items.sumOf { if (it.id in selection) it.size else 0L } }
     val title = items.firstOrNull()?.bucketName ?: "Folder"
 
@@ -371,7 +389,7 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                     }
                 },
                 actions = {
-                    val all = selection.size == items.size && items.isNotEmpty()
+                    val all = shown.isNotEmpty() && shown.all { it.id in selection }
                     IconButton(
                         onClick = vm::cycleGridDensity,
                         modifier = Modifier.size(Tokens.TouchTarget),
@@ -381,12 +399,17 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                             contentDescription = "Thumbnail size: ${gridDensity.label}",
                         )
                     }
-                    TextButton(onClick = { vm.setSelected(items.map { it.id }, !all) }) {
+                    TextButton(onClick = { vm.setSelected(shown.map { it.id }, !all) }) {
                         Text(if (all) "Select none" else "Select all")
                     }
                 },
             )
 
+            FolderFindBar(query = query, onQueryChange = { query = it }, sort = sort, onSortChange = vm::setPhoneSort)
+
+            if (shown.isEmpty() && query.isNotBlank()) {
+                NoSearchMatches(query, Modifier.weight(1f).fillMaxWidth())
+            } else
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = gridDensity.phoneMinCell),
                 state = gridState,
@@ -408,10 +431,10 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         indexOfKey = { key -> (key as? Long)?.let(indexById::get) },
                         current = { vm.selection.value },
                         guard = longPress,
-                        idAt = { items[it].id },
+                        idAt = { shown[it].id },
                         onRange = { base, from, to ->
                             val range = if (from <= to) from..to else to..from
-                            vm.selection.value = base + range.map { items[it].id }
+                            vm.selection.value = base + range.map { shown[it].id }
                         },
                     ),
             ) {

@@ -63,6 +63,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
+import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
@@ -618,6 +619,128 @@ class ScreenshotTest {
                     "The tab bar steps aside while selecting",
                     compose.onAllNodesWithText("Transfers").fetchSemanticsNodes().isEmpty(),
                 )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Top-left corner of the first node described as [name], for comparing grid order. */
+    private fun cornerOf(name: String): Pair<Float, Float> {
+        val b = compose.onAllNodesWithContentDescription(name).onFirst().fetchSemanticsNode().boundsInRoot
+        return b.top to b.left
+    }
+
+    private fun comesBefore(first: String, second: String): Boolean {
+        val (t1, l1) = cornerOf(first)
+        val (t2, l2) = cornerOf(second)
+        return t1 < t2 || (t1 == t2 && l1 < l2)
+    }
+
+    /** Opens the sort menu of the folder shown and picks [label]. */
+    private fun chooseSort(label: String) {
+        compose.onNodeWithContentDescription("Sort:", substring = true).performClick()
+        pump(DIALOG_FRAMES)
+        tap(label)
+        pump(DIALOG_FRAMES)
+    }
+
+    /** Issue #36: a Phone folder searched by name and sorted Z to A, without day headers. */
+    @Test
+    fun phoneFolderSearchAndSort() {
+        grantMedia()
+        eachVariant(
+            "phone-folder-search", expect = "Camera", connected = true,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                chooseSort("Name, Z to A")
+                compose.onNodeWithTag("folder-search").performTextReplacement("img_000")
+                pump(DIALOG_FRAMES)
+                assertTrue(
+                    "A name search leaves out files that do not match",
+                    compose.onAllNodesWithContentDescription("VID_0003.mp4").fetchSemanticsNodes().isEmpty(),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #36: the sort menu of a Drive folder, the current choice marked. */
+    @Test
+    fun driveSortMenu() {
+        grantMedia()
+        eachVariant(
+            "drive-sort-menu", expect = "Size, largest first", connected = true, tab = AppViewModel.TAB_DRIVE,
+            overlay = true,
+            act = {
+                waitFor("Scan_0042.jpg")
+                compose.onNodeWithContentDescription("Sort:", substring = true).performClick()
+                pump(DIALOG_FRAMES)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Issue #36: a Drive search with no match says so instead of showing an empty folder. */
+    @Test
+    fun driveSearchNoMatch() {
+        grantMedia()
+        eachVariant(
+            "drive-search-empty", expect = "Nothing in this folder matches “beach”.", connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Scan_0042.jpg")
+                compose.onNodeWithTag("folder-search").performTextReplacement("beach")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #36: sort choices order the files as labelled and are kept per tab; a search narrows
+     * the listing and Select all then selects only the files shown.
+     */
+    @Test
+    fun sortAndSearchActOnTheFilesShown() {
+        grantMedia()
+        eachVariant(
+            "sort-search-flow", expect = null, connected = true, capture = false,
+            act = {
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                // Default: newest first, as before.
+                assertEquals(com.drivelift.app.data.FileSort.DATE_NEWEST, currentVm!!.phoneSort.value)
+                chooseSort("Name, A to Z")
+                assertTrue(comesBefore("IMG_0001.jpg", "IMG_0002.jpg"))
+                chooseSort("Name, Z to A")
+                assertTrue(comesBefore("IMG_0002.jpg", "IMG_0001.jpg"))
+                assertEquals(
+                    "The choice is saved",
+                    com.drivelift.app.data.FileSort.NAME_ZA,
+                    com.drivelift.app.data.Prefs(app).phoneSort.value,
+                )
+                compose.onNodeWithTag("folder-search").performTextReplacement("IMG_0001")
+                pump(DIALOG_FRAMES)
+                tap("Select all")
+                waitFor("1 selected")
+                currentVm!!.clearSelection()
+                pump(4)
+                compose.onNodeWithContentDescription("Clear search").performClick()
+                pump(DIALOG_FRAMES)
+                assertTrue(compose.onAllNodesWithContentDescription("VID_0003.mp4").fetchSemanticsNodes().isNotEmpty())
+                // Restore the default so later variants start the same way.
+                chooseSort("Date, newest first")
+
+                // Drive keeps its own choice: by name until changed.
+                currentVm!!.tab.value = AppViewModel.TAB_DRIVE
+                waitFor("Scan_0042.jpg")
+                assertEquals(com.drivelift.app.data.FileSort.NAME_AZ, currentVm!!.driveSort.value)
+                chooseSort("Size, largest first")
+                assertTrue(comesBefore("Trip to the coast.mp4", "Sunset_0019.jpg"))
+                assertTrue(comesBefore("Sunset_0019.jpg", "Packing list.pdf"))
+                compose.onNodeWithTag("folder-search").performTextReplacement("scan")
+                pump(DIALOG_FRAMES)
+                assertTrue(compose.onAllNodesWithContentDescription("Sunset_0019.jpg").fetchSemanticsNodes().isEmpty())
+                assertTrue(compose.onAllNodesWithContentDescription("Scan_0042.jpg").fetchSemanticsNodes().isNotEmpty())
+                chooseSort("Name, A to Z")
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -1407,7 +1530,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.18 (build 17)",
+            "build-id", expect = "DriveLift 1.0.0-preview.20 (build 19)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
