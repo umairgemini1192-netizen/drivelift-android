@@ -125,6 +125,7 @@ internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): 
  * full first, playback pauses when the app leaves the screen, and the player is released when
  * the viewer closes.
  */
+@OptIn(UnstableApi::class)
 @Composable
 internal fun VideoPreviewContent(
     vm: AppViewModel,
@@ -157,7 +158,6 @@ internal fun VideoPreviewContent(
         val current = stream
         if (current != null && problem == null) {
             val source = remember(current) {
-                @OptIn(UnstableApi::class)
                 VideoSource(file.id, file.name, current.url, OkHttpDataSource.Factory(current.callFactory), local = false)
             }
             VideoPlayer(vm, source, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
