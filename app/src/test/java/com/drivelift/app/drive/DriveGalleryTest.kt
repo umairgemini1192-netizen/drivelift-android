@@ -75,7 +75,10 @@ class DriveGalleryTest {
         assertArrayEquals(aliceBytes, cache.getBytes("alice@example.com", "file-1", "thumb_512"))
         assertArrayEquals(bobBytes, cache.getBytes("bob@example.com", "file-1", "thumb_512"))
 
-        // Exceeding 10 bytes evicts the oldest entry (alice).
+        // Exceeding 10 bytes evicts the oldest entry (alice). The ages are set explicitly: two files
+        // written in the same millisecond have equal modification times on a fast machine.
+        cache.fileFor("alice@example.com", "file-1", "thumb_512").setLastModified(1_000_000_000_000L)
+        cache.fileFor("bob@example.com", "file-1", "thumb_512").setLastModified(1_000_000_060_000L)
         val carolBytes = byteArrayOf(10, 11, 12, 13, 14, 15, 16)
         cache.putBytes("carol@example.com", "file-1", "thumb_512", carolBytes)
         assertNull(cache.getBytes("alice@example.com", "file-1", "thumb_512"))
