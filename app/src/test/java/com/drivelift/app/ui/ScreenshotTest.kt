@@ -776,6 +776,35 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /** Settings names who confirms removal according to Media management access (issue #25 follow-up). */
+    @Test
+    fun settingsRemovalWordingFollowsMediaManagementAccess() {
+        grantMedia()
+        for (granted in listOf(false, true)) {
+            Graph.get(app).canManageMedia = { granted }
+            eachVariant(
+                "settings-wording-$granted", expect = null, tab = AppViewModel.TAB_TRANSFERS, capture = false,
+                act = {
+                    waitFor("Nothing in transit")
+                    compose.onNodeWithContentDescription("Settings").performClick()
+                    waitFor("Offer removal when verified")
+                    compose.onNodeWithText(autoRemoveDescription(granted)).assertExists()
+                    assertTrue(
+                        "The other access state's wording must not show",
+                        compose.onAllNodesWithText(autoRemoveDescription(!granted)).fetchSemanticsNodes().isEmpty(),
+                    )
+                    // Settings is a plain scrolling column, so the About note is composed without
+                    // scrolling. (Scrolling animates, and the frozen test clock would never finish it.)
+                    compose.onNodeWithText(REMOVAL_ABOUT).assertExists()
+                    assertTrue(
+                        "No text may claim Android always confirms",
+                        compose.onAllNodesWithText("always asks Android", substring = true).fetchSemanticsNodes().isEmpty(),
+                    )
+                },
+            ) { vm -> AppRoot(vm) }
+        }
+    }
+
     @Test
     fun lockScreen() {
         eachVariant("lock-screen", expect = "DriveLift is locked") { _ ->

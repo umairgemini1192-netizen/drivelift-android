@@ -111,41 +111,100 @@ internal fun frameIndexAt(position: Long, fps: Double, afterSeek: Boolean = true
 private const val FRAME_EPSILON = 1e-9
 
 /**
- * Keeps frame steps bounded and in order. At most one step seek runs at a time; taps that arrive
- * while it runs only move the pending target, and each step counts from the newest target, so
- * rapid taps add up to the right frame without queueing one network or decode job per tap.
+ * Keeps frame steps bounded, in order and honestly measured.
+ *
+ * - At most one step seek runs at a time. Taps made while it runs only move the pending target,
+ *   counted from the newest target, so rapid taps add up to the right frame and no tap starts its
+ *   own network or decode job.
+ * - A step is complete only when the player reports a rendered frame at that step's target
+ *   ([rendered] with the rendered position). A late frame from an older seek does not match and
+ *   is ignored, so it can never release a newer request.
+ * - [timedOut] is separate recovery for a seek that never shows a frame. It acts only for the
+ *   generation it was started for; any later request, [clear] or completion makes it a no-op.
+ * - Each request keeps the time of its first and last tap, so the log reports how long that
+ *   request's own taps waited for its frame, and says when a request was superseded or timed out.
  */
-internal class StepSeekQueue {
-    var inFlight: Long? = null
-        private set
-    var pending: Long? = null
-        private set
-
-    /** The newest step target asked for, or null when no step is running. */
-    val latest: Long? get() = pending ?: inFlight
-
-    /** Returns the target to seek to now, or null when it waits behind the seek in flight. */
-    fun request(target: Long): Long? =
-        if (inFlight == null) {
-            inFlight = target
-            target
-        } else {
-            pending = target
-            null
-        }
-
-    /** The running seek showed its frame (or gave up). Returns the next target to seek to, if any. */
-    fun completed(): Long? {
-        val next = pending
-        pending = null
-        inFlight = next
-        return next
+internal class StepController(
+    private val now: () -> Long,
+    /** Starts the seek for [target]; [generation] identifies the request for its timeout. */
+    private val issue: (target: Long, generation: Int) -> Unit,
+    /** How far a rendered position may be from the target and still be that frame. */
+    private val toleranceMs: () -> Long,
+    private val log: (String) -> Unit = {},
+) {
+    private class Request(val target: Long, val firstTapAt: Long, val lastTapAt: Long, val taps: Int) {
+        var generation = 0
+        var issuedAt = 0L
     }
 
-    /** Another seek (scrub, skip, play) replaces any step still waiting. */
+    private var generation = 0
+    private var inFlight: Request? = null
+    private var pending: Request? = null
+
+    /** The newest step target asked for, or null when no step is running or waiting. */
+    val latest: Long? get() = (pending ?: inFlight)?.target
+
+    /** The target still waiting behind the running seek, if any. */
+    val pendingTarget: Long? get() = pending?.target
+
+    /** The generation of the running seek, or null. */
+    val inFlightGeneration: Int? get() = inFlight?.generation
+
+    /** A tap asked for [target]. Seeks now if nothing runs, otherwise replaces the pending target. */
+    fun tap(target: Long) {
+        val t = now()
+        val waiting = pending
+        if (inFlight == null) {
+            start(Request(target, t, t, 1))
+        } else {
+            // Coalesced: the request keeps the time of its first tap, since that tap waits longest.
+            pending = Request(target, waiting?.firstTapAt ?: t, t, (waiting?.taps ?: 0) + 1)
+        }
+    }
+
+    /** The player rendered a frame at [positionMs] after a seek. */
+    fun rendered(positionMs: Long) {
+        val running = inFlight ?: return
+        if (kotlin.math.abs(positionMs - running.target) > toleranceMs()) return
+        val t = now()
+        log(
+            "step to ${running.target} ms (gen ${running.generation}, ${running.taps} taps): frame shown " +
+                "${t - running.firstTapAt} ms after its first tap, ${t - running.lastTapAt} ms after its last, " +
+                "${t - running.issuedAt} ms after the seek started",
+        )
+        inFlight = null
+        startPending()
+    }
+
+    /** The seek for [forGeneration] has shown no frame in time; stop it holding back the next step. */
+    fun timedOut(forGeneration: Int) {
+        val running = inFlight ?: return
+        if (running.generation != forGeneration) return
+        log("step to ${running.target} ms (gen ${running.generation}) timed out after ${now() - running.issuedAt} ms without a frame")
+        inFlight = null
+        startPending()
+    }
+
+    /** Another seek (scrub, skip, play) replaces any step still running or waiting. */
     fun clear() {
+        inFlight?.let { log("step to ${it.target} ms (gen ${it.generation}) superseded before its frame was shown") }
+        pending?.let { log("waiting step to ${it.target} ms superseded before it started") }
         inFlight = null
         pending = null
+        generation++
+    }
+
+    private fun startPending() {
+        val next = pending ?: return
+        pending = null
+        start(next)
+    }
+
+    private fun start(request: Request) {
+        request.generation = ++generation
+        request.issuedAt = now()
+        inFlight = request
+        issue(request.target, request.generation)
     }
 }
 
