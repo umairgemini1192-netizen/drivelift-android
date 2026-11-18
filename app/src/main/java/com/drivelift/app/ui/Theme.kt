@@ -86,6 +86,13 @@ object GlassPalette {
     /** An unlit dot of the progress gauge, and the track of a progress bar. */
     val Dim = Color(0x24FFFFFF)
 
+    /**
+     * Flat control wells and pills inside a glass panel (rule 3): a plain tint and a thin edge,
+     * no glass effect of their own.
+     */
+    val Well = Color(0x1FFFFFFF)
+    val WellEdge = Color(0x33FFFFFF)
+
     /** Placeholder behind a thumbnail that has not loaded. */
     val Thumb = Color(0x1AFFFFFF)
 

@@ -11,6 +11,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.foundation.layout.padding
@@ -49,7 +50,7 @@ class VideoControlsTest {
         assertEquals("1.25x", speedLabel(1.25f))
         assertEquals("0.5x", speedLabel(0.5f))
 
-        assertEquals("Original  ·  3840x2160  ·  60 fps", qualityLabel(3840, 2160, 59.94f))
+        assertEquals("Original  ·  3840x2160  ·  60 fps", qualityLabel(3840, 2160, 59.94f))
         assertEquals("Original  ·  1920x1080", qualityLabel(1920, 1080, -1f))
         assertEquals("Original quality", qualityLabel(0, 0, 30f))
 
@@ -87,7 +88,7 @@ class VideoControlsTest {
                 }
             }
             pump()
-            compose.onNodeWithText("Original  ·  3840x2160  ·  60 fps").assertExists()
+            compose.onNodeWithText("Original  ·  3840x2160  ·  60 fps").assertExists()
             compose.onNodeWithText("0:30").assertExists()
             compose.onNodeWithText("-1:30").assertExists()
             // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
@@ -141,6 +142,11 @@ class VideoControlsTest {
                     val bounds = node.fetchSemanticsNode().boundsInRoot
                     org.junit.Assert.assertTrue("$label is cut off ($bounds, screen $rootWidth)", bounds.right <= rootWidth + 1f)
                 }
+                // Owner decision #32: the quality line wraps but is never cut short.
+                val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
+                compose.onNodeWithTag("video-quality").fetchSemanticsNode()
+                    .config[androidx.compose.ui.semantics.SemanticsActions.GetTextLayoutResult].action!!(layouts)
+                org.junit.Assert.assertFalse("The quality line must not be cut short", layouts.single().hasVisualOverflow)
             }
         } finally {
             org.robolectric.RuntimeEnvironment.setFontScale(1f)
