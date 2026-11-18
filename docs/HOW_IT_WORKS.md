@@ -120,6 +120,19 @@ prompt, but only while the app can see every photo and every video. If access wa
 covers photos only, videos only or selected items, "not visible" does not mean "gone", so those
 files go to Android's prompt instead.
 
+## Viewing photos and videos on the phone
+
+In a Phone folder, a tap opens a photo or video full screen inside DriveLift, with the same
+viewer as Drive: pinch, pan and double-tap zoom for photos (upright from the EXIF orientation),
+and the same player for videos (Step, speed, skips, frame capture). Files are read through their
+content URI on the phone; no Google account, token or network is involved. Back or Close returns
+to the same folder and scroll position. Photos larger than 32 MB, or in a format the phone cannot
+decode, show a notice with **Open in another app**.
+
+Selecting: hold a thumbnail to select it (hold and drag selects a range); while anything is
+selected, taps add or remove items. **Select all** and **Select day** work as before. With
+TalkBack, a thumbnail's click opens it and its **Select** action selects it.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the

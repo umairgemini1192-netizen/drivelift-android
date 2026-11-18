@@ -4,6 +4,8 @@ import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
@@ -51,20 +53,29 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.CustomAccessibilityAction
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.customActions
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -289,6 +300,18 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
 
     LaunchedEffect(items.isEmpty()) { if (items.isEmpty() && media.isNotEmpty()) onBack() }
 
+    // The photo or video open in the viewer, kept across rotation. The grid stays composed
+    // beneath it, so closing the viewer returns to the same folder and scroll position.
+    var viewingId by rememberSaveable(bucketId) { mutableLongStateOf(NOT_VIEWING) }
+    val viewing = remember(viewingId, items) { items.firstOrNull { it.id == viewingId } }
+    // Set when a long press selected a cell, so the finger lifting from that press does not
+    // also count as a tap on it. Cleared at the start of every touch.
+    val longPress = remember { LongPressGuard() }
+    fun tapCell(item: MediaItem) {
+        if (longPress.consume(item.id)) return
+        if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
+    }
+
     val gridState = rememberLazyGridState()
     val autoScroll = remember { mutableFloatStateOf(0f) }
     val pinchActive = remember { booleanArrayOf(false) }
@@ -301,158 +324,199 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
         }
     }
 
-    Column(Modifier.fillMaxSize()) {
-        TopAppBar(
-            colors = TopAppBarDefaults.topAppBarColors(
-                containerColor = Color.Transparent,
-                scrolledContainerColor = Color.Transparent,
-            ),
-            title = {
-                Column {
-                    Text(
-                        if (selection.isEmpty()) title else "${selection.size} selected",
-                        maxLines = 1, overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        if (selection.isEmpty()) "Tap to select. Hold and drag to select a range."
-                        else formatBytes(context, selectedBytes),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            },
-            navigationIcon = {
-                if (selection.isEmpty()) {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to folders")
-                    }
-                } else {
-                    IconButton(onClick = vm::clearSelection) {
-                        Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
-                    }
-                }
-            },
-            actions = {
-                val all = selection.size == items.size && items.isNotEmpty()
-                IconButton(
-                    onClick = vm::cycleGridDensity,
-                    modifier = Modifier.size(Tokens.TouchTarget),
-                ) {
-                    Icon(
-                        Icons.Outlined.PhotoSizeSelectLarge,
-                        contentDescription = "Thumbnail size: ${gridDensity.label}",
-                    )
-                }
-                TextButton(onClick = { vm.setSelected(items.map { it.id }, !all) }) {
-                    Text(if (all) "Select none" else "Select all")
-                }
-            },
-        )
-
-        LazyVerticalGrid(
-            columns = GridCells.Adaptive(minSize = gridDensity.phoneMinCell),
-            state = gridState,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.GridGap),
-            verticalArrangement = Arrangement.spacedBy(Tokens.GridGap),
-            modifier = Modifier
-                .weight(1f)
-                .testTag("phone-media-grid")
-                .pinchGridDensity(
-                    gridState = gridState,
-                    density = gridDensity,
-                    onDensityChange = vm::setGridDensity,
-                    onPinchStateChange = { pinchActive[0] = it },
-                )
-                .dragSelect(
-                    state = gridState,
-                    isPinching = { pinchActive[0] },
-                    autoScroll = { autoScroll.floatValue = it },
-                    indexOfKey = { key -> (key as? Long)?.let(indexById::get) },
-                    current = { vm.selection.value },
-                    onRange = { base, from, to ->
-                        val range = if (from <= to) from..to else to..from
-                        vm.selection.value = base + range.map { items[it].id }
-                    },
-                ),
+    Box(Modifier.fillMaxSize()) {
+        // While the viewer is open the grid stays composed, so its scroll position is kept, but it
+        // is not drawn and not offered to TalkBack: the viewer sits on the root backdrop alone.
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(if (viewing != null) Modifier.alpha(0f).clearAndSetSemantics {} else Modifier),
         ) {
-            items(
-                entries,
-                key = { e -> when (e) { is GridEntry.Header -> "h${e.day}"; is GridEntry.Cell -> e.item.id } },
-                span = { e -> if (e is GridEntry.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
-                contentType = { e -> if (e is GridEntry.Header) 0 else 1 },
-            ) { entry ->
-                when (entry) {
-                    is GridEntry.Header -> {
-                        val allDay = entry.ids.all { it in selection }
-                        Row(
-                            Modifier.fillMaxWidth().padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Medium),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Text(
-                                "${entry.label}\u00A0\u00A0·\u00A0\u00A0${entry.ids.size}",
-                                style = MaterialTheme.typography.titleSmall,
-                                modifier = Modifier.weight(1f),
-                            )
-                            TextButton(onClick = { vm.setSelected(entry.ids, !allDay) }) {
-                                Text(if (allDay) "Deselect day" else "Select day")
-                            }
+            TopAppBar(
+                colors = TopAppBarDefaults.topAppBarColors(
+                    containerColor = Color.Transparent,
+                    scrolledContainerColor = Color.Transparent,
+                ),
+                title = {
+                    Column {
+                        Text(
+                            if (selection.isEmpty()) title else "${selection.size} selected",
+                            maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            if (selection.isEmpty()) "Tap to open. Hold to select, or hold and drag for a range."
+                            else formatBytes(context, selectedBytes),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                },
+                navigationIcon = {
+                    if (selection.isEmpty()) {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to folders")
+                        }
+                    } else {
+                        IconButton(onClick = vm::clearSelection) {
+                            Icon(Icons.Outlined.Close, contentDescription = "Clear selection")
                         }
                     }
-                    is GridEntry.Cell -> MediaCell(
-                        item = entry.item,
-                        selected = entry.item.id in selection,
-                        tracked = entry.item.uri.toString() in tracked,
-                        onToggle = { vm.toggle(entry.item.id) },
+                },
+                actions = {
+                    val all = selection.size == items.size && items.isNotEmpty()
+                    IconButton(
+                        onClick = vm::cycleGridDensity,
+                        modifier = Modifier.size(Tokens.TouchTarget),
+                    ) {
+                        Icon(
+                            Icons.Outlined.PhotoSizeSelectLarge,
+                            contentDescription = "Thumbnail size: ${gridDensity.label}",
+                        )
+                    }
+                    TextButton(onClick = { vm.setSelected(items.map { it.id }, !all) }) {
+                        Text(if (all) "Select none" else "Select all")
+                    }
+                },
+            )
+
+            LazyVerticalGrid(
+                columns = GridCells.Adaptive(minSize = gridDensity.phoneMinCell),
+                state = gridState,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.GridGap),
+                verticalArrangement = Arrangement.spacedBy(Tokens.GridGap),
+                modifier = Modifier
+                    .weight(1f)
+                    .testTag("phone-media-grid")
+                    .pinchGridDensity(
+                        gridState = gridState,
+                        density = gridDensity,
+                        onDensityChange = vm::setGridDensity,
+                        onPinchStateChange = { pinchActive[0] = it },
                     )
+                    .dragSelect(
+                        state = gridState,
+                        isPinching = { pinchActive[0] },
+                        autoScroll = { autoScroll.floatValue = it },
+                        indexOfKey = { key -> (key as? Long)?.let(indexById::get) },
+                        current = { vm.selection.value },
+                        guard = longPress,
+                        idAt = { items[it].id },
+                        onRange = { base, from, to ->
+                            val range = if (from <= to) from..to else to..from
+                            vm.selection.value = base + range.map { items[it].id }
+                        },
+                    ),
+            ) {
+                items(
+                    entries,
+                    key = { e -> when (e) { is GridEntry.Header -> "h${e.day}"; is GridEntry.Cell -> e.item.id } },
+                    span = { e -> if (e is GridEntry.Header) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+                    contentType = { e -> if (e is GridEntry.Header) 0 else 1 },
+                ) { entry ->
+                    when (entry) {
+                        is GridEntry.Header -> {
+                            val allDay = entry.ids.all { it in selection }
+                            Row(
+                                Modifier.fillMaxWidth().padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Medium),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(
+                                    "${entry.label}\u00A0\u00A0·\u00A0\u00A0${entry.ids.size}",
+                                    style = MaterialTheme.typography.titleSmall,
+                                    modifier = Modifier.weight(1f),
+                                )
+                                TextButton(onClick = { vm.setSelected(entry.ids, !allDay) }) {
+                                    Text(if (allDay) "Deselect day" else "Select day")
+                                }
+                            }
+                        }
+                        is GridEntry.Cell -> MediaCell(
+                            item = entry.item,
+                            selected = entry.item.id in selection,
+                            tracked = entry.item.uri.toString() in tracked,
+                            selecting = selection.isNotEmpty(),
+                            onTap = { tapCell(entry.item) },
+                            onSelect = { vm.setSelected(listOf(entry.item.id), true) },
+                        )
+                    }
+                }
+            }
+
+            if (selection.isNotEmpty()) {
+                Box(Modifier.fillMaxWidth().glassBar()) {
+                    // With large text or a narrow phone the two buttons would squeeze the count into
+                    // a sliver, so the count goes on its own line above them.
+                    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+                    val summary: @Composable () -> Unit = {
+                        Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            formatBytes(context, selectedBytes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (stacked) {
+                        Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
+                            summary()
+                            Row(
+                                Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                            ) {
+                                OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                                Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
+                            }
+                        }
+                    } else {
+                        Row(
+                            Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) { summary() }
+                            OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
+                            Spacer(Modifier.width(Tokens.Small))
+                            Button(onClick = onMove) { Text("Move to Drive") }
+                        }
+                    }
                 }
             }
         }
-
-        if (selection.isNotEmpty()) {
-            Box(Modifier.fillMaxWidth().glassBar()) {
-                // With large text or a narrow phone the two buttons would squeeze the count into
-                // a sliver, so the count goes on its own line above them.
-                val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-                    LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
-                val summary: @Composable () -> Unit = {
-                    Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        formatBytes(context, selectedBytes),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                if (stacked) {
-                    Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-                        summary()
-                        Row(
-                            Modifier.fillMaxWidth().padding(top = Tokens.Small),
-                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                        ) {
-                            OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                            Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
-                        }
-                    }
-                } else {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) { summary() }
-                        OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                        Spacer(Modifier.width(Tokens.Small))
-                        Button(onClick = onMove) { Text("Move to Drive") }
-                    }
-                }
-            }
+        viewing?.let { item ->
+            LocalMediaViewer(vm = vm, item = item, onClose = { viewingId = NOT_VIEWING })
         }
     }
 }
 
+private const val NOT_VIEWING = -1L
+
+/** Remembers which cell a long press selected during the current touch. */
+private class LongPressGuard {
+    var id: Long? = null
+
+    /** True once if [cellId] was just selected by a long press; the tap that ends it is ignored. */
+    fun consume(cellId: Long): Boolean {
+        if (id != cellId) return false
+        id = null
+        return true
+    }
+}
+
+/**
+ * A thumbnail. Without a selection a tap opens it in the viewer; while selecting a tap adds or
+ * removes it. Holding it selects it (handled by the grid's drag select). For accessibility the
+ * cell offers "Open" as its click and "Select" as a custom action, or is a checkbox while selecting.
+ */
 @Composable
-private fun MediaCell(item: MediaItem, selected: Boolean, tracked: Boolean, onToggle: () -> Unit) {
+private fun MediaCell(
+    item: MediaItem,
+    selected: Boolean,
+    tracked: Boolean,
+    selecting: Boolean,
+    onTap: () -> Unit,
+    onSelect: () -> Unit,
+) {
     val inset by animateDpAsState(
         if (selected) Tokens.SelectedInset else Tokens.NoInset, AppMotion.spec(Tokens.Motion.SELECTION), label = "inset",
     )
@@ -460,7 +524,17 @@ private fun MediaCell(item: MediaItem, selected: Boolean, tracked: Boolean, onTo
         Modifier
             .aspectRatio(1f)
             .background(GlassPalette.Thumb)
-            .toggleable(value = selected, role = Role.Checkbox, onValueChange = { onToggle() }),
+            .then(
+                if (selecting) {
+                    Modifier.toggleable(value = selected, role = Role.Checkbox, onValueChange = { onTap() })
+                } else {
+                    Modifier
+                        .clickable(onClickLabel = "Open", role = Role.Button, onClick = onTap)
+                        .semantics {
+                            customActions = listOf(CustomAccessibilityAction("Select") { onSelect(); true })
+                        }
+                },
+            ),
     ) {
         AsyncImage(
             model = ImageRequest.Builder(LocalContext.current).data(item.uri).size(256).build(),
@@ -512,13 +586,23 @@ private fun Modifier.dragSelect(
     autoScroll: (Float) -> Unit,
     indexOfKey: (Any) -> Int?,
     current: () -> Set<Long>,
+    guard: LongPressGuard,
+    idAt: (Int) -> Long,
     onRange: (base: Set<Long>, from: Int, to: Int) -> Unit,
 ): Modifier {
     val lookup by rememberUpdatedState(indexOfKey)
     val range by rememberUpdatedState(onRange)
     val pinchGuard by rememberUpdatedState(isPinching)
     val edge = with(LocalDensity.current) { Tokens.AutoScrollEdge.toPx() }
-    return pointerInput(Unit) {
+    val cellId by rememberUpdatedState(idAt)
+    // Every new touch starts with no long press recorded. The Initial pass runs before the cells
+    // see the touch, so a tap that follows an earlier long press is never ignored by mistake.
+    return pointerInput(guard) {
+        awaitEachGesture {
+            awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            guard.id = null
+        }
+    }.pointerInput(Unit) {
         var anchor: Int? = null
         var base: Set<Long> = emptySet()
         fun indexAt(point: Offset): Int? = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
@@ -532,6 +616,7 @@ private fun Modifier.dragSelect(
                 indexAt(point)?.let {
                     anchor = it
                     base = current()
+                    guard.id = cellId(it)
                     range(base, it, it)
                 }
             },
