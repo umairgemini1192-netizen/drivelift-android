@@ -1089,7 +1089,8 @@ class ScreenshotTest {
     fun favoritesEmpty() {
         grantMedia()
         eachVariant(
-            "favorites-empty", expect = "No favorites yet", connected = true,
+            // The empty-state text is a sentence; act waits for it by substring.
+            "favorites-empty", expect = null, connected = true,
             act = {
                 setFavorites(phoneFolderFavorite(100, "Camera", "DCIM/Camera", added = 1))
                 openFavoritesFromPhone()

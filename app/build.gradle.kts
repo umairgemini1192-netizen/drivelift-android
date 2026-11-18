@@ -55,6 +55,12 @@ android {
             isIncludeAndroidResources = true
             all {
                 it.maxHeapSize = "1536m"
+                // Name each test as it starts and print full failures, so a CI log shows where a
+                // run stopped and why a check failed.
+                it.testLogging {
+                    events("started", "failed")
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                }
                 // Images are written only when asked for: ./gradlew testDebugUnitTest -PrecordScreenshots
                 if (project.hasProperty("recordScreenshots")) {
                     it.systemProperty("roborazzi.test.record", "true")

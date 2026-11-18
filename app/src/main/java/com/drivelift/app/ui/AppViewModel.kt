@@ -100,8 +100,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      * [com.drivelift.app.data.accountHash] of the connected Drive account (the saved pin), or null
      * while Drive is not connected. Drive favorites of any other account are never looked up.
      */
-    val connectedAccountHash: StateFlow<String?> = kotlinx.coroutines.flow.combine(driveConn, account) { conn, _ ->
-        if (conn == DriveConn.CONNECTED) prefs.accountEmail?.takeIf { it.isNotBlank() }?.let { com.drivelift.app.data.accountHash(it) }
+    val connectedAccountHash: StateFlow<String?> = kotlinx.coroutines.flow.combine(driveConn, prefs.accountEmailFlow) { conn, pin ->
+        if (conn == DriveConn.CONNECTED) pin?.takeIf { it.isNotBlank() }?.let { com.drivelift.app.data.accountHash(it) }
         else null
     }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
 

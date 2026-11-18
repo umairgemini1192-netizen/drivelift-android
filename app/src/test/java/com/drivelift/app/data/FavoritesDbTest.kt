@@ -48,7 +48,7 @@ class FavoritesDbTest {
      * opens it with the migrations, the way the app opens it after an update.
      */
     @Test
-    fun updatingFromVersionOneKeepsTheTransferLedgerAndAddsFavorites() = runBlocking {
+    fun updatingFromVersionOneKeepsTheTransferLedgerAndAddsFavorites(): Unit = runBlocking {
         open().apply {
             transfers().insertAll(listOf(transfer))
             presets().upsert(PresetEntity("folder-1", "Camera", "DriveLift Backup / Camera", createdAt = 5))
@@ -79,7 +79,7 @@ class FavoritesDbTest {
     }
 
     @Test
-    fun toggleAddsThenRemovesAndFavoritesSurviveReopening() = runBlocking {
+    fun toggleAddsThenRemovesAndFavoritesSurviveReopening(): Unit = runBlocking {
         val fav = FavoriteEntity(
             id = driveKey(accountHash("me@example.com"), "d1"), kind = FavoriteKind.DRIVE_FILE.name, itemId = "d1",
             accountHash = accountHash("me@example.com"), uri = null, name = "Scan.jpg", mime = "image/jpeg",
@@ -100,7 +100,7 @@ class FavoritesDbTest {
     }
 
     @Test
-    fun theSameDriveIdFromTwoAccountsIsTwoFavorites() = runBlocking {
+    fun theSameDriveIdFromTwoAccountsIsTwoFavorites(): Unit = runBlocking {
         val file = com.drivelift.app.drive.DriveFile("d1", "Scan.jpg", "image/jpeg", 10, null, false)
         open().apply {
             favorites().upsert(favoriteOf(file, accountHash("a@example.com"), "My Drive").copy(addedAt = 1))
