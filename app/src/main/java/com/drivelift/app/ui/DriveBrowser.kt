@@ -11,6 +11,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import com.drivelift.app.data.DriveMovePlan
 import com.drivelift.app.data.DriveTrashPlan
+import com.drivelift.app.data.shownDriveEntries
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.border
 import androidx.compose.material.icons.outlined.RadioButtonUnchecked
@@ -224,6 +225,13 @@ fun DriveBrowser(
     val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
     val here = stack.last()
     val path = stack.joinToString(" / ") { it.name }
+    // Search within this folder and the Drive sort choice (issue #36). The picker lists folders
+    // only and keeps Drive's order.
+    val driveSort by vm.driveSort.collectAsStateWithLifecycle()
+    var query by rememberSaveable(here.id) { mutableStateOf("") }
+    val shown = remember(entries, query, driveSort, pickMode) {
+        entries?.let { if (pickMode) it else shownDriveEntries(it, query, driveSort) }
+    }
 
     LaunchedEffect(accountKey) {
         thumbCache.evictAll()
@@ -399,9 +407,14 @@ fun DriveBrowser(
                 },
                 actions = {
                     if (selecting) {
-                        val files = entries.orEmpty().filterNot { it.isFolder }
+                        // Acts on the files shown only: a file selected earlier and hidden by the
+                        // search stays selected (Clear is the explicit whole-selection reset).
+                        val files = shown.orEmpty().filterNot { it.isFolder }
                         val all = files.isNotEmpty() && files.all { it.id in selectedIds }
-                        TextButton(onClick = { selectedIds = if (all) emptySet() else files.map { it.id }.toSet() }) {
+                        TextButton(onClick = {
+                            val ids = files.map { it.id }
+                            selectedIds = if (all) selectedIds - ids.toSet() else selectedIds + ids
+                        }) {
                             Text(if (all) "Select none" else "Select all")
                         }
                     } else if (conn == DriveConn.CONNECTED) {
@@ -436,6 +449,10 @@ fun DriveBrowser(
                     }
                 },
             )
+
+            if (!pickMode && conn == DriveConn.CONNECTED) {
+                FolderFindBar(query = query, onQueryChange = { query = it }, sort = driveSort, onSortChange = vm::setDriveSort)
+            }
 
             if (!pickMode && thumbAuthExpired && conn == DriveConn.CONNECTED) {
                 val stacked = density.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
@@ -486,7 +503,7 @@ fun DriveBrowser(
             }
 
             Box(Modifier.weight(1f).fillMaxWidth()) {
-                val list = entries
+                val list = shown
                 when {
                     conn != DriveConn.CONNECTED -> DriveStatusRow(
                         conn = conn,
@@ -505,6 +522,7 @@ fun DriveBrowser(
                         OutlinedButton(onClick = { reload++ }) { Text("Try again") }
                     }
                     list == null -> CircularProgressIndicator(Modifier.align(Alignment.Center))
+                    list.isEmpty() && query.isNotBlank() && entries.orEmpty().isNotEmpty() -> NoSearchMatches(query)
                     list.isEmpty() -> Text(
                         if (pickMode) "No folders inside. You can move files right here, or create a folder."
                         else "This folder is empty.",
