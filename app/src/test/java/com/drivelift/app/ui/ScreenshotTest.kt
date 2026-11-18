@@ -602,6 +602,25 @@ class ScreenshotTest {
     private fun driveRow(id: Long, name: String, driveId: String, status: TransferStatus) =
         row(id, name, status).copy(driveFileId = driveId)
 
+    /** Issue #36: two Drive files selected, the mark drawn over their thumbnails; no tab bar. */
+    @Test
+    fun driveSelection() {
+        grantMedia()
+        eachVariant(
+            "drive-selection", expect = "2 selected", connected = true, tab = AppViewModel.TAB_DRIVE,
+            act = {
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Sunset_0019.jpg")
+                compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst().performClick()
+                waitFor("2 selected")
+                assertTrue(
+                    "The tab bar steps aside while selecting",
+                    compose.onAllNodesWithText("Transfers").fetchSemanticsNodes().isEmpty(),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     /** Issue #36: Drive trash confirmation with a file a transfer still depends on left out. */
     @Test
     fun driveTrashConfirmation() {

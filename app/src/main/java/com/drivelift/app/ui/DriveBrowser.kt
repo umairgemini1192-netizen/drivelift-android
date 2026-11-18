@@ -199,6 +199,11 @@ fun DriveBrowser(
     val trashRun by vm.driveTrashRun.collectAsStateWithLifecycle()
     val trashing = trashRun?.working == true
     val selecting = selectedIds.isNotEmpty() && !pickMode
+    // The tab bar steps aside while a file is open or files are selected, as in Phone folders,
+    // so the selection bar has the bottom of the screen to itself.
+    LaunchedEffect(viewerFile != null || selecting) {
+        onViewingFileChange?.invoke(viewerFile != null || selecting)
+    }
     val gridState = rememberLazyGridState()
     val listState = rememberLazyListState()
     val thumbCache = remember { LruCache<String, ImageBitmap>(120) }
@@ -212,9 +217,7 @@ fun DriveBrowser(
         thumbAuthExpired = false
     }
 
-    LaunchedEffect(viewerFile != null) {
-        onViewingFileChange?.invoke(viewerFile != null)
-    }
+
     DisposableEffect(Unit) {
         onDispose { onViewingFileChange?.invoke(false) }
     }
