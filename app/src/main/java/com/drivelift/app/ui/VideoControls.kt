@@ -110,6 +110,128 @@ internal fun frameIndexAt(position: Long, fps: Double, afterSeek: Boolean = true
 
 private const val FRAME_EPSILON = 1e-9
 
+/**
+ * Keeps frame steps bounded, in order and honestly measured.
+ *
+ * - At most one step seek runs at a time. Taps made while it runs only move the pending target,
+ *   counted from the newest target, so rapid taps add up to the right frame and no tap starts its
+ *   own network or decode job.
+ * - A step is complete only when a frame whose own presentation time belongs to that step's
+ *   target is rendered ([rendered] with the frame's timestamp, see [matches]). A late frame from
+ *   an older seek carries the older timestamp, does not match and is ignored, so it can never
+ *   release a newer request.
+ * - When that frame also satisfies the waiting request (taps that came back to the same frame),
+ *   the waiting request is complete too and no redundant seek is made: a seek to the position
+ *   already shown would draw no new frame and only wait for the timeout.
+ * - [timedOut] is separate recovery for a seek that never shows a frame. It acts only for the
+ *   generation it was started for; any later request, [clear] or completion makes it a no-op.
+ * - Each request keeps the time of its first and last tap, so the log reports how long that
+ *   request's own taps waited for its frame, and says when a request was superseded or timed out.
+ */
+internal class StepController(
+    private val now: () -> Long,
+    /** Starts the seek for [target]; [generation] identifies the request for its timeout. */
+    private val issue: (target: Long, generation: Int) -> Unit,
+    /** The nominal duration of one frame, in milliseconds. */
+    private val frameDurationMs: () -> Double,
+    private val log: (String) -> Unit = {},
+) {
+    private class Request(val target: Long, val firstTapAt: Long, val lastTapAt: Long, val taps: Int) {
+        var generation = 0
+        var issuedAt = 0L
+    }
+
+    private var generation = 0
+    private var inFlight: Request? = null
+    private var pending: Request? = null
+
+    /** The newest step target asked for, or null when no step is running or waiting. */
+    val latest: Long? get() = (pending ?: inFlight)?.target
+
+    /** The target still waiting behind the running seek, if any. */
+    val pendingTarget: Long? get() = pending?.target
+
+    /** The generation of the running seek, or null. */
+    val inFlightGeneration: Int? get() = inFlight?.generation
+
+    /** A tap asked for [target]. Seeks now if nothing runs, otherwise replaces the pending target. */
+    fun tap(target: Long) {
+        val t = now()
+        val waiting = pending
+        if (inFlight == null) {
+            start(Request(target, t, t, 1))
+        } else {
+            // Coalesced: the request keeps the time of its first tap, since that tap waits longest.
+            pending = Request(target, waiting?.firstTapAt ?: t, t, (waiting?.taps ?: 0) + 1)
+        }
+    }
+
+    /**
+     * Whether a frame presented at [frameMs] is the frame a seek to [target] shows. The player
+     * shows the first frame at or after the target; a variable-rate file can place it a little
+     * late, so up to three quarters of a nominal frame is accepted. The neighbouring frame is a
+     * whole frame away and never matches, which is what keeps a stale frame from passing.
+     */
+    fun matches(frameMs: Long, target: Long): Boolean =
+        frameMs >= target - 1 && frameMs <= target + (frameDurationMs() * 0.75).toLong()
+
+    /** The player rendered a frame whose presentation time is [frameMs]. */
+    fun rendered(frameMs: Long) {
+        val running = inFlight ?: return
+        if (!matches(frameMs, running.target)) return
+        val t = now()
+        logShown(running, t)
+        inFlight = null
+        val waiting = pending
+        if (waiting != null && matches(frameMs, waiting.target)) {
+            // The taps came back to the frame on screen: done, without seeking to it again.
+            pending = null
+            waiting.generation = ++generation
+            waiting.issuedAt = t
+            logShown(waiting, t)
+            return
+        }
+        startPending()
+    }
+
+    private fun logShown(request: Request, t: Long) = log(
+        "step to ${request.target} ms (gen ${request.generation}, ${request.taps} taps): frame shown " +
+            "${t - request.firstTapAt} ms after its first tap, ${t - request.lastTapAt} ms after its last, " +
+            "${t - request.issuedAt} ms after the seek started",
+    )
+
+    /** The seek for [forGeneration] has shown no frame in time; stop it holding back the next step. */
+    fun timedOut(forGeneration: Int) {
+        val running = inFlight ?: return
+        if (running.generation != forGeneration) return
+        log("step to ${running.target} ms (gen ${running.generation}) timed out after ${now() - running.issuedAt} ms without a frame")
+        inFlight = null
+        startPending()
+    }
+
+    /** Another seek (scrub, skip, play) replaces any step still running or waiting. */
+    fun clear() {
+        inFlight?.let { log("step to ${it.target} ms (gen ${it.generation}) superseded before its frame was shown") }
+        pending?.let { log("waiting step to ${it.target} ms superseded before it started") }
+        inFlight = null
+        pending = null
+        generation++
+    }
+
+    private fun startPending() {
+        val next = pending ?: return
+        pending = null
+        start(next)
+    }
+
+    private fun start(request: Request) {
+        request.generation = ++generation
+        request.issuedAt = now()
+        inFlight = request
+        issue(request.target, request.generation)
+    }
+}
+
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
     return if (duration > 0) target.coerceAtMost(duration) else target
@@ -142,7 +264,7 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
-    /** One frame back (false) or forward (true); offered while the video is paused. */
+    /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
     onStepFrame: (Boolean) -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
@@ -217,28 +339,27 @@ internal fun VideoControls(
                 )
             }
             // Small steps of about one frame, on their own row so the transport buttons keep 48 dp.
-            // Exact for constant frame rate; variable-rate or unknown-rate files can occasionally
-            // repeat or skip a frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
-            if (!state.playing) {
-                Row(
-                    Modifier.fillMaxWidth().testTag("frame-step"),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
+            // Shown while playing too: a step pauses the video first (issue #29). Exact for constant
+            // frame rate; variable-rate or unknown-rate files can occasionally repeat or skip a
+            // frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
+            Row(
+                Modifier.fillMaxWidth().testTag("frame-step"),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { onStepFrame(false) },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
                 ) {
-                    TextButton(
-                        onClick = { onStepFrame(false) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
-                    ) {
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                        Text("Step")
-                    }
-                    TextButton(
-                        onClick = { onStepFrame(true) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
-                    ) {
-                        Text("Step")
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
-                    }
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
+                    Text("Step")
+                }
+                TextButton(
+                    onClick = { onStepFrame(true) },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
+                ) {
+                    Text("Step")
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                 }
             }
             Row(

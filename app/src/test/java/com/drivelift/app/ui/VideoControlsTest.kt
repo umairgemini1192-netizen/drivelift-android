@@ -18,6 +18,7 @@ import androidx.compose.ui.test.performClick
 import androidx.test.core.app.ActivityScenario
 import com.drivelift.app.data.frameFileName
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -224,8 +225,10 @@ class VideoControlsTest {
         playing = true
     }
 
+    /** Issue #29: Step is offered while playing; the tap reaches the player, which pauses first. */
     @Test
-    fun frameStepIsHiddenWhilePlaying() {
+    fun frameStepIsOfferedWhilePlaying() {
+        val steps = mutableListOf<Boolean>()
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
@@ -237,13 +240,199 @@ class VideoControlsTest {
                                 speed = 1f, quality = qualityLabel(1920, 1080, 30f),
                             ),
                             onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                            onStepFrame = { steps += it },
                         )
                     }
                 }
             }
             pump()
-            assertEquals(0, compose.onAllNodesWithText("Step").fetchSemanticsNodes().size)
+            compose.onNodeWithContentDescription("Pause").assertExists()
+            for (label in listOf("Step back about one frame", "Step forward about one frame")) {
+                compose.onNodeWithContentDescription(label)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+            }
+            compose.onNodeWithContentDescription("Step forward about one frame").performClick()
+            compose.onNodeWithContentDescription("Step back about one frame").performClick()
+            pump()
+            assertEquals(listOf(true, false), steps)
         }
+    }
+
+    /** A fake player clock and seek log around [StepController], driven step by step. */
+    private class StepRig(fps: Float = 30f) {
+        var clock = 0L
+        val seeks = mutableListOf<Pair<Long, Int>>()
+        val log = mutableListOf<String>()
+        val controller = StepController(
+            now = { clock },
+            issue = { target, generation -> seeks += target to generation },
+            frameDurationMs = { 1000.0 / fps },
+            log = { log += it },
+        )
+        val fps = fps
+
+        /** One tap as the player makes it: counts from the newest target, else the position. */
+        fun tap(position: Long, forward: Boolean, afterSeek: Boolean) {
+            val queued = controller.latest
+            controller.tap(frameStepTarget(queued ?: position, 10_000, fps, forward, afterSeek = queued != null || afterSeek))
+        }
+
+        fun frameOf(ms: Long) = frameIndexAt(ms, fps.toDouble())
+    }
+
+    /** One step seek at a time; taps meanwhile move the pending target and are never lost. */
+    @Test
+    fun stepSeeksAreBoundedAndRapidTapsAddUp() {
+        val rig = StepRig()
+        // Paused at frame 30 (1000 ms); five quick forward taps before any frame is shown.
+        repeat(5) { rig.tap(1_000, forward = true, afterSeek = false) }
+        assertEquals("only the first tap seeks at once", 1, rig.seeks.size)
+        assertEquals(31L, rig.frameOf(rig.seeks[0].first))
+        assertEquals("the pending target already counts all five taps", 35L, rig.frameOf(rig.controller.latest!!))
+        // The first frame shows: the newest target is sought next, once.
+        rig.controller.rendered(rig.seeks[0].first)
+        assertEquals(2, rig.seeks.size)
+        assertEquals(35L, rig.frameOf(rig.seeks[1].first))
+        rig.controller.rendered(rig.seeks[1].first)
+        assertEquals(null, rig.controller.latest)
+        assertEquals(null, rig.controller.inFlightGeneration)
+    }
+
+    /** Rapid taps in both directions while one seek runs end on the right frame. */
+    @Test
+    fun rapidOppositeTapsLandOnTheNetFrame() {
+        val rig = StepRig()
+        // From frame 30: forward, forward, back, back, forward = frame 31.
+        rig.tap(1_000, forward = true, afterSeek = false)
+        rig.tap(1_000, forward = true, afterSeek = false)
+        rig.tap(1_000, forward = false, afterSeek = false)
+        rig.tap(1_000, forward = false, afterSeek = false)
+        rig.tap(1_000, forward = true, afterSeek = false)
+        assertEquals(31L, rig.frameOf(rig.controller.latest!!))
+        // The taps net out to the frame the first seek shows: one render completes them all,
+        // with no second seek to the same position.
+        rig.controller.rendered(rig.seeks[0].first)
+        assertEquals("one seek in total", 1, rig.seeks.size)
+        assertEquals(31L, rig.frameOf(rig.seeks.single().first))
+        assertEquals(null, rig.controller.latest)
+        assertEquals(null, rig.controller.inFlightGeneration)
+    }
+
+    /**
+     * Review finding 1: after A times out and B starts, A's late frame must not complete B or
+     * start a waiting C. Only B's own frame does.
+     */
+    @Test
+    fun aLateFrameFromATimedOutStepDoesNotReleaseTheNextOne() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = true, afterSeek = false) // A: frame 31
+        val a = rig.seeks.single()
+        rig.tap(1_000, forward = true, afterSeek = false) // B waits: frame 32
+        rig.clock = 2_000
+        rig.controller.timedOut(a.second)
+        assertEquals("the timeout starts B", 2, rig.seeks.size)
+        val b = rig.seeks[1]
+        assertEquals(32L, rig.frameOf(b.first))
+        rig.tap(1_000, forward = true, afterSeek = false) // C waits: frame 33
+        // A's frame arrives late: it is not B's target, so nothing moves.
+        rig.controller.rendered(a.first)
+        assertEquals("A's late frame must not start C", 2, rig.seeks.size)
+        assertEquals(b.second, rig.controller.inFlightGeneration)
+        // A second timeout for A is stale and does nothing either.
+        rig.controller.timedOut(a.second)
+        assertEquals(2, rig.seeks.size)
+        // B's own frame completes B and starts C.
+        rig.controller.rendered(b.first)
+        assertEquals(3, rig.seeks.size)
+        assertEquals(33L, rig.frameOf(rig.seeks[2].first))
+        assertTrue(rig.log.any { "timed out" in it && "gen ${a.second}" in it })
+    }
+
+    /**
+     * Codex finding on 16a43bd: forward, back, forward before the first frame leaves the waiting
+     * target equal to the running one. Its frame completes both; no second seek to the same
+     * position is made (it would draw nothing), and the next tap seeks at once.
+     */
+    @Test
+    fun tapsThatReturnToTheShownFrameNeedNoSecondSeek() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = true, afterSeek = false)
+        rig.tap(1_000, forward = false, afterSeek = false)
+        rig.tap(1_000, forward = true, afterSeek = false)
+        val a = rig.seeks.single()
+        assertEquals(a.first, rig.controller.latest)
+        // The frame at 1033.3 ms (frame 31) is rendered once; no second render is synthesized.
+        rig.controller.rendered(1_033)
+        assertEquals("no redundant seek", 1, rig.seeks.size)
+        assertEquals(null, rig.controller.latest)
+        assertEquals(null, rig.controller.inFlightGeneration)
+        assertEquals(2, rig.log.count { "frame shown" in it })
+        // The next tap is not held back by a timeout.
+        rig.tap(1_033, forward = true, afterSeek = true)
+        assertEquals(2, rig.seeks.size)
+    }
+
+    /** A frame one whole frame away is a different frame: stepping back, A's late frame is rejected. */
+    @Test
+    fun aNeighbouringFrameNeverCompletesAStep() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = false, afterSeek = false) // A: frame 29 (966 ms)
+        val a = rig.seeks.single()
+        rig.tap(1_000, forward = false, afterSeek = false) // B waits: frame 28 (933 ms)
+        rig.controller.timedOut(a.second)
+        val b = rig.seeks[1]
+        assertEquals(28L, rig.frameOf(b.first))
+        // A's frame (966.7 ms) appears late, one frame after B's target.
+        rig.controller.rendered(966)
+        assertEquals(b.second, rig.controller.inFlightGeneration)
+        // A frame slightly late within the same frame slot still counts for B.
+        rig.controller.rendered(b.first + 20)
+        assertEquals(null, rig.controller.inFlightGeneration)
+    }
+
+    /** A scrub or skip clears the steps; old timeouts and late frames then do nothing. */
+    @Test
+    fun clearMakesOldTimeoutsAndFramesInert() {
+        val rig = StepRig()
+        rig.tap(1_000, forward = true, afterSeek = false)
+        val a = rig.seeks.single()
+        rig.tap(1_000, forward = true, afterSeek = false)
+        rig.controller.clear()
+        assertEquals(null, rig.controller.latest)
+        rig.controller.timedOut(a.second)
+        rig.controller.rendered(a.first)
+        assertEquals("nothing is sought after a clear", 1, rig.seeks.size)
+        assertTrue(rig.log.any { "superseded" in it })
+        // A new step starts at once with a new generation, and the old timeout cannot touch it.
+        rig.tap(5_000, forward = true, afterSeek = true)
+        assertEquals(2, rig.seeks.size)
+        val d = rig.seeks[1]
+        assertTrue(d.second != a.second)
+        rig.controller.timedOut(a.second)
+        assertEquals(d.second, rig.controller.inFlightGeneration)
+    }
+
+    /**
+     * Review finding 2: each request is timed from its own taps. A tapped at 0 and shown at 1000
+     * reports 1000 ms, even though B was tapped at 900; B reports from its own tap at 900.
+     */
+    @Test
+    fun stepLatencyIsTimedPerRequest() {
+        val rig = StepRig()
+        rig.clock = 0
+        rig.tap(1_000, forward = true, afterSeek = false) // A
+        rig.clock = 900
+        rig.tap(1_000, forward = true, afterSeek = false) // B, waits behind A
+        rig.clock = 1_000
+        rig.controller.rendered(rig.seeks[0].first)
+        assertTrue(rig.log[0], "frame shown 1000 ms after its first tap" in rig.log[0])
+        assertTrue(rig.log[0], "1000 ms after the seek started" in rig.log[0])
+        rig.clock = 1_300
+        rig.controller.rendered(rig.seeks[1].first)
+        assertTrue(rig.log[1], "frame shown 400 ms after its first tap" in rig.log[1])
+        assertTrue(rig.log[1], "300 ms after the seek started" in rig.log[1])
+        assertEquals(2, rig.log.size)
     }
 
     @Test
