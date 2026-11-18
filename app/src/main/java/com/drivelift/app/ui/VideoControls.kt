@@ -264,6 +264,9 @@ internal data class VideoUiState(
  * back and Step forward as pills, and the transport row with Play/Pause as the one lead element
  * and the other actions in flat wells. Every control keeps a 48 dp touch target.
  */
+// The custom scrubber thumb and track (SliderDefaults.Track with sliderState) are marked
+// experimental in Material 3 1.3; the API used is pinned by the Compose BOM in app/build.gradle.kts.
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 internal fun VideoControls(
     state: VideoUiState,
