@@ -48,6 +48,13 @@ object Tokens {
     val GaugeWidth = 320.dp
     val GaugeHeight = 172.dp
     val ProgressHeight = 6.dp
+
+    /** Video player: the lead Play/Pause disc (rule 6) and the smaller wells around it (rule 7). */
+    val PlayerLead = 56.dp
+    val PlayerWell = 44.dp
+
+    /** Video scrubber thumb, round and joined to the track. */
+    val ScrubberThumb = 20.dp
     val AutoScrollEdge = 72.dp
 
     // Strokes
@@ -63,6 +70,9 @@ object Tokens {
     val BarShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     val ThumbShape = RoundedCornerShape(14.dp)
     val TagShape = RoundedCornerShape(4.dp)
+
+    /** Capsule pills for compact controls (speed, Fit, Step). */
+    val PillShape = RoundedCornerShape(percent = 50)
     val SelectedCorner = 8.dp
 
     /** At this font scale and above, a row with text beside a button stacks them instead. */

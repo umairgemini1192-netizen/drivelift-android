@@ -738,7 +738,7 @@ class ScreenshotTest {
 
     @Test
     fun videoControls() {
-        eachVariant("video-controls", expect = "Original  ·  3840x2160  ·  60 fps") { _ ->
+        eachVariant("video-controls", expect = "Original  ·  3840x2160  ·  60 fps") { _ ->
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 VideoControls(
                     state = VideoUiState(
