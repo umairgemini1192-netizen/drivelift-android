@@ -82,6 +82,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.zIndex
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
@@ -752,13 +753,17 @@ private fun DriveMediaGridCard(
         onLongClickLabel = "Select",
     ) {
         Box(Modifier.fillMaxSize().background(GlassPalette.Thumb)) {
+            // Drawn above the thumbnail and captions (zIndex), so a selected photo always shows it.
             if (selected == true) {
-                Box(Modifier.fillMaxSize().border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary, Tokens.ThumbShape))
+                Box(
+                    Modifier.fillMaxSize().zIndex(1f)
+                        .border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary, Tokens.ThumbShape),
+                )
                 Icon(
                     Icons.Outlined.CheckCircle,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onPrimary,
-                    modifier = Modifier.align(Alignment.TopStart).padding(Tokens.Snug).size(Tokens.Icon)
+                    modifier = Modifier.align(Alignment.TopStart).zIndex(1f).padding(Tokens.Snug).size(Tokens.Icon)
                         .background(MaterialTheme.colorScheme.primary, CircleShape),
                 )
             }
