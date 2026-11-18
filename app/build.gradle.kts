@@ -55,6 +55,11 @@ android {
             isIncludeAndroidResources = true
             all {
                 it.maxHeapSize = "1536m"
+                // Each test is named in the CI log as it starts and ends, so a test that stalls
+                // until the job times out (no report is uploaded then) can still be identified.
+                it.testLogging {
+                    events("started", "passed", "failed", "skipped")
+                }
                 // Images are written only when asked for: ./gradlew testDebugUnitTest -PrecordScreenshots
                 if (project.hasProperty("recordScreenshots")) {
                     it.systemProperty("roborazzi.test.record", "true")

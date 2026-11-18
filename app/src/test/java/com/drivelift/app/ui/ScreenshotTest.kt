@@ -1902,13 +1902,16 @@ class ScreenshotTest {
         val release = CountDownLatch(1)
         val original = Graph.get(app).openOriginalStream
         Graph.get(app).openOriginalStream = { context, uri ->
-            release.await()
+            release.await(10, java.util.concurrent.TimeUnit.SECONDS)
             original(context, uri)
         }
-        vm.startDuplicateScan()
-        assertTrue(vm.duplicateScan.value is AppViewModel.DuplicateScan.Running)
-        vm.cancelDuplicateScan()
-        release.countDown()
+        try {
+            vm.startDuplicateScan()
+            assertTrue(vm.duplicateScan.value is AppViewModel.DuplicateScan.Running)
+            vm.cancelDuplicateScan()
+        } finally {
+            release.countDown()
+        }
         pump(12)
         assertEquals(AppViewModel.DuplicateScan.Idle, vm.duplicateScan.value)
         assertTrue(vm.duplicateGroups.value.isEmpty())
