@@ -44,8 +44,8 @@ fun <T> sortedFiles(
 ): List<T> {
     val byName = compareBy<T, String>(NaturalOrder) { name(it) }.thenBy { name(it) }
     val ordered: Comparator<T> = when (sort.field) {
-        SortField.DATE -> if (sort.descending) compareByDescending<T, Long> { date(it) } else compareBy<T, Long> { date(it) }
-        SortField.SIZE -> (if (sort.descending) compareByDescending<T, Long> { size(it) } else compareBy<T, Long> { size(it) })
+        SortField.DATE -> if (sort.descending) compareByDescending<T> { date(it) } else compareBy<T> { date(it) }
+        SortField.SIZE -> (if (sort.descending) compareByDescending<T> { size(it) } else compareBy<T> { size(it) })
             .then(byName).thenBy { id(it) }
         SortField.NAME -> (if (sort.descending) byName.reversed() else byName).thenBy { id(it) }
     }
