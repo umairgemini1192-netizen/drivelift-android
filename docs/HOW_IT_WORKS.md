@@ -198,6 +198,24 @@ headers only in date order; Drive folders start by name, as before, and keep fol
 Files with the same date keep the listing's own order, and name and size ties fall back to name,
 so the order is the same every time.
 
+## Moving Drive files to another folder
+
+In the Drive tab, select files and tap **Move**. Choose the folder in the Drive folder picker and
+tap **Move here**; DriveLift then names the files, their size and the destination path and asks
+before doing anything. Confirmed files are moved one by one (`files.update` with `addParents` and
+`removeParents`). Each keeps its Drive id, content and history: nothing is copied, deleted or
+changed on the phone. Access can change: Drive applies the new folder's sharing to a moved file
+and drops access it had only through the old folder, so a private file moved into a shared
+folder becomes visible to that folder's people. The confirmation says so. Before each file DriveLift reads where it is in Drive; a file
+that is no longer in the folder it was selected in is reported and left alone, and Drive's answer
+must show it in the new folder and not the old one.
+
+Left in place and named: folders, and files a transfer still depends on (being uploaded or checked,
+or verified and waiting for removal), so a transfer always finds its copy where it put it.
+Choosing the folder the files are already in moves nothing. Like a trash, the batch runs only for
+the account that was connected at confirmation, account switching is refused while it runs, and
+on a change the remaining files are reported as not tried.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the

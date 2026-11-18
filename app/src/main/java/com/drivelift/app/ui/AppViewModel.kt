@@ -142,10 +142,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Work that belongs to the connected account and blocks switching to another one: transfers
-     * that can still call Drive, and a confirmed Drive trash batch that is still running.
+     * that can still call Drive, and a confirmed Drive trash or move batch that is still running.
      */
     suspend fun accountSwitchBlockers(): Int =
-        dao.count(ACCOUNT_BOUND_STATUSES) + if (driveTrashRun.value?.working == true) 1 else 0
+        dao.count(ACCOUNT_BOUND_STATUSES) +
+            (if (driveTrashRun.value?.working == true) 1 else 0) +
+            (if (driveMoveRun.value?.working == true) 1 else 0)
 
     /** Account this session has a working authorization for. Null until a connection succeeds. */
     private var provenEmail: String? = null
@@ -549,6 +551,81 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             }
         }
         return com.drivelift.app.data.DriveTrashOutcome(trashed, failed, skipped)
+    }
+
+    /**
+     * Works out a user-directed move of [files] from [fromFolderId] into [toFolderId] (issue #36).
+     * Nothing is changed. The plan records the connected account; the batch runs for it only.
+     */
+    suspend fun planDriveMove(
+        files: List<com.drivelift.app.drive.DriveFile>,
+        fromFolderId: String,
+        toFolderId: String,
+        toLabel: String,
+    ): com.drivelift.app.data.DriveMovePlan =
+        com.drivelift.app.data.planDriveMove(files, transferRowsFor(files), fromFolderId, toFolderId, toLabel, prefs.accountEmail)
+
+    /** A confirmed Drive move batch: running, then its outcome until the screen applies it. */
+    data class DriveMoveRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveMoveOutcome? = null)
+
+    val driveMoveRun = MutableStateFlow<DriveMoveRun?>(null)
+
+    /** Runs a confirmed move in the view model's scope, so a rotation does not cancel it halfway. */
+    fun startDriveMove(plan: com.drivelift.app.data.DriveMovePlan) {
+        if (driveMoveRun.value?.working == true) return
+        driveMoveRun.value = DriveMoveRun(working = true)
+        viewModelScope.launch {
+            val outcome = moveDriveFiles(plan)
+            driveMoveRun.value = DriveMoveRun(working = false, outcome = outcome)
+            messages.emit(outcome.message())
+        }
+    }
+
+    /** The screen applied the outcome (removed the moved files from the folder it shows). */
+    fun driveMoveApplied() {
+        if (driveMoveRun.value?.working == false) driveMoveRun.value = null
+    }
+
+    /**
+     * Moves exactly the plan's files, one call per file, for the plan's account only, and reports
+     * each result. Before each file the transfers are read again (a file a transfer now depends on
+     * stays put) and the connected account must still be the plan's, or this and the remaining
+     * files are not tried. A file no longer in the source folder is reported, not moved.
+     */
+    suspend fun moveDriveFiles(plan: com.drivelift.app.data.DriveMovePlan): com.drivelift.app.data.DriveMoveOutcome {
+        val files = plan.eligible
+        val account = plan.account
+        val moved = mutableListOf<com.drivelift.app.drive.DriveFile>()
+        val failed = mutableListOf<Pair<com.drivelift.app.drive.DriveFile, String>>()
+        val skipped = mutableListOf<com.drivelift.app.drive.DriveFile>()
+        fun stop(from: Int, reason: String) =
+            com.drivelift.app.data.DriveMoveOutcome(
+                plan.toName, moved, failed, skipped, files.drop(from), reason, plan.fromFolderId, plan.toFolderId,
+            )
+        if (account.isNullOrBlank()) return stop(0, NOT_CONNECTED)
+        for ((i, file) in files.withIndex()) {
+            if (!account.equals(prefs.accountEmail, ignoreCase = true)) return stop(i, ACCOUNT_CHANGED)
+            if (com.drivelift.app.data.transferHolds(file, transferRowsFor(listOf(file)))) {
+                skipped += file
+                continue
+            }
+            try {
+                driveFolders.moveFile(file.id, plan.fromFolderId, plan.toFolderId, account)
+                moved += file
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.drivelift.app.drive.AccountChangedException) {
+                return stop(i, ACCOUNT_CHANGED)
+            } catch (e: com.drivelift.app.drive.AuthRequiredException) {
+                files.drop(i).forEach { failed += it to "Google Drive authorization expired. Reconnect and try again." }
+                break
+            } catch (e: Exception) {
+                failed += file to com.drivelift.app.transfer.describeError(e)
+            }
+        }
+        return com.drivelift.app.data.DriveMoveOutcome(
+            plan.toName, moved, failed, skipped, fromFolderId = plan.fromFolderId, toFolderId = plan.toFolderId,
+        )
     }
 
     companion object {

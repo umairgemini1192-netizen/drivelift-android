@@ -9,6 +9,7 @@ import android.util.LruCache
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import com.drivelift.app.data.DriveMovePlan
 import com.drivelift.app.data.DriveTrashPlan
 import com.drivelift.app.data.shownDriveEntries
 import androidx.compose.foundation.shape.CircleShape
@@ -170,6 +171,8 @@ fun DriveBrowser(
     onClose: (() -> Unit)? = null,
     onPick: ((dest: Destination, pin: Boolean) -> Unit)? = null,
     onViewingFileChange: ((Boolean) -> Unit)? = null,
+    /** False when the picked folder is not a transfer destination (moving Drive files). */
+    offerPreset: Boolean = true,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -199,6 +202,11 @@ fun DriveBrowser(
     // The confirmed batch runs in the view model, so a rotation does not cancel it halfway.
     val trashRun by vm.driveTrashRun.collectAsStateWithLifecycle()
     val trashing = trashRun?.working == true
+    // Moving selected files to another Drive folder: choose the folder, then confirm.
+    var movePicking by rememberSaveable { mutableStateOf(false) }
+    var movePlan by remember { mutableStateOf<DriveMovePlan?>(null) }
+    val moveRun by vm.driveMoveRun.collectAsStateWithLifecycle()
+    val moving = moveRun?.working == true
     val selecting = selectedIds.isNotEmpty() && !pickMode
     // The tab bar steps aside while a file is open or files are selected, as in Phone folders,
     // so the selection bar has the bottom of the screen to itself.
@@ -283,6 +291,20 @@ fun DriveBrowser(
         scope.launch { trashPlan = vm.planDriveTrash(files) }
     }
     fun confirmTrash(plan: DriveTrashPlan) = vm.startDriveTrash(plan)
+    // Applies a finished move to whichever folder is shown now, which may not be the one the move
+    // started in (the screen can be recreated and navigated while the batch runs): moved files
+    // leave the source folder's listing, and the destination's listing is read again.
+    LaunchedEffect(moveRun?.outcome) {
+        val outcome = moveRun?.outcome ?: return@LaunchedEffect
+        movePlan = null
+        val gone = outcome.moved.map { it.id }.toSet()
+        selectedIds = selectedIds - gone
+        when (here.id) {
+            outcome.fromFolderId -> entries = entries?.filterNot { it.id in gone }
+            outcome.toFolderId -> if (gone.isNotEmpty()) reload++
+        }
+        vm.driveMoveApplied()
+    }
     // Applies a finished batch, including one that finished while the screen was recreated.
     LaunchedEffect(trashRun?.outcome) {
         val outcome = trashRun?.outcome ?: return@LaunchedEffect
@@ -298,6 +320,25 @@ fun DriveBrowser(
     BackHandler(enabled = selecting && viewerFile == null) { selectedIds = emptySet() }
     BackHandler(enabled = !selecting && viewerFile == null && (stack.size > 1 || onClose != null)) {
         if (stack.size > 1) stack = stack.dropLast(1) else onClose?.invoke()
+    }
+
+    if (movePicking && selecting) {
+        // The folder picker takes the screen; this folder and its selection are kept underneath.
+        val chosen = entries.orEmpty().filter { it.id in selectedIds }
+        val from = here.id
+        DriveBrowser(
+            vm = vm,
+            pickMode = true,
+            offerPreset = false,
+            onClose = { movePicking = false },
+            onPick = { dest, _ ->
+                movePicking = false
+                dest.folderId?.let { to ->
+                    scope.launch { movePlan = vm.planDriveMove(chosen, from, to, dest.label) }
+                }
+            },
+        )
+        return
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -559,6 +600,10 @@ fun DriveBrowser(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         OutlinedButton(onClick = { selectedIds = emptySet() }) { Text("Clear") }
+                        OutlinedButton(
+                            onClick = { movePicking = true },
+                            enabled = !moving,
+                        ) { Text("Move") }
                         IconButton(onClick = { askTrash(chosen) }, modifier = Modifier.size(Tokens.TouchTarget)) {
                             Icon(
                                 Icons.Outlined.DeleteOutline,
@@ -588,7 +633,7 @@ fun DriveBrowser(
                         Modifier.fillMaxWidth().navigationBarsPadding()
                             .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
                     ) {
-                        Row(
+                        if (offerPreset) Row(
                             Modifier.fillMaxWidth().clickable(role = Role.Checkbox) { pin = !pin },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -633,6 +678,14 @@ fun DriveBrowser(
                     onDelete = { askTrash(listOf(openFile)) },
                 )
             }
+        }
+        movePlan?.let { plan ->
+            DriveMoveDialog(
+                plan = plan,
+                working = moving,
+                onConfirm = { vm.startDriveMove(plan) },
+                onDismiss = { if (!moving) movePlan = null },
+            )
         }
         trashPlan?.let { plan ->
             DriveTrashDialog(
