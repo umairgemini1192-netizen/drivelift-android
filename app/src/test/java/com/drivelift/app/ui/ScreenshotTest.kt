@@ -47,7 +47,6 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
-import androidx.compose.ui.test.performScrollTo
 import com.drivelift.app.data.Prefs
 import androidx.work.WorkManager
 import androidx.work.NetworkType
@@ -729,7 +728,9 @@ class ScreenshotTest {
                         "The other access state's wording must not show",
                         compose.onAllNodesWithText(autoRemoveDescription(!granted)).fetchSemanticsNodes().isEmpty(),
                     )
-                    compose.onNodeWithText(REMOVAL_ABOUT).performScrollTo().assertExists()
+                    // Settings is a plain scrolling column, so the About note is composed without
+                    // scrolling. (Scrolling animates, and the frozen test clock would never finish it.)
+                    compose.onNodeWithText(REMOVAL_ABOUT).assertExists()
                     assertTrue(
                         "No text may claim Android always confirms",
                         compose.onAllNodesWithText("always asks Android", substring = true).fetchSemanticsNodes().isEmpty(),
