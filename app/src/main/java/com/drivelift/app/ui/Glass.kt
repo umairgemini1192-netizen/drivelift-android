@@ -5,6 +5,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -84,6 +85,7 @@ fun Modifier.glassBar(shape: Shape = Tokens.BarShape): Modifier = this
     .border(Tokens.Hairline, Brush.verticalGradient(listOf(GlassPalette.EdgeTop, Color.Transparent)), shape)
 
 /** A glass panel. Pass [onClick] to make the whole panel one touch target. */
+@OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun GlassPanel(
     modifier: Modifier = Modifier,
@@ -91,13 +93,27 @@ fun GlassPanel(
     onClick: (() -> Unit)? = null,
     /** What a tap does, read out by accessibility services when it is not obvious from the content. */
     onClickLabel: String? = null,
+    /** A long press, with its accessibility label (for example selecting the item). */
+    onLongClick: (() -> Unit)? = null,
+    onLongClickLabel: String? = null,
     content: @Composable () -> Unit,
 ) {
     Box(
         modifier
             .clip(shape)
             .glass(shape)
-            .then(if (onClick != null) Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick) else Modifier),
+            .then(
+                when {
+                    onClick != null && onLongClick != null -> Modifier.combinedClickable(
+                        onClickLabel = onClickLabel,
+                        onLongClickLabel = onLongClickLabel,
+                        onLongClick = onLongClick,
+                        onClick = onClick,
+                    )
+                    onClick != null -> Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick)
+                    else -> Modifier
+                },
+            ),
     ) { content() }
 }
 

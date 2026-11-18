@@ -209,6 +209,8 @@ fun DriveFileViewer(
     cachedThumb: ImageBitmap?,
     onClose: () -> Unit,
     onOpenExternally: () -> Unit,
+    /** Moves this file to Google Drive's trash after confirmation (issue #36). */
+    onDelete: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val conn by vm.driveConn.collectAsStateWithLifecycle()
@@ -267,6 +269,8 @@ fun DriveFileViewer(
             externalLabel = "Open in Google Drive",
             onOpenExternally = onOpenExternally,
             modifier = Modifier.align(Alignment.TopCenter),
+            onDelete = onDelete,
+            deleteLabel = "Move to Google Drive's trash",
         )
         }
     }
@@ -286,8 +290,9 @@ internal fun ViewerTopBar(
     externalLabel: String,
     onOpenExternally: () -> Unit,
     modifier: Modifier = Modifier,
-    /** Offered by the Phone viewer only: moves this file to the phone's trash after confirmation. */
+    /** Moves this file to the trash after confirmation (the phone's or Google Drive's). */
     onDelete: (() -> Unit)? = null,
+    deleteLabel: String = "Move to this phone's trash",
 ) {
     GlassPanel(
         modifier = modifier
@@ -328,7 +333,7 @@ internal fun ViewerTopBar(
             }
             if (onDelete != null) {
                 IconButton(onClick = onDelete, modifier = Modifier.size(Tokens.ViewerControl)) {
-                    Icon(Icons.Outlined.DeleteOutline, contentDescription = "Move to this phone's trash")
+                    Icon(Icons.Outlined.DeleteOutline, contentDescription = deleteLabel)
                 }
             }
             IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {

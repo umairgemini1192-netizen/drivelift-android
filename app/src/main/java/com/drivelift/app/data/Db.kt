@@ -87,6 +87,9 @@ interface TransferDao {
     @Query("SELECT * FROM transfers WHERE mediaUri IN (:uris)")
     suspend fun byMediaUris(uris: List<String>): List<TransferEntity>
 
+    @Query("SELECT * FROM transfers WHERE driveFileId IN (:ids)")
+    suspend fun byDriveFileIds(ids: List<String>): List<TransferEntity>
+
     @Query("SELECT COUNT(*) FROM transfers WHERE status IN (:statuses)")
     suspend fun count(statuses: List<String>): Int
 

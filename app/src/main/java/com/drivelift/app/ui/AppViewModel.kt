@@ -435,6 +435,35 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     var lastTrashOutcome: com.drivelift.app.data.TrashOutcome? = null
         private set
 
+    /** Works out a user-directed Drive trash for [files] (issue #36). Nothing is changed. */
+    suspend fun planDriveTrash(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashPlan {
+        val rows = files.map { it.id }.chunked(400).flatMap { graph.db.transfers().byDriveFileIds(it) }
+        return com.drivelift.app.data.planDriveTrash(files, rows)
+    }
+
+    /**
+     * Moves exactly [files] to Google Drive's trash, one call per file, and reports each result.
+     * Stops at an authorization problem so the rest are not tried with a failing account.
+     */
+    suspend fun trashDriveFiles(files: List<com.drivelift.app.drive.DriveFile>): com.drivelift.app.data.DriveTrashOutcome {
+        val trashed = mutableListOf<com.drivelift.app.drive.DriveFile>()
+        val failed = mutableListOf<Pair<com.drivelift.app.drive.DriveFile, String>>()
+        for ((i, file) in files.withIndex()) {
+            try {
+                driveFolders.moveToTrash(file.id)
+                trashed += file
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: com.drivelift.app.drive.AuthRequiredException) {
+                files.drop(i).forEach { failed += it to "Google Drive authorization expired. Reconnect and try again." }
+                break
+            } catch (e: Exception) {
+                failed += file to com.drivelift.app.transfer.describeError(e)
+            }
+        }
+        return com.drivelift.app.data.DriveTrashOutcome(trashed, failed)
+    }
+
     companion object {
         const val TAB_PHONE = 0
         const val TAB_DRIVE = 1

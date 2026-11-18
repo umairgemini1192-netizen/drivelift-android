@@ -106,6 +106,12 @@ interface DriveFolders {
     /** A stream for the in-app video player, authorised for the connected account. */
     suspend fun openVideoStream(file: DriveFile): DriveVideoStream =
         throw IOException("Video playback is not available")
+
+    /**
+     * Moves one file to Google Drive's trash for the connected account (user-directed, issue
+     * #36). Recoverable from Drive's trash; never a permanent delete.
+     */
+    suspend fun moveToTrash(fileId: String): Unit = throw IOException("Moving to the trash is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -457,6 +463,14 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                 !r.isSuccessful -> fail(r)
                 else -> parseFile(JSONObject(r.body!!.string()))
             }
+        }
+    }
+
+    override suspend fun moveToTrash(fileId: String) {
+        // Unlike cleanup of a bad copy, a file that is already gone is reported, not ignored.
+        val body = JSONObject().put("trashed", true).toString().toRequestBody(JSON)
+        execute({ Request.Builder().url("$API/files/$fileId").patch(body) }) { r ->
+            if (!r.isSuccessful) fail(r)
         }
     }
 

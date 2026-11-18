@@ -592,6 +592,98 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /** Selects a Drive file through its long-press action, as holding it does. */
+    private fun selectDriveFile(name: String) {
+        compose.onAllNodesWithContentDescription(name).onFirst().performSemanticsAction(SemanticsActions.OnLongClick)
+        pump(4)
+    }
+
+    /** A transfer whose Drive copy is [driveId] and whose status is [status]. */
+    private fun driveRow(id: Long, name: String, driveId: String, status: TransferStatus) =
+        row(id, name, status).copy(driveFileId = driveId)
+
+    /** Issue #36: Drive trash confirmation with a file a transfer still depends on left out. */
+    @Test
+    fun driveTrashConfirmation() {
+        grantMedia()
+        seedTransfers(driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED))
+        eachVariant(
+            "drive-trash-confirm", expect = "Move 1 file to Google Drive's trash?", connected = true,
+            tab = AppViewModel.TAB_DRIVE, overlay = true,
+            act = {
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Scan_0042.jpg")
+                compose.onAllNodesWithContentDescription("Sunset_0019.jpg").onFirst().performClick()
+                waitFor("2 selected")
+                compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
+                waitFor("Move 1 file to Google Drive's trash?")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #36: Cancel trashes nothing; confirming trashes exactly the eligible files with the
+     * Drive client and they leave the folder; a held-only batch asks nothing of Drive; the viewer's
+     * trash icon trashes the open file and closes the viewer.
+     */
+    @Test
+    fun driveTrashMovesExactlyTheConfirmedFiles() {
+        grantMedia()
+        seedTransfers(driveRow(4, "Sunset_0019.jpg", "d4", TransferStatus.VERIFIED))
+        val drive = FakeDrive()
+        eachVariant(
+            "drive-trash-flow", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE,
+            capture = false, drive = drive,
+            act = {
+                drive.trashedIds.clear()
+                waitFor("Scan_0042.jpg")
+                selectDriveFile("Scan_0042.jpg")
+                compose.onAllNodesWithContentDescription("Sunset_0019.jpg").onFirst().performClick()
+                waitFor("2 selected")
+
+                // Cancel: nothing trashed, selection kept.
+                compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
+                waitFor("Move 1 file to Google Drive's trash?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue(drive.trashedIds.isEmpty())
+                waitFor("2 selected")
+
+                // Confirm: only Scan_0042 (d2); Sunset (d4) is held by a verified transfer.
+                compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
+                waitFor("Move 1 file to Google Drive's trash?")
+                compose.onNodeWithText("Left out because a transfer", substring = true).assertExists()
+                tap("Move to trash")
+                compose.waitUntil(5_000) { pump(1); compose.onAllNodesWithTag("drive-trash").fetchSemanticsNodes().isEmpty() }
+                assertEquals(listOf("d2"), drive.trashedIds)
+                assertTrue(
+                    "A trashed file leaves the folder",
+                    compose.onAllNodesWithContentDescription("Scan_0042.jpg").fetchSemanticsNodes().isEmpty(),
+                )
+
+                // Only the held file selected: explained, Drive not asked.
+                drive.trashedIds.clear()
+                waitFor("1 selected")
+                compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
+                waitFor("This item can't go to the trash")
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                assertTrue(drive.trashedIds.isEmpty())
+                compose.onNodeWithContentDescription("Clear selection").performClick()
+                pump(4)
+
+                // From the viewer: the open file.
+                compose.onAllNodesWithContentDescription("Packing list.pdf").onFirst().performClick()
+                settle { compose.onAllNodesWithContentDescription("Move to Google Drive's trash").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Move to Google Drive's trash").performClick()
+                waitFor("Move 1 file to Google Drive's trash?")
+                tap("Move to trash")
+                compose.waitUntil(5_000) { pump(1); compose.onAllNodesWithContentDescription("Close viewer").fetchSemanticsNodes().isEmpty() }
+                assertEquals(listOf("d1"), drive.trashedIds)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun folderLargeDensity() {
         grantMedia()
@@ -1134,7 +1226,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.17 (build 16)",
+            "build-id", expect = "DriveLift 1.0.0-preview.18 (build 17)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -1611,6 +1703,12 @@ class ScreenshotTest {
         private val failAuthOnPreview: Boolean = false,
     ) : DriveFolders {
         override suspend fun listChildren(folderId: String, foldersOnly: Boolean) = list(folderId, foldersOnly)
+
+        /** Files the app asked to move to Drive's trash, in order. */
+        val trashedIds = mutableListOf<String>()
+        override suspend fun moveToTrash(fileId: String) {
+            trashedIds += fileId
+        }
         override suspend fun createFolder(name: String, parentId: String) = create(name)
 
         override suspend fun loadThumbnail(file: DriveFile, maxEdgePx: Int): ByteArray? = when (file.id) {

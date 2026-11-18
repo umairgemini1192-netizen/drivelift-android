@@ -85,7 +85,11 @@ Enforce these in code and tests, not only in this document.
 ## Explicitly prohibited
 
 - Reading or writing the Google Photos cloud library (not available to third-party apps).
-- Any deletion on Google Drive other than trashing a copy that failed verification.
+- Any deletion on Google Drive other than (a) automatically trashing a copy that failed
+  verification, or (b) moving files the user selected to Drive's trash after a confirmation that
+  names them (file manager, issue #36). Permanent deletion and emptying the trash are never
+  requested. Folders, and files a transfer still depends on (`UPLOADING`, `UPLOADED`,
+  `VERIFIED`), are left out of (b).
 - Analytics, crash reporting, ads, or any network call to a host other than Google's APIs.
 - Storing tokens, passwords, or account identifiers anywhere except the account email kept in
   app-private preferences to pin background token requests.
