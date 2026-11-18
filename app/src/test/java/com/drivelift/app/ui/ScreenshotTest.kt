@@ -612,8 +612,9 @@ class ScreenshotTest {
             tab = AppViewModel.TAB_DRIVE, overlay = true,
             act = {
                 waitFor("Scan_0042.jpg")
-                selectDriveFile("Scan_0042.jpg")
-                compose.onAllNodesWithContentDescription("Sunset_0019.jpg").onFirst().performClick()
+                // Sunset first: once the selection bar shows, the shorter grid can scroll it out of view.
+                selectDriveFile("Sunset_0019.jpg")
+                compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst().performClick()
                 waitFor("2 selected")
                 compose.onNodeWithContentDescription("Move selected to Google Drive's trash").press()
                 waitFor("Move 1 file to Google Drive's trash?")
@@ -637,8 +638,9 @@ class ScreenshotTest {
             act = {
                 drive.trashedIds.clear()
                 waitFor("Scan_0042.jpg")
-                selectDriveFile("Scan_0042.jpg")
-                compose.onAllNodesWithContentDescription("Sunset_0019.jpg").onFirst().performClick()
+                // Sunset first: once the selection bar shows, the shorter grid can scroll it out of view.
+                selectDriveFile("Sunset_0019.jpg")
+                compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst().performClick()
                 waitFor("2 selected")
 
                 // Cancel: nothing trashed, selection kept.
