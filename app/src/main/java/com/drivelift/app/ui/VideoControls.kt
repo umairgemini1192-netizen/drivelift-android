@@ -1,5 +1,18 @@
 package com.drivelift.app.ui
 
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.RowScope
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.SliderDefaults
+import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -20,7 +33,6 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -34,7 +46,6 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.text.style.TextOverflow
 import java.util.Locale
 
 /** Playback speeds offered by the speed button, in order. */
@@ -62,7 +73,7 @@ internal fun formatPlaybackTime(ms: Long): String {
 /** The file always plays as the untouched original; this says what that is. */
 internal fun qualityLabel(width: Int, height: Int, frameRate: Float): String {
     if (width <= 0 || height <= 0) return "Original quality"
-    val fps = if (frameRate > 0f) "  ·  ${Math.round(frameRate)} fps" else ""
+    val fps = if (frameRate > 0f) "  ·  ${Math.round(frameRate)}\u00A0fps" else ""
     return "Original  ·  ${width}x$height$fps"
 }
 
@@ -250,9 +261,14 @@ internal data class VideoUiState(
 )
 
 /**
- * DriveLift's own player controls on a glass bar: a scrubber that shows where a drag will land,
- * 10-second skips, play/pause, speed and frame capture, with the original quality named above.
+ * DriveLift's own player controls on a glass panel (owner decision #32): the original quality
+ * named above with the speed as a capsule pill, a continuous scrubber with a round thumb, Step
+ * back and Step forward as pills, and the transport row with Play/Pause as the one lead element
+ * and the other actions in flat wells. Every control keeps a 48 dp touch target.
  */
+// The custom scrubber thumb and track (SliderDefaults.Track with sliderState) are marked
+// experimental in Material 3 1.3; the API used is pinned by the Compose BOM in app/build.gradle.kts.
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 internal fun VideoControls(
     state: VideoUiState,
@@ -271,38 +287,40 @@ internal fun VideoControls(
     var dragTarget by remember { mutableStateOf<Long?>(null) }
     val shown = dragTarget ?: state.position
     val duration = state.duration.coerceAtLeast(0)
+    val scrubberInteraction = remember { MutableInteractionSource() }
 
     GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
-            // Speed and Fit sit beside the quality label, or on their own row on a narrow phone or
-            // with large text, so the transport buttons below always keep 48 dp each.
+            // The quality line is never cut short. Beside the pills normally; on its own full-width
+            // line with the pills below it with large text or on a narrow phone (rule 8).
             val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
                 LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
-            val options: @Composable () -> Unit = {
-                if (state.zoomed) {
-                    TextButton(
-                        onClick = onFit,
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Fit the whole picture" },
-                    ) { Text("Fit") }
+            val pills: @Composable () -> Unit = {
+                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    if (state.zoomed) {
+                        PlayerPill(onClick = onFit, description = "Fit the whole picture") { Text("Fit") }
+                    }
+                    PlayerPill(onClick = onSpeed, description = "Playback speed ${speedLabel(state.speed)}") {
+                        Text(speedLabel(state.speed))
+                    }
                 }
-                TextButton(
-                    onClick = onSpeed,
-                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Playback speed ${speedLabel(state.speed)}" },
-                ) { Text(speedLabel(state.speed)) }
             }
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            val quality: @Composable (Modifier) -> Unit = { m ->
                 Text(
                     state.quality,
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = if (stacked) 2 else 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f),
+                    modifier = m.testTag("video-quality"),
                 )
-                if (!stacked) options()
             }
             if (stacked) {
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { options() }
+                quality(Modifier.fillMaxWidth().padding(top = Tokens.Small))
+                Row(Modifier.fillMaxWidth().padding(top = Tokens.Small), horizontalArrangement = Arrangement.End) { pills() }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    quality(Modifier.weight(1f))
+                    pills()
+                }
             }
             Slider(
                 value = if (duration > 0) (shown.toFloat() / duration).coerceIn(0f, 1f) else 0f,
@@ -316,8 +334,26 @@ internal fun VideoControls(
                     onScrubbingChange(false)
                 },
                 enabled = duration > 0,
+                interactionSource = scrubberInteraction,
+                // One continuous track with a round thumb on it: no gap either side of the thumb.
+                thumb = {
+                    SliderDefaults.Thumb(
+                        interactionSource = scrubberInteraction,
+                        enabled = duration > 0,
+                        thumbSize = DpSize(Tokens.ScrubberThumb, Tokens.ScrubberThumb),
+                    )
+                },
+                track = { sliderState ->
+                    SliderDefaults.Track(
+                        sliderState = sliderState,
+                        enabled = duration > 0,
+                        thumbTrackGapSize = Tokens.NoInset,
+                        modifier = Modifier.height(Tokens.ProgressHeight),
+                    )
+                },
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(top = Tokens.Small)
                     .testTag("video-scrubber")
                     .semantics {
                         contentDescription = "Seek"
@@ -338,57 +374,100 @@ internal fun VideoControls(
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
             }
-            // Small steps of about one frame, on their own row so the transport buttons keep 48 dp.
-            // Shown while playing too: a step pauses the video first (issue #29). Exact for constant
-            // frame rate; variable-rate or unknown-rate files can occasionally repeat or skip a
-            // frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
+            // Small steps of about one frame, as two pills. Shown while playing too: a step pauses
+            // the video first (issue #29). Exact for constant frame rate; variable-rate or
+            // unknown-rate files can occasionally repeat or skip a frame, so the labels say "step",
+            // not "frame" (docs/HOW_IT_WORKS.md).
             Row(
-                Modifier.fillMaxWidth().testTag("frame-step"),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("frame-step"),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Medium, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TextButton(
-                    onClick = { onStepFrame(false) },
-                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
-                ) {
+                PlayerPill(onClick = { onStepFrame(false) }, description = "Step back about one frame") {
                     Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
                     Text("Step")
                 }
-                TextButton(
-                    onClick = { onStepFrame(true) },
-                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
-                ) {
+                PlayerPill(onClick = { onStepFrame(true) }, description = "Step forward about one frame") {
                     Text("Step")
                     Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                 }
             }
             Row(
-                Modifier.fillMaxWidth(),
+                Modifier.fillMaxWidth().padding(vertical = Tokens.Small),
                 horizontalArrangement = Arrangement.SpaceEvenly,
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                IconButton(
+                PlayerWell(
                     onClick = { onSeek(skipTarget(state.position, duration, -SKIP_MS)) },
-                    modifier = Modifier.size(Tokens.TouchTarget),
-                ) { Icon(Icons.Outlined.Replay10, contentDescription = "Back 10 seconds") }
-                IconButton(onClick = onPlayPause, modifier = Modifier.size(Tokens.TouchTarget)) {
-                    Icon(
-                        if (state.playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
-                        contentDescription = if (state.playing) "Pause" else "Play",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(Tokens.EmptyState),
-                    )
+                    icon = Icons.Outlined.Replay10,
+                    description = "Back 10 seconds",
+                )
+                // The one lead element on the player (rule 6): a solid coral disc.
+                IconButton(onClick = onPlayPause, modifier = Modifier.size(Tokens.PlayerLead)) {
+                    Box(
+                        Modifier
+                            .size(Tokens.PlayerLead)
+                            .background(MaterialTheme.colorScheme.primary, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            if (state.playing) Icons.Outlined.Pause else Icons.Outlined.PlayArrow,
+                            contentDescription = if (state.playing) "Pause" else "Play",
+                            tint = MaterialTheme.colorScheme.onPrimary,
+                            modifier = Modifier.size(Tokens.Header),
+                        )
+                    }
                 }
-                IconButton(
+                PlayerWell(
                     onClick = { onSeek(skipTarget(state.position, duration, SKIP_MS)) },
-                    modifier = Modifier.size(Tokens.TouchTarget),
-                ) { Icon(Icons.Outlined.Forward10, contentDescription = "Forward 10 seconds") }
-                IconButton(
+                    icon = Icons.Outlined.Forward10,
+                    description = "Forward 10 seconds",
+                )
+                PlayerWell(
                     onClick = onCapture,
+                    icon = Icons.Outlined.PhotoCamera,
+                    description = "Save this frame as a photo",
                     enabled = !state.capturing,
-                    modifier = Modifier.size(Tokens.TouchTarget),
-                ) { Icon(Icons.Outlined.PhotoCamera, contentDescription = "Save this frame as a photo") }
+                )
             }
+        }
+    }
+}
+
+/** A capsule pill: flat well fill, thin edge, coral content, at least 48 dp tall. */
+@Composable
+private fun PlayerPill(onClick: () -> Unit, description: String, content: @Composable RowScope.() -> Unit) {
+    Button(
+        onClick = onClick,
+        shape = Tokens.PillShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = GlassPalette.Well,
+            contentColor = MaterialTheme.colorScheme.primary,
+        ),
+        border = BorderStroke(Tokens.Hairline, GlassPalette.WellEdge),
+        contentPadding = PaddingValues(horizontal = Tokens.Gutter),
+        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = description },
+        content = content,
+    )
+}
+
+/** A secondary transport action: a 44 dp flat well inside a 48 dp touch target (rule 7). */
+@Composable
+private fun PlayerWell(
+    onClick: () -> Unit,
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    description: String,
+    enabled: Boolean = true,
+) {
+    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Tokens.TouchTarget)) {
+        Box(
+            Modifier
+                .size(Tokens.PlayerWell)
+                .background(GlassPalette.Well, CircleShape)
+                .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(icon, contentDescription = description)
         }
     }
 }

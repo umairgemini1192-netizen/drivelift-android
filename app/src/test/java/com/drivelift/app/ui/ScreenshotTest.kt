@@ -581,7 +581,7 @@ class ScreenshotTest {
 
     @Test
     fun videoControls() {
-        eachVariant("video-controls", expect = "Original  ·  3840x2160  ·  60 fps") { _ ->
+        eachVariant("video-controls", expect = "Original  ·  3840x2160  ·  60 fps") { _ ->
             androidx.compose.foundation.layout.Box(androidx.compose.ui.Modifier.fillMaxSize()) {
                 VideoControls(
                     state = VideoUiState(
@@ -885,7 +885,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.14 (build 13)",
+            "build-id", expect = "DriveLift 1.0.0-preview.15 (build 14)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
