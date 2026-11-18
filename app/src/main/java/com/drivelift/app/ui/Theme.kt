@@ -100,13 +100,39 @@ object GlassPalette {
     val ThumbScrim = Color(0xCC070A1E)
 }
 
-private val AppTypography = Typography().let { base ->
-    base.copy(
+/**
+ * Tabular digits (rule 11 in docs/AI_CONTEXT.md): every digit is the same width, so times,
+ * speeds, sizes, percentages and counters do not shift sideways as they change. Set once on
+ * every text style, so no screen has to remember it. Letters are unaffected.
+ */
+internal const val TABULAR_DIGITS = "tnum"
+
+private fun TextStyle.tabular() = copy(fontFeatureSettings = TABULAR_DIGITS)
+
+internal val AppTypography = Typography().let { base ->
+    val styled = base.copy(
         // The one lead figure on a screen: well over 2.5x the 16sp body.
         displayLarge = TextStyle(fontSize = 64.sp, lineHeight = 68.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-1.5).sp),
         displaySmall = TextStyle(fontSize = 40.sp, lineHeight = 44.sp, fontWeight = FontWeight.SemiBold, letterSpacing = (-0.5).sp),
         titleLarge = base.titleLarge.copy(fontWeight = FontWeight.SemiBold),
         titleMedium = base.titleMedium.copy(fontWeight = FontWeight.SemiBold),
+    )
+    styled.copy(
+        displayLarge = styled.displayLarge.tabular(),
+        displayMedium = styled.displayMedium.tabular(),
+        displaySmall = styled.displaySmall.tabular(),
+        headlineLarge = styled.headlineLarge.tabular(),
+        headlineMedium = styled.headlineMedium.tabular(),
+        headlineSmall = styled.headlineSmall.tabular(),
+        titleLarge = styled.titleLarge.tabular(),
+        titleMedium = styled.titleMedium.tabular(),
+        titleSmall = styled.titleSmall.tabular(),
+        bodyLarge = styled.bodyLarge.tabular(),
+        bodyMedium = styled.bodyMedium.tabular(),
+        bodySmall = styled.bodySmall.tabular(),
+        labelLarge = styled.labelLarge.tabular(),
+        labelMedium = styled.labelMedium.tabular(),
+        labelSmall = styled.labelSmall.tabular(),
     )
 }
 
