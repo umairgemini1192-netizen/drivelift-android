@@ -22,6 +22,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
 import androidx.compose.material.icons.outlined.PhoneAndroid
@@ -204,7 +205,8 @@ fun AppRoot(vm: AppViewModel) {
                 containerColor = Color.Transparent,
                 contentColor = MaterialTheme.colorScheme.onSurface,
                 contentWindowInsets = WindowInsets.safeDrawing,
-                snackbarHost = { SnackbarHost(snackbar) },
+                // While a viewer fills the screen, messages show above it instead (below).
+                snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
                     if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
@@ -289,6 +291,16 @@ fun AppRoot(vm: AppViewModel) {
                 }
             }
             FullScreenOverlayHost(overlay)
+            // Viewer feedback (for example a saved frame) stays visible above the full-screen
+            // viewer, clear of the system bars.
+            if (overlay.content != null) {
+                SnackbarHost(
+                    snackbar,
+                    Modifier
+                        .align(Alignment.BottomCenter)
+                        .windowInsetsPadding(WindowInsets.safeDrawing),
+                )
+            }
         }
     }
 
