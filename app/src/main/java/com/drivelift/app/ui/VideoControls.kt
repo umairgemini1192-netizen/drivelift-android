@@ -40,6 +40,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -289,15 +291,11 @@ internal fun VideoControls(
 
     GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
-            // The quality line is never cut short: with large text or a narrow phone it wraps onto
-            // a second line beside the pills, which stay at the top right.
-            Row(verticalAlignment = Alignment.Top) {
-                Text(
-                    state.quality,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.weight(1f).padding(top = Tokens.Medium).testTag("video-quality"),
-                )
+            // The quality line is never cut short. Beside the pills normally; on its own full-width
+            // line with the pills below it with large text or on a narrow phone (rule 8).
+            val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+                LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+            val pills: @Composable () -> Unit = {
                 Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                     if (state.zoomed) {
                         PlayerPill(onClick = onFit, description = "Fit the whole picture") { Text("Fit") }
@@ -305,6 +303,23 @@ internal fun VideoControls(
                     PlayerPill(onClick = onSpeed, description = "Playback speed ${speedLabel(state.speed)}") {
                         Text(speedLabel(state.speed))
                     }
+                }
+            }
+            val quality: @Composable (Modifier) -> Unit = { m ->
+                Text(
+                    state.quality,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = m.testTag("video-quality"),
+                )
+            }
+            if (stacked) {
+                quality(Modifier.fillMaxWidth().padding(top = Tokens.Small))
+                Row(Modifier.fillMaxWidth().padding(top = Tokens.Small), horizontalArrangement = Arrangement.End) { pills() }
+            } else {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    quality(Modifier.weight(1f))
+                    pills()
                 }
             }
             Slider(
