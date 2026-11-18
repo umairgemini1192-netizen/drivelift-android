@@ -224,6 +224,24 @@ this session is never verified again; the next check finds it in the trash and u
 again. While a removal request is open (including while the user is deciding), a trash leaves
 the copies it relies on alone.
 
+## Searching and sorting a folder
+
+A Phone folder and a Drive folder each show a search field and a sort button above the files.
+The search matches part of a name, ignoring case, and only looks at the folder on screen: the
+photos and videos DriveLift already lists for a Phone folder, or the entries of the Drive folder
+for the connected account. Nothing else is read and no new permission is asked for. When nothing
+matches, the folder says so. The search only filters what is listed: files selected before stay
+selected even when the search hides them. Select all and Select none (and a range drag) add or
+remove only the matching files shown; Clear empties the whole selection. The selection count, its
+size and every confirmation (move, trash) always cover all selected files, shown or not.
+
+Sort choices: date (newest or oldest first), name (A to Z or Z to A, numbers in natural order so
+IMG_2 comes before IMG_10) and size (largest or smallest first). The choice is kept separately for
+Phone folders and Drive folders across restarts. Phone folders start newest first and show day
+headers only in date order; Drive folders start by name, as before, and keep folders above files.
+Files with the same date keep the listing's own order, and name and size ties fall back to name,
+so the order is the same every time.
+
 ## Moving Drive files to another folder
 
 In the Drive tab, select files and tap **Move**. Choose the folder in the Drive folder picker and

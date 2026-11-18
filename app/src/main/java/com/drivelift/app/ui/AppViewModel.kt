@@ -95,6 +95,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val live = LiveProgress.state
     val pickerMetrics = MutableStateFlow(PickerWindowMetrics())
     val gridDensity: StateFlow<GridDensity> = graph.prefs.gridDensity
+    val phoneSort: StateFlow<com.drivelift.app.data.FileSort> = graph.prefs.phoneSort
+    val driveSort: StateFlow<com.drivelift.app.data.FileSort> = graph.prefs.driveSort
+    fun setPhoneSort(value: com.drivelift.app.data.FileSort) = graph.prefs.setPhoneSort(value)
+    fun setDriveSort(value: com.drivelift.app.data.FileSort) = graph.prefs.setDriveSort(value)
 
     fun setGridDensity(density: GridDensity) {
         graph.prefs.setGridDensity(density)
