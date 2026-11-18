@@ -39,6 +39,8 @@ import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
@@ -62,6 +64,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.text.AnnotatedString
@@ -1541,7 +1544,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.19 (build 18)",
+            "build-id", expect = "DriveLift 1.0.0-preview.21 (build 20)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -1704,6 +1707,211 @@ class ScreenshotTest {
         }
         val queued = runBlocking { Graph.get(app).db.transfers().count(listOf(TransferStatus.QUEUED.name)) }
         assertEquals(2, queued)
+    }
+
+    // ------------------------------------------------------------------ storage insights (issue #42)
+
+    private fun openStorage() {
+        waitFor("Storage")
+        compose.onNodeWithTag("storage-entry").press()
+        waitFor("Photos and videos")
+    }
+
+    private fun scrollStorageTo(text: String) {
+        compose.onNodeWithTag("storage-list").performScrollToNode(hasText(text, substring = true))
+        pump(4)
+    }
+
+    /** Runs the duplicate check and waits for its result. */
+    private fun checkDuplicates() {
+        scrollStorageTo("Check for duplicates")
+        tap("Check for duplicates")
+        waitFor("1 group of files with matching content.")
+        scrollStorageTo("IMG-WA13.jpg")
+    }
+
+    /** Taps Move to trash inside the cleanup dialog, not the one in the bar behind it. */
+    private fun confirmCleanup() {
+        compose.onNode(hasText("Move to trash") and hasAnyAncestor(hasTestTag("duplicate-cleanup"))).press()
+    }
+
+    /** Takes a seeded transfer row out again, so the next variant starts without it. */
+    private fun dropTransfer(id: Long) = runBlocking {
+        Graph.get(app).db.transfers().cancel(id)
+        Graph.get(app).db.transfers().clearFinished()
+    }
+
+    @Test
+    fun storageBreakdown() {
+        grantMedia()
+        eachVariant(
+            "storage-breakdown", expect = "Phone photos and videos DriveLift can see", connected = true,
+            act = {
+                currentVm!!.accountReadAt.value = FIXED_NOW
+                openStorage()
+                compose.onNodeWithText("Photos").assertExists()
+                compose.onNodeWithText("Videos").assertExists()
+                compose.onNodeWithText("Listed at", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageQuotaAndLargestFiles() {
+        grantMedia()
+        eachVariant(
+            "storage-large-files", expect = "Largest files", connected = true,
+            act = {
+                currentVm!!.accountReadAt.value = FIXED_NOW
+                openStorage()
+                scrollStorageTo("used of")
+                compose.onNodeWithText("used of", substring = true).assertExists()
+                compose.onNodeWithText("Read at", substring = true).assertExists()
+                scrollStorageTo("VID_0003.mp4")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDuplicateGroup() {
+        grantMedia()
+        eachVariant(
+            "storage-duplicates", expect = "1 copy selected", connected = true,
+            act = {
+                openStorage()
+                checkDuplicates()
+                // Nothing is selected until the user picks a copy.
+                assertTrue(currentVm!!.duplicateSelection.value.isEmpty())
+                // The three screenshots share a size but not their content: no group for them.
+                assertEquals(1, currentVm!!.duplicateGroups.value.size)
+                assertEquals(
+                    listOf("IMG-WA12.jpg", "IMG-WA13.jpg"),
+                    currentVm!!.duplicateGroups.value.single().items.map { it.name },
+                )
+                compose.onNodeWithText("IMG-WA12.jpg").press()
+                waitFor("Stays: one copy is always kept")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageCleanupConfirmation() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        eachVariant(
+            "storage-cleanup-confirm", expect = "Move 1 copy to this phone's trash?", connected = true, overlay = true,
+            act = {
+                openStorage()
+                checkDuplicates()
+                compose.onNodeWithText("IMG-WA12.jpg").press()
+                waitFor("1 copy selected")
+                tap("Move to trash")
+                waitFor("Move 1 copy to this phone's trash?")
+                compose.onNodeWithText("Staying on this phone:").assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Issue #42, through the real screen: the last copy of a group cannot be picked; Cancel sends
+     * nothing; a confirmed cleanup hands Android's trash request exactly the selected copy; a copy
+     * whose bytes change after the check, or that becomes part of a transfer, is not sent.
+     */
+    @Test
+    fun storageCleanupSendsExactlyTheCheckedCopyAndProtectsTheRest() {
+        grantMedia()
+        Graph.get(app).canManageMedia = { true }
+        val asked = recordTrashRequests()
+        val wa12 = FakeMediaStore.files.first { it.name == "IMG-WA12.jpg" }
+        val wa13 = FakeMediaStore.files.first { it.name == "IMG-WA13.jpg" }
+        val original = Graph.get(app).openOriginalStream
+        eachVariant(
+            "storage-cleanup-flow", expect = null, connected = true, capture = false,
+            act = {
+                asked.clear()
+                Graph.get(app).openOriginalStream = original
+                val vm = currentVm!!
+                openStorage()
+                checkDuplicates()
+
+                // One copy picked; the other cannot be: every group keeps a copy.
+                compose.onNodeWithText("IMG-WA12.jpg").press()
+                waitFor("1 copy selected")
+                vm.toggleDuplicate(wa13.id)
+                pump(4)
+                assertEquals(setOf(wa12.id), vm.duplicateSelection.value)
+
+                // Cancel: nothing asked of Android, the selection stays.
+                tap("Move to trash")
+                waitFor("Move 1 copy to this phone's trash?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue(asked.isEmpty())
+                assertEquals(setOf(wa12.id), vm.duplicateSelection.value)
+
+                // Confirm: exactly IMG-WA12, after both copies were read again.
+                tap("Move to trash")
+                waitFor("Move 1 copy to this phone's trash?")
+                confirmCleanup()
+                settle { vm.lastCleanupSent != null && vm.duplicateCleanup.value == null }
+                pump(DIALOG_FRAMES)
+                assertEquals(listOf(wa12.id), vm.lastCleanupSent)
+                assertEquals(listOf(listOf(wa12.uri.toString())), asked)
+
+                // The selected copy's bytes change between the confirmation dialog and the tap.
+                asked.clear()
+                tap("Move to trash")
+                waitFor("Move 1 copy to this phone's trash?")
+                Graph.get(app).openOriginalStream = { context, uri ->
+                    if (uri == wa12.uri) ByteArrayInputStream(byteArrayOf(1, 2, 3))
+                    else checkNotNull(context.contentResolver.openInputStream(uri))
+                }
+                confirmCleanup()
+                settle { vm.duplicateCleanup.value == null }
+                pump(DIALOG_FRAMES)
+                assertEquals(emptyList<Long>(), vm.lastCleanupSent)
+                assertTrue(asked.isEmpty())
+
+                // The selected copy becomes part of a transfer before the plan is made: left out.
+                Graph.get(app).openOriginalStream = original
+                seedTransfers(row(wa12.id, wa12.name, TransferStatus.QUEUED, size = wa12.size))
+                pump(4)
+                tap("Move to trash")
+                waitFor("Nothing can go to the trash")
+                compose.onNodeWithText("Left out because they are part of a transfer:").assertExists()
+                tap("OK")
+                pump(DIALOG_FRAMES)
+                assertTrue(asked.isEmpty())
+                vm.duplicateSelection.value = emptySet()
+                dropTransfer(wa12.id)
+                pump(4)
+            },
+        ) { vm ->
+            PhoneTrashHost(vm)
+            AppRoot(vm)
+        }
+    }
+
+    /** Stopping the duplicate check leaves no partial result and changes nothing. */
+    @Test
+    fun theDuplicateCheckCanBeStopped() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        compose.waitUntil(5_000) { pump(1); vm.media.value.size == FakeMediaStore.files.size }
+        val release = CountDownLatch(1)
+        val original = Graph.get(app).openOriginalStream
+        Graph.get(app).openOriginalStream = { context, uri ->
+            release.await()
+            original(context, uri)
+        }
+        vm.startDuplicateScan()
+        assertTrue(vm.duplicateScan.value is AppViewModel.DuplicateScan.Running)
+        vm.cancelDuplicateScan()
+        release.countDown()
+        pump(12)
+        assertEquals(AppViewModel.DuplicateScan.Idle, vm.duplicateScan.value)
+        assertTrue(vm.duplicateGroups.value.isEmpty())
     }
 
     // ------------------------------------------------------------------ steps
@@ -1984,9 +2192,15 @@ class ScreenshotTest {
         // Picture data for each file, so thumbnails are drawn instead of placeholders.
         val resolver = shadowOf(app.contentResolver)
         for (file in FakeMediaStore.files) {
-            val bytes = picture(file.id)
+            // IMG-WA13 is a byte-for-byte copy of IMG-WA12, the one duplicate pair (issue #42).
+            // The three screenshots share a size but differ in content.
+            val bytes = picture(if (file.id == 13L) 12L else file.id)
             resolver.registerInputStreamSupplier(file.uri) { ByteArrayInputStream(bytes) }
         }
+        // The duplicate check reads the original bytes; the JVM has no original-file access, so it
+        // reads the same generated pictures through the ordinary stream.
+        Graph.get(app).openOriginalStream = { context, uri -> checkNotNull(context.contentResolver.openInputStream(uri)) }
+        Graph.get(app).clock = { FIXED_NOW }
     }
 
     /**
@@ -2168,6 +2382,9 @@ class ScreenshotTest {
         const val DAY_ONE = 1_773_489_600_000L
         const val DAY_TWO = 1_773_576_000_000L
         const val TEST_EMAIL = "test.user@example.com"
+
+        /** The time the Storage screen shows for its figures: 15 March 2026, 14:05 UTC. */
+        const val FIXED_NOW = 1_773_583_500_000L
 
         const val PICTURE_SIZE = 256
 

@@ -167,8 +167,11 @@ fun AppRoot(vm: AppViewModel) {
     var selectionSynced by remember { mutableStateOf(false) }
     var viewingDriveFile by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    var showStorage by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
+    // Storage insights (issue #42) opens over the Phone tab; Back returns to the folder list.
+    val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
 
     LaunchedEffect(selection) {
         if (!selectionSynced) {
@@ -187,6 +190,7 @@ fun AppRoot(vm: AppViewModel) {
 
     // Settings opens over Transfers; Back returns there.
     BackHandler(enabled = inSettings && !pickingDestination) { showSettings = false }
+    BackHandler(enabled = inStorage && !pickingDestination) { showStorage = false }
 
     BackHandler(enabled = inFolder && !pickingDestination) {
         if (selection.isNotEmpty()) vm.clearSelection() else openBucket = NO_BUCKET
@@ -208,7 +212,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inSettings && !inStorage && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -271,9 +275,11 @@ fun AppRoot(vm: AppViewModel) {
                                 },
                                 onMove = { showDestination = true },
                             )
+                            inStorage -> StorageScreen(vm = vm, onBack = { showStorage = false })
                             else -> PhoneScreen(
                                 vm = vm,
                                 onOpen = { openBucket = it },
+                                onOpenStorage = { showStorage = true },
                                 onMoveFolder = {
                                     vm.selectFolder(it)
                                     showDestination = true

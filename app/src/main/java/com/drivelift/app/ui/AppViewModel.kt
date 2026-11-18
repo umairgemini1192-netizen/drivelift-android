@@ -74,6 +74,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     // Drive connection
     val driveConn = MutableStateFlow(DriveConn.UNKNOWN)
     val account = MutableStateFlow<DriveAbout?>(null)
+
+    /** When [account], and so the Drive quota, was last read from Drive (Storage, issue #42). */
+    val accountReadAt = MutableStateFlow<Long?>(null)
     val consentRequests = MutableSharedFlow<PendingIntent>(extraBufferCapacity = 1)
     val messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
 
@@ -194,7 +197,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     provenEmail = pinned
                     driveConn.value = DriveConn.CONNECTED
                     runCatching { drive.about() }
-                        .onSuccess { account.value = it }
+                        .onSuccess {
+                            account.value = it
+                            accountReadAt.value = graph.clock()
+                        }
                         .onFailure { messages.emit("Connected, but Drive did not answer: ${it.message}") }
                 } else {
                     finish(connector.establish(result.accessToken))
@@ -224,6 +230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             is ConnectOutcome.Connected -> {
                 // The pin is saved by now, so work started from here runs on the proven account.
                 account.value = outcome.about
+                accountReadAt.value = graph.clock()
                 provenEmail = outcome.about.email
                 driveConn.value = DriveConn.CONNECTED
                 graph.transfers.recover()
@@ -449,6 +456,189 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** The last reported trash result; read by tests. */
     @Volatile
     var lastTrashOutcome: com.drivelift.app.data.TrashOutcome? = null
+        private set
+
+    // ------------------------------------------------------------------ Storage insights (issue #42)
+
+    /** When the phone listing the Storage screen measures was last loaded. Null until it loads. */
+    val mediaListedAt: StateFlow<Long?> = kotlinx.coroutines.flow.combine(media, mediaLoaded) { _, loaded ->
+        if (loaded) graph.clock() else null
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    val quotaRefreshing = MutableStateFlow(false)
+
+    /** Reads the connected account's quota. Replaced in screenshot tests, which have no Drive. */
+    var quotaSource: suspend () -> DriveAbout = { drive.about() }
+
+    /** Reads the Drive quota again for the connected account; keeps the last figure on failure. */
+    fun refreshQuota() {
+        if (driveConn.value != DriveConn.CONNECTED || quotaRefreshing.value) return
+        quotaRefreshing.value = true
+        viewModelScope.launch {
+            try {
+                val about = quotaSource()
+                // Shown only if it is still the account the app is pinned to.
+                if (about.email.equals(prefs.accountEmail, ignoreCase = true)) {
+                    account.value = about
+                    accountReadAt.value = graph.clock()
+                }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                messages.emit("Couldn't read the Drive quota: ${com.drivelift.app.transfer.describeError(e)}")
+            } finally {
+                quotaRefreshing.value = false
+            }
+        }
+    }
+
+    /** The duplicate check: not started, reading files, or finished with its result. */
+    sealed interface DuplicateScan {
+        data object Idle : DuplicateScan
+        data class Running(val filesDone: Int, val filesTotal: Int, val bytesDone: Long, val bytesTotal: Long) : DuplicateScan
+        data class Done(val result: com.drivelift.app.data.DuplicateResult, val at: Long, val candidates: Int) : DuplicateScan
+    }
+
+    val duplicateScan = MutableStateFlow<DuplicateScan>(DuplicateScan.Idle)
+    private var duplicateJob: kotlinx.coroutines.Job? = null
+
+    /** The checked groups, minus files that have since left the listing or changed size. */
+    val duplicateGroups: StateFlow<List<com.drivelift.app.data.DuplicateGroup>> =
+        kotlinx.coroutines.flow.combine(duplicateScan, media) { scan, items ->
+            if (scan is DuplicateScan.Done) com.drivelift.app.data.pruneGroups(scan.result.groups, items) else emptyList()
+        }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+
+    /** Files the user picked for cleanup inside the duplicate groups. Nothing is picked by default. */
+    val duplicateSelection = MutableStateFlow<Set<Long>>(emptySet())
+
+    init {
+        // A duplicate selection only ever names files still in a group.
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(duplicateSelection, duplicateGroups) { selected, groups ->
+                val present = groups.flatMap { g -> g.items.map { it.id } }.toHashSet()
+                selected.filterTo(HashSet()) { it in present }.takeIf { it.size != selected.size }
+            }.collect { pruned -> if (pruned != null) duplicateSelection.value = pruned }
+        }
+    }
+
+    /**
+     * Reads the SHA-256 of a file's original bytes, or null when it cannot be read. Cancellation
+     * is passed on, never turned into "unreadable".
+     */
+    private suspend fun digestOf(item: com.drivelift.app.data.MediaItem, onRead: (Int) -> Unit = {}): String? =
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            try {
+                com.drivelift.app.data.sha256Of(graph.openOriginalStream(getApplication(), item.uri), onRead)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                null
+            }
+        }
+
+    /**
+     * Groups the listed files by size, then reads every file that shares its size with another and
+     * compares SHA-256 checksums. Runs in the view model, so leaving the screen or rotating does not
+     * stop it; [cancelDuplicateScan] does. Nothing on the phone is changed.
+     */
+    fun startDuplicateScan() {
+        if (duplicateScan.value is DuplicateScan.Running) return
+        duplicateSelection.value = emptySet()
+        val candidates = com.drivelift.app.data.sizeCandidates(media.value)
+        val files = candidates.sumOf { it.size }
+        val bytes = candidates.sumOf { group -> group.sumOf { it.size } }
+        duplicateScan.value = DuplicateScan.Running(0, files, 0, bytes)
+        duplicateJob = viewModelScope.launch {
+            var filesDone = 0
+            var bytesDone = 0L
+            val result = com.drivelift.app.data.findDuplicates(candidates) { item ->
+                digestOf(item) { read ->
+                    bytesDone += read
+                    duplicateScan.value = DuplicateScan.Running(filesDone, files, bytesDone, bytes)
+                }.also {
+                    filesDone++
+                    duplicateScan.value = DuplicateScan.Running(filesDone, files, bytesDone, bytes)
+                }
+            }
+            duplicateScan.value = DuplicateScan.Done(result, graph.clock(), files)
+        }
+    }
+
+    fun cancelDuplicateScan() {
+        val job = duplicateJob ?: return
+        if (duplicateScan.value !is DuplicateScan.Running) return
+        job.cancel()
+        duplicateJob = null
+        duplicateScan.value = DuplicateScan.Idle
+        messages.tryEmit("Duplicate check stopped. Nothing was changed.")
+    }
+
+    /** Selects or clears one file, never the last unselected copy of its group. */
+    fun toggleDuplicate(id: Long) {
+        val current = duplicateSelection.value
+        val group = duplicateGroups.value.firstOrNull { g -> g.items.any { it.id == id } } ?: return
+        duplicateSelection.value = when {
+            id in current -> current - id
+            com.drivelift.app.data.canSelect(group, current, id) -> current + id
+            else -> current
+        }
+    }
+
+    /** A duplicate cleanup being prepared: files read again, then the plan to confirm. */
+    sealed interface DuplicateCleanup {
+        data object Checking : DuplicateCleanup
+        data class Confirm(val plan: com.drivelift.app.data.DuplicateCleanupPlan) : DuplicateCleanup
+    }
+
+    val duplicateCleanup = MutableStateFlow<DuplicateCleanup?>(null)
+
+    private suspend fun planCleanupFor(selected: Set<Long>): com.drivelift.app.data.DuplicateCleanupPlan {
+        val groups = duplicateGroups.value
+        val uris = groups.flatMap { it.items }.map { it.uri.toString() }
+        val rows = uris.chunked(400).flatMap { graph.db.transfers().byMediaUris(it) }
+        return com.drivelift.app.data.planDuplicateCleanup(groups, selected, media.value, rows) { digestOf(it) }
+    }
+
+    /** Reads the selected files and the copies that stay again, then offers the plan to confirm. */
+    fun reviewDuplicateCleanup() {
+        if (duplicateCleanup.value != null || duplicateSelection.value.isEmpty()) return
+        duplicateCleanup.value = DuplicateCleanup.Checking
+        viewModelScope.launch {
+            duplicateCleanup.value = DuplicateCleanup.Confirm(planCleanupFor(duplicateSelection.value))
+        }
+    }
+
+    fun cancelDuplicateCleanup() {
+        duplicateCleanup.value = null
+        messages.tryEmit("Nothing was moved to the trash.")
+    }
+
+    /**
+     * The user confirmed. Right before anything is asked of Android, every confirmed file and the
+     * copies that stay are read again and transfers are checked again; only files that still pass
+     * go to the phone's trash request (the released Phone trash flow, issue #36).
+     */
+    fun confirmDuplicateCleanup() {
+        val shown = (duplicateCleanup.value as? DuplicateCleanup.Confirm)?.plan ?: return
+        duplicateCleanup.value = DuplicateCleanup.Checking
+        viewModelScope.launch {
+            val confirmed = shown.eligible.mapTo(HashSet()) { it.id }
+            val fresh = planCleanupFor(confirmed)
+            val ids = fresh.eligible.map { it.id }.filter { it in confirmed }
+            duplicateCleanup.value = null
+            lastCleanupSent = ids
+            val dropped = confirmed.size - ids.size
+            when {
+                ids.isEmpty() -> messages.emit("Nothing was sent to the trash: the files changed or became part of a transfer.")
+                dropped > 0 -> messages.emit("$dropped left out because they changed or became part of a transfer since you confirmed.")
+            }
+            if (ids.isNotEmpty()) requestPhoneTrash(ids)
+        }
+    }
+
+    /** The ids the last confirmed duplicate cleanup handed to the trash request; read by tests. */
+    @Volatile
+    var lastCleanupSent: List<Long>? = null
         private set
 
     /** Transfer rows that could make [files] depend on a transfer: by Drive id, or active by name. */

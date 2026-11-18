@@ -47,6 +47,16 @@ class Graph(app: Application) {
     var trashState: (android.content.ContentResolver, android.net.Uri) -> com.drivelift.app.data.TrashState =
         { resolver, uri -> com.drivelift.app.data.queryTrashState(resolver, uri) }
 
+    /**
+     * Opens the unredacted original bytes of a phone file for the duplicate check (issue #42),
+     * the same read the verifier uses. Replaced in tests, which have no original-file access.
+     */
+    var openOriginalStream: (Context, android.net.Uri) -> java.io.InputStream = { context, uri ->
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(com.drivelift.app.data.MediaAccess.open(context, uri))
+    }
+    /** Wall clock for the times the Storage screen shows. Fixed in screenshot tests. */
+    var clock: () -> Long = System::currentTimeMillis
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }

@@ -166,7 +166,7 @@ internal fun PhoneDeleteBlockedDialog(blocked: List<MediaItem>, onDismiss: () ->
 }
 
 @Composable
-private fun FileNames(items: List<MediaItem>) {
+internal fun FileNames(items: List<MediaItem>) {
     val context = LocalContext.current
     items.take(DELETE_NAMES_SHOWN).forEach { item ->
         Text(
