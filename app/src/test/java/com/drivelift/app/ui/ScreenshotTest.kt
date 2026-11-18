@@ -106,6 +106,7 @@ import org.robolectric.annotation.GraphicsMode
 import org.robolectric.shadows.ShadowDialog
 import kotlin.math.roundToInt
 import java.io.ByteArrayInputStream
+import kotlinx.coroutines.async
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.CountDownLatch
@@ -485,13 +486,11 @@ class ScreenshotTest {
         val vm = AppViewModel(app)
         val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
         // Asked at once, as after process recreation, before the listing has necessarily loaded.
-        val plan = kotlinx.coroutines.runBlocking {
-            kotlinx.coroutines.withTimeout(10_000) {
-                val job = kotlinx.coroutines.async(kotlinx.coroutines.Dispatchers.Default) { vm.planPhoneDelete(listOf(img1.id)) }
-                while (!job.isCompleted) { compose.runOnUiThread { pump(1) } }
-                job.await()
-            }
+        val job = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.Default).async {
+            vm.planPhoneDelete(listOf(img1.id))
         }
+        compose.waitUntil(10_000) { pump(1); job.isCompleted }
+        val plan = kotlinx.coroutines.runBlocking { job.await() }
         assertEquals(listOf(img1.id), plan.eligible.map { it.id })
     }
 
