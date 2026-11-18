@@ -488,17 +488,12 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         )
                     }
                     Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-                        // Rename sits beside the count when exactly one file is selected, so the
+                        // Rename sits with the count when exactly one file is selected, so the
                         // action row below keeps its width at every text size.
-                        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) { summary() }
-                            if (selection.size == 1) {
-                                TextButton(
-                                    onClick = { renaming = selection.first() },
-                                    modifier = Modifier.testTag("rename-selected"),
-                                ) { Text("Rename") }
-                            }
-                        }
+                        SummaryWithRename(
+                            showRename = selection.size == 1,
+                            onRename = { renaming = selection.first() },
+                        ) { summary() }
                         Row(
                             Modifier.fillMaxWidth().padding(top = Tokens.Small),
                             horizontalArrangement = Arrangement.spacedBy(Tokens.Small),

@@ -625,22 +625,17 @@ fun DriveBrowser(
                         .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
                 ) {
                     // Rename sits beside the count when exactly one file is selected, as in Phone folders.
-                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                        Column(Modifier.weight(1f)) {
-                            Text("${chosen.size} items", style = MaterialTheme.typography.titleMedium)
-                            Text(
-                                formatBytes(context, chosen.sumOf { it.size }),
-                                style = MaterialTheme.typography.bodyMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        if (chosen.size == 1) {
-                            TextButton(
-                                onClick = { askRename(chosen.first()) },
-                                enabled = !renaming,
-                                modifier = Modifier.testTag("rename-selected"),
-                            ) { Text("Rename") }
-                        }
+                    SummaryWithRename(
+                        showRename = chosen.size == 1,
+                        onRename = { askRename(chosen.first()) },
+                        enabled = !renaming,
+                    ) {
+                        Text("${chosen.size} items", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            formatBytes(context, chosen.sumOf { it.size }),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
                     }
                     Row(
                         Modifier.fillMaxWidth().padding(top = Tokens.Small),

@@ -5,6 +5,10 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.IntentSenderRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
@@ -102,6 +106,36 @@ internal fun RenameDialog(
         },
         dismissButton = { TextButton(onClick = onDismiss, enabled = !working) { Text("Cancel") } },
     )
+}
+
+/**
+ * The selection bar's summary with Rename beside it when [showRename] (exactly one file selected).
+ * With large text or a narrow screen (rule 8) Rename moves under the summary, so the summary keeps
+ * the full width.
+ */
+@Composable
+internal fun SummaryWithRename(
+    showRename: Boolean,
+    onRename: () -> Unit,
+    enabled: Boolean = true,
+    summary: @Composable () -> Unit,
+) {
+    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+    val rename: @Composable () -> Unit = {
+        TextButton(onClick = onRename, enabled = enabled, modifier = Modifier.testTag("rename-selected")) { Text("Rename") }
+    }
+    if (stacked) {
+        Column(Modifier.fillMaxWidth()) {
+            summary()
+            if (showRename) rename()
+        }
+    } else {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) { summary() }
+            if (showRename) rename()
+        }
+    }
 }
 
 /** The item cannot be renamed now: says why and what to do. Nothing was changed. */
