@@ -40,6 +40,8 @@ import kotlin.coroutines.resumeWithException
 
 class DriveHttpException(val code: Int, val reason: String?, message: String) : IOException(message)
 class SessionExpiredException : IOException("The upload session expired, starting this file again")
+/** A file to be moved is no longer in the folder it was selected in; nothing was changed. */
+class NotInFolderException : IOException("It is no longer in this folder")
 
 data class DriveFile(
     val id: String,
@@ -115,6 +117,15 @@ interface DriveFolders {
      */
     suspend fun moveToTrash(fileId: String, account: String): Unit =
         throw IOException("Moving to the trash is not available")
+
+    /**
+     * Moves one file from folder [fromFolderId] into folder [toFolderId] as [account] (user-directed,
+     * issue #36). The file keeps its id and content. Throws [NotInFolderException], without changing
+     * anything, when the file is no longer in [fromFolderId], and [AccountChangedException] as
+     * [moveToTrash] does.
+     */
+    suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String): Unit =
+        throw IOException("Moving files is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -514,6 +525,50 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         execute({ Request.Builder().url("$API/files/$fileId").patch(body) }, account = account) { r ->
             if (!r.isSuccessful) fail(r)
         }
+    }
+
+    override suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String) {
+        val from = folderIdFor(fromFolderId, account)
+        val to = folderIdFor(toFolderId, account)
+        // Read where the file is now: it is moved only out of the folder the user saw it in.
+        val readUrl = "$API/files/$fileId".toHttpUrl().newBuilder().addQueryParameter("fields", "parents").build()
+        val parents = execute({ Request.Builder().url(readUrl) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            parentsOf(JSONObject(r.body!!.string()))
+        }
+        if (from !in parents) throw NotInFolderException()
+        if (to in parents) return
+        val url = "$API/files/$fileId".toHttpUrl().newBuilder()
+            .addQueryParameter("addParents", to)
+            .addQueryParameter("removeParents", from)
+            .addQueryParameter("fields", "parents")
+            .build()
+        val body = "{}".toRequestBody(JSON)
+        val after = execute({ Request.Builder().url(url).patch(body) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            parentsOf(JSONObject(r.body!!.string()))
+        }
+        if (to !in after || from in after) throw IOException("Drive did not confirm the move")
+    }
+
+    /** The real id of [folderId], resolving the "root" alias once for [account]. */
+    private suspend fun folderIdFor(folderId: String, account: String): String {
+        if (folderId != ROOT) return folderId
+        rootIds[account.lowercase()]?.let { return it }
+        val url = "$API/files/$ROOT".toHttpUrl().newBuilder().addQueryParameter("fields", "id").build()
+        val id = execute({ Request.Builder().url(url) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            JSONObject(r.body!!.string()).getString("id")
+        }
+        rootIds[account.lowercase()] = id
+        return id
+    }
+
+    private val rootIds = java.util.concurrent.ConcurrentHashMap<String, String>()
+
+    private fun parentsOf(json: JSONObject): List<String> {
+        val array = json.optJSONArray("parents") ?: return emptyList()
+        return (0 until array.length()).map { array.getString(it) }
     }
 
     /** Moves a file to the Drive trash (recoverable for 30 days), never a hard delete. */

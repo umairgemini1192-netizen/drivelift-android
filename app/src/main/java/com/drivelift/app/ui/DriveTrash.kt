@@ -107,7 +107,7 @@ internal fun DriveTrashDialog(plan: DriveTrashPlan, working: Boolean, onConfirm:
 }
 
 @Composable
-private fun DriveNames(files: List<DriveFile>) {
+internal fun DriveNames(files: List<DriveFile>) {
     val context = LocalContext.current
     files.take(DRIVE_NAMES_SHOWN).forEach { file ->
         Text(
