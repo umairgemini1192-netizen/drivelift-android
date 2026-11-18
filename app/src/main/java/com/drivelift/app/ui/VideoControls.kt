@@ -116,9 +116,13 @@ private const val FRAME_EPSILON = 1e-9
  * - At most one step seek runs at a time. Taps made while it runs only move the pending target,
  *   counted from the newest target, so rapid taps add up to the right frame and no tap starts its
  *   own network or decode job.
- * - A step is complete only when the player reports a rendered frame at that step's target
- *   ([rendered] with the rendered position). A late frame from an older seek does not match and
- *   is ignored, so it can never release a newer request.
+ * - A step is complete only when a frame whose own presentation time belongs to that step's
+ *   target is rendered ([rendered] with the frame's timestamp, see [matches]). A late frame from
+ *   an older seek carries the older timestamp, does not match and is ignored, so it can never
+ *   release a newer request.
+ * - When that frame also satisfies the waiting request (taps that came back to the same frame),
+ *   the waiting request is complete too and no redundant seek is made: a seek to the position
+ *   already shown would draw no new frame and only wait for the timeout.
  * - [timedOut] is separate recovery for a seek that never shows a frame. It acts only for the
  *   generation it was started for; any later request, [clear] or completion makes it a no-op.
  * - Each request keeps the time of its first and last tap, so the log reports how long that
@@ -128,8 +132,8 @@ internal class StepController(
     private val now: () -> Long,
     /** Starts the seek for [target]; [generation] identifies the request for its timeout. */
     private val issue: (target: Long, generation: Int) -> Unit,
-    /** How far a rendered position may be from the target and still be that frame. */
-    private val toleranceMs: () -> Long,
+    /** The nominal duration of one frame, in milliseconds. */
+    private val frameDurationMs: () -> Double,
     private val log: (String) -> Unit = {},
 ) {
     private class Request(val target: Long, val firstTapAt: Long, val lastTapAt: Long, val taps: Int) {
@@ -162,19 +166,39 @@ internal class StepController(
         }
     }
 
-    /** The player rendered a frame at [positionMs] after a seek. */
-    fun rendered(positionMs: Long) {
+    /**
+     * Whether a frame presented at [frameMs] is the frame a seek to [target] shows. The player
+     * shows the first frame at or after the target; a variable-rate file can place it a little
+     * late, so up to three quarters of a nominal frame is accepted. The neighbouring frame is a
+     * whole frame away and never matches, which is what keeps a stale frame from passing.
+     */
+    fun matches(frameMs: Long, target: Long): Boolean =
+        frameMs >= target - 1 && frameMs <= target + (frameDurationMs() * 0.75).toLong()
+
+    /** The player rendered a frame whose presentation time is [frameMs]. */
+    fun rendered(frameMs: Long) {
         val running = inFlight ?: return
-        if (kotlin.math.abs(positionMs - running.target) > toleranceMs()) return
+        if (!matches(frameMs, running.target)) return
         val t = now()
-        log(
-            "step to ${running.target} ms (gen ${running.generation}, ${running.taps} taps): frame shown " +
-                "${t - running.firstTapAt} ms after its first tap, ${t - running.lastTapAt} ms after its last, " +
-                "${t - running.issuedAt} ms after the seek started",
-        )
+        logShown(running, t)
         inFlight = null
+        val waiting = pending
+        if (waiting != null && matches(frameMs, waiting.target)) {
+            // The taps came back to the frame on screen: done, without seeking to it again.
+            pending = null
+            waiting.generation = ++generation
+            waiting.issuedAt = t
+            logShown(waiting, t)
+            return
+        }
         startPending()
     }
+
+    private fun logShown(request: Request, t: Long) = log(
+        "step to ${request.target} ms (gen ${request.generation}, ${request.taps} taps): frame shown " +
+            "${t - request.firstTapAt} ms after its first tap, ${t - request.lastTapAt} ms after its last, " +
+            "${t - request.issuedAt} ms after the seek started",
+    )
 
     /** The seek for [forGeneration] has shown no frame in time; stop it holding back the next step. */
     fun timedOut(forGeneration: Int) {
