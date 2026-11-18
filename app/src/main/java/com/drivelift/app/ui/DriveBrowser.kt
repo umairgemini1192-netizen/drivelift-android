@@ -323,7 +323,10 @@ fun DriveBrowser(
     LaunchedEffect(renameRun?.outcome) {
         val outcome = renameRun?.outcome ?: return@LaunchedEffect
         if (outcome.nameTaken) {
-            renameTaken = outcome.newName
+            // With the dialog open, the reason shows under the field. If the screen was recreated
+            // while Drive was asked, the dialog is gone, so the reason is reported as a message.
+            if (renamePlan?.file?.id == outcome.file.id) renameTaken = outcome.newName
+            else vm.messages.emit(outcome.message())
         } else {
             renamePlan = null
             outcome.renamed?.let { renamed ->

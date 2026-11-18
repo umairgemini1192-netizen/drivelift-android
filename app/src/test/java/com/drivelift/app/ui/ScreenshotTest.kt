@@ -1220,6 +1220,29 @@ class ScreenshotTest {
      * Issue #42: a Drive rename runs for the account it was confirmed for; a name Drive reports as
      * taken keeps the file as it was; a held file and a name a transfer is uploading are refused.
      */
+    /**
+     * Issue #42 (review): a taken name reported after the Drive screen was recreated, so no
+     * rename dialog is open, is still explained to the user, and nothing is renamed.
+     */
+    @Test
+    fun driveRenameTakenAfterRecreationIsReported() {
+        grantMedia()
+        eachVariant(
+            "drive-rename-taken-recreated", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE, capture = false,
+            act = {
+                waitFor("Scan_0042.jpg")
+                val file = DriveFile("d2", "Scan_0042.jpg", "image/jpeg", 2_100_000, "00", false)
+                currentVm!!.driveRenameRun.value = AppViewModel.DriveRenameRun(
+                    working = false,
+                    outcome = com.drivelift.app.data.DriveRenameOutcome(file, "Receipt.jpg", nameTaken = true, folderId = "root"),
+                )
+                waitFor("A file named Receipt.jpg is already in this folder. Nothing was renamed.")
+                waitFor("Scan_0042.jpg")
+                assertEquals(null, currentVm!!.driveRenameRun.value)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun driveRenameStaysOnTheAccountAndNeverOverwrites() {
         grantMedia()
