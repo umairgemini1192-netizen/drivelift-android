@@ -454,6 +454,17 @@ class ScreenshotTest {
         Graph.get(app).lock.lock()
         vm.pendingTrashFinished(confirmed = false)
         assertEquals(null, vm.pendingTrash.value)
+
+        // Process recreated while Android's dialog was open: a fresh view model has no batch,
+        // and the host's saved copy completes it; a restored selection drops files that are gone.
+        val fresh = AppViewModel(app)
+        pump(12)
+        compose.waitUntil(5_000) { pump(1); fresh.media.value.isNotEmpty() }
+        assertEquals(null, fresh.pendingTrash.value)
+        fresh.setSelected(listOf(img1.id, 999_999L), true)
+        compose.waitUntil(5_000) { pump(1); fresh.selection.value == setOf(img1.id) }
+        fresh.pendingTrashFinished(confirmed = false, savedIds = listOf(img1.id))
+        assertEquals(null, fresh.pendingTrash.value)
     }
 
     /** Without Media management and nothing held back, Android's own dialog confirms (invariant 3). */

@@ -120,6 +120,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     init {
         refreshMedia()
         connectDrive(interactive = false)
+        // Once the phone listing has loaded, a selection never names files that no longer exist,
+        // for example files a trash request removed while the app was away, even when a saved
+        // selection is restored after the process was recreated.
+        viewModelScope.launch {
+            kotlinx.coroutines.flow.combine(selection, media, mediaLoaded) { selected, items, loaded ->
+                if (!loaded || selected.isEmpty()) null
+                else items.mapTo(HashSet()) { it.id }.let { present -> selected.filterTo(HashSet()) { it in present } }
+                    .takeIf { it.size != selected.size }
+            }.collect { pruned -> if (pruned != null) selection.value = pruned }
+        }
     }
 
     fun refreshMedia() {
@@ -353,15 +363,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return graph.trashRequest(getApplication<android.app.Application>().contentResolver, uris)
     }
 
-    /** Android answered (or could not show its dialog): report the result for the pending batch. */
-    fun pendingTrashFinished(confirmed: Boolean, failure: String? = null) {
-        val pending = pendingTrash.value ?: return
+    /**
+     * Android answered (or could not show its dialog): report the result for the pending batch.
+     * [savedIds] is PhoneTrashHost's saved copy, used when the process was recreated while
+     * Android's dialog was open and this view model starts without the batch.
+     */
+    fun pendingTrashFinished(confirmed: Boolean, failure: String? = null, savedIds: List<Long>? = null) {
+        val ids = pendingTrash.value?.ids ?: savedIds ?: return
         pendingTrash.value = null
         if (failure != null) {
             messages.tryEmit("Android could not open the trash request: $failure")
             return
         }
-        finishPhoneDelete(pending.ids, confirmed)
+        finishPhoneDelete(ids, confirmed)
     }
 
     /**

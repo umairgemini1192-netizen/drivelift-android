@@ -19,6 +19,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -76,15 +77,23 @@ fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
 @Composable
 fun PhoneTrashHost(vm: AppViewModel) {
     val pending by vm.pendingTrash.collectAsStateWithLifecycle()
+    // Saved copy of the batch Android is asked about: survives the process being recreated while
+    // Android's dialog is open, when the view model starts again without it.
+    var savedIds by rememberSaveable { mutableStateOf<LongArray?>(null) }
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        vm.pendingTrashFinished(confirmed = result.resultCode == Activity.RESULT_OK)
+        vm.pendingTrashFinished(confirmed = result.resultCode == Activity.RESULT_OK, savedIds = savedIds?.toList())
+        savedIds = null
     }
     LaunchedEffect(pending) {
+        pending?.let { savedIds = it.ids.toLongArray() }
         if (pending?.launched != false) return@LaunchedEffect
         runCatching {
             val request = vm.startPendingTrash() ?: return@LaunchedEffect
             launcher.launch(IntentSenderRequest.Builder(request.intentSender).build())
-        }.onFailure { vm.pendingTrashFinished(confirmed = false, failure = it.message ?: it.javaClass.simpleName) }
+        }.onFailure {
+            vm.pendingTrashFinished(confirmed = false, failure = it.message ?: it.javaClass.simpleName)
+            savedIds = null
+        }
     }
 }
 
