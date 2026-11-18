@@ -330,9 +330,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return com.drivelift.app.data.planPhoneDelete(selected, rows)
     }
 
-    /** The request that asks Android to move exactly [items] to the phone's trash. */
-    fun phoneTrashRequest(items: List<com.drivelift.app.data.MediaItem>): android.app.PendingIntent =
-        graph.trashRequest(getApplication<android.app.Application>().contentResolver, items.map { it.uri })
+    /**
+     * A phone trash request (issue #36): the exact batch, and whether Android's dialog has been
+     * started for it. Kept here, outside the lock-gated screen, so neither a rotation nor the app
+     * locking while Android's dialog is open can lose the result (see PhoneTrashHost).
+     */
+    data class PendingTrash(val ids: List<Long>, val launched: Boolean = false)
+
+    val pendingTrash = MutableStateFlow<PendingTrash?>(null)
+
+    /** Asks for exactly [ids] to be moved to the phone's trash; PhoneTrashHost shows Android's dialog. */
+    fun requestPhoneTrash(ids: List<Long>) {
+        if (ids.isNotEmpty()) pendingTrash.value = PendingTrash(ids)
+    }
+
+    /** Builds Android's request for the pending batch and marks it started, so it is never shown twice. */
+    fun startPendingTrash(): android.app.PendingIntent? {
+        val pending = pendingTrash.value?.takeIf { !it.launched } ?: return null
+        pendingTrash.value = pending.copy(launched = true)
+        val byId = media.value.associateBy { it.id }
+        val uris = pending.ids.mapNotNull { byId[it]?.uri }
+        return graph.trashRequest(getApplication<android.app.Application>().contentResolver, uris)
+    }
+
+    /** Android answered (or could not show its dialog): report the result for the pending batch. */
+    fun pendingTrashFinished(confirmed: Boolean, failure: String? = null) {
+        val pending = pendingTrash.value ?: return
+        pendingTrash.value = null
+        if (failure != null) {
+            messages.tryEmit("Android could not open the trash request: $failure")
+            return
+        }
+        finishPhoneDelete(pending.ids, confirmed)
+    }
 
     /**
      * After Android finished the trash request: reloads the phone listing and reports, per file,

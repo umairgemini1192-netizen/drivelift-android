@@ -426,7 +426,34 @@ class ScreenshotTest {
                 currentVm!!.clearSelection()
                 pump(4)
             },
-        ) { vm -> AppRoot(vm) }
+        ) { vm ->
+            PhoneTrashHost(vm)
+            AppRoot(vm)
+        }
+    }
+
+    /**
+     * Codex review on ed59721: the app locking while Android's trash dialog is open removes the
+     * screen, but the pending batch lives in the view model and its answer still completes it.
+     */
+    @Test
+    fun aPendingPhoneTrashRequestSurvivesTheAppLocking() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        compose.waitUntil(5_000) { pump(1); vm.media.value.any { it.id == img1.id } }
+        vm.requestPhoneTrash(listOf(img1.id))
+        assertEquals(listOf(img1.id), vm.pendingTrash.value?.ids)
+        // Started once only, even if asked again (as after recomposition).
+        Graph.get(app).trashRequest = { _, _ -> throw IllegalStateException("No Android trash dialog in tests") }
+        runCatching { vm.startPendingTrash() }
+        assertEquals(true, vm.pendingTrash.value?.launched)
+        assertEquals(null, vm.startPendingTrash())
+        // The lock removes AppRoot; nothing in the screen holds the request. Android answers.
+        Graph.get(app).lock.lock()
+        vm.pendingTrashFinished(confirmed = false)
+        assertEquals(null, vm.pendingTrash.value)
     }
 
     /** Without Media management and nothing held back, Android's own dialog confirms (invariant 3). */
@@ -456,7 +483,10 @@ class ScreenshotTest {
                 currentActivity!!.onBackPressedDispatcher.onBackPressed()
                 pump(4)
             },
-        ) { vm -> AppRoot(vm) }
+        ) { vm ->
+            PhoneTrashHost(vm)
+            AppRoot(vm)
+        }
     }
 
     @Test

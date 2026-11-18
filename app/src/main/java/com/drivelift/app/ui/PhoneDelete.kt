@@ -19,11 +19,11 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.text.style.TextOverflow
 import com.drivelift.app.data.MediaItem
 import com.drivelift.app.data.PhoneDeletePlan
@@ -35,6 +35,8 @@ private const val DELETE_NAMES_SHOWN = 8
  * The files go to Android's trash through MediaStore.createTrashRequest, so they can be restored
  * for a while; DriveLift never deletes them outright.
  *
+ * Android's dialog is shown by [PhoneTrashHost], outside the lock gate, so its result is never lost.
+ *
  * Confirmation follows invariant 3: with Media management granted, DriveLift's own text-only
  * dialog names the files and Android then completes the request without its preview; otherwise
  * Android's own dialog confirms. DriveLift's dialog is also shown whenever some selected files are
@@ -43,27 +45,13 @@ private const val DELETE_NAMES_SHOWN = 8
 @Composable
 fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
     var plan by remember(ids) { mutableStateOf<PhoneDeletePlan?>(null) }
-    // The exact batch handed to Android, kept across rotation and recreation so the result of
-    // Android's dialog still reaches this flow (the launcher re-registers under the same key).
-    var asked by rememberSaveable(ids) { mutableStateOf<LongArray?>(null) }
-    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
-        vm.finishPhoneDelete(asked?.toList().orEmpty(), confirmed = result.resultCode == Activity.RESULT_OK)
+    LaunchedEffect(ids) { plan = vm.planPhoneDelete(ids) }
+
+    // Android's dialog and its result belong to PhoneTrashHost, which lives outside the lock gate.
+    fun askAndroid(items: List<MediaItem>) {
+        vm.requestPhoneTrash(items.map { it.id })
         onDone()
     }
-
-    fun askAndroid(items: List<MediaItem>) {
-        asked = items.map { it.id }.toLongArray()
-        runCatching {
-            launcher.launch(IntentSenderRequest.Builder(vm.phoneTrashRequest(items).intentSender).build())
-        }.onFailure {
-            vm.messages.tryEmit("Android could not open the trash request: ${it.message}")
-            onDone()
-        }
-    }
-
-    // Waiting for Android's answer: nothing else to show or ask.
-    if (asked != null) return
-    LaunchedEffect(ids) { plan = vm.planPhoneDelete(ids) }
 
     val p = plan ?: return
     when {
@@ -77,6 +65,26 @@ fun PhoneDeleteFlow(vm: AppViewModel, ids: List<Long>, onDone: () -> Unit) {
             },
         )
         else -> LaunchedEffect(p) { askAndroid(p.eligible) }
+    }
+}
+
+/**
+ * Shows Android's trash dialog for the view model's pending batch and passes back its answer.
+ * Composed above the lock gate in MainActivity, so the app locking while the dialog is open does
+ * not drop the result; the launcher re-registers under the same key after a rotation.
+ */
+@Composable
+fun PhoneTrashHost(vm: AppViewModel) {
+    val pending by vm.pendingTrash.collectAsStateWithLifecycle()
+    val launcher = rememberLauncherForActivityResult(ActivityResultContracts.StartIntentSenderForResult()) { result ->
+        vm.pendingTrashFinished(confirmed = result.resultCode == Activity.RESULT_OK)
+    }
+    LaunchedEffect(pending) {
+        if (pending?.launched != false) return@LaunchedEffect
+        runCatching {
+            val request = vm.startPendingTrash() ?: return@LaunchedEffect
+            launcher.launch(IntentSenderRequest.Builder(request.intentSender).build())
+        }.onFailure { vm.pendingTrashFinished(confirmed = false, failure = it.message ?: it.javaClass.simpleName) }
     }
 }
 
