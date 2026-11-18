@@ -36,6 +36,11 @@ import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.compose.ui.semantics.SemanticsActions
+import androidx.compose.ui.node.RootForTest
+import androidx.compose.ui.semantics.getOrNull
+import androidx.compose.ui.semantics.getAllSemanticsNodes
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
@@ -777,20 +782,67 @@ class ScreenshotTest {
         waitFor("Select all")
         selectCell("IMG_0001.jpg")
         waitFor("1 selected")
-        compose.onNodeWithTag("rename-selected").press()
-        waitFor("Rename file")
+        openRenameDialog()
     }
 
-    /**
-     * Types [name] into the open rename dialog and presses Rename. After the text changes, Compose
-     * test calls that wait for idle never return here, so the button is found first and touched
-     * directly (see [openNewFolderDialog]).
+    /*
+     * The rename dialog opens with its name already in the text field. While such a field is on
+     * screen, Compose test calls that wait for idle never return under Robolectric (the same limit
+     * as after typing in the new-folder dialog; see openNewFolderDialog). So while the dialog is
+     * open, these helpers read its semantics straight from its window, run frames with pump, and
+     * touch it directly. Once it has closed, ordinary test calls work again.
      */
+
+    /** Semantics nodes of the rename dialog, if one is showing; read without waiting for idle. */
+    private fun renameDialogNodes(): List<SemanticsNode>? {
+        val dialog = ShadowDialog.getLatestDialog()?.takeIf { it.isShowing } ?: return null
+        val root = composeView(dialog.window!!.decorView) as? RootForTest ?: return null
+        val nodes = root.semanticsOwner.getAllSemanticsNodes(mergingEnabled = true)
+        return nodes.takeIf { list -> list.any { it.config.getOrNull(SemanticsProperties.TestTag) == "rename" } }
+    }
+
+    /** Every text the rename dialog shows, the field's text included. */
+    private fun renameDialogTexts(): List<String> = renameDialogNodes().orEmpty().flatMap { node ->
+        node.config.getOrNull(SemanticsProperties.Text).orEmpty().map { it.text } +
+            listOfNotNull(node.config.getOrNull(SemanticsProperties.EditableText)?.text)
+    }
+
+    private fun untilRenameDialog(open: Boolean) {
+        val deadline = System.currentTimeMillis() + 15_000
+        while ((renameDialogNodes() != null) != open) {
+            pump(1)
+            assertTrue("The rename dialog never ${if (open) "opened" else "closed"}", System.currentTimeMillis() < deadline)
+        }
+        pump(4)
+    }
+
+    /** Presses Rename in the selection bar and waits for the dialog, with no idle wait after it opens. */
+    private fun openRenameDialog() {
+        compose.onNodeWithTag("rename-selected").press()
+        untilRenameDialog(open = true)
+    }
+
+    /** Touches the rename dialog's control tagged [tag] or labelled [text], as a finger would. */
+    private fun touchInRenameDialog(tag: String? = null, text: String? = null) {
+        val node = checkNotNull(renameDialogNodes()).first { n ->
+            (tag != null && n.config.getOrNull(SemanticsProperties.TestTag) == tag) ||
+                (text != null && n.config.getOrNull(SemanticsProperties.Text).orEmpty().any { it.text == text } &&
+                    n.config.getOrNull(SemanticsActions.OnClick) != null)
+        }
+        touchLatestDialog(node.boundsInRoot.center)
+    }
+
+    private fun cancelRenameDialog() {
+        touchInRenameDialog(text = "Cancel")
+        untilRenameDialog(open = false)
+    }
+
+    /** Types [name] into the open rename dialog and touches Rename. */
     private fun typeNameAndRename(name: String) {
-        val rename = compose.onNodeWithTag("rename-confirm").fetchSemanticsNode().boundsInRoot.center
-        compose.onNodeWithText("New name").performSemanticsAction(SemanticsActions.SetText) { it(AnnotatedString(name)) }
+        val field = checkNotNull(renameDialogNodes()).first { it.config.getOrNull(SemanticsActions.SetText) != null }
+        checkNotNull(field.config[SemanticsActions.SetText].action).invoke(AnnotatedString(name))
         pump(DIALOG_FRAMES)
-        touchLatestDialog(rename)
+        touchInRenameDialog(tag = "rename-confirm")
         pump(DIALOG_FRAMES)
     }
 
@@ -799,10 +851,12 @@ class ScreenshotTest {
     fun phoneRenameDialog() {
         grantMedia()
         eachVariant(
-            "phone-rename", expect = "Rename file", connected = true, overlay = true,
+            "phone-rename", expect = null, connected = true, overlay = true,
             act = {
                 openPhoneRename()
-                compose.onNodeWithText("The ending .jpg stays", substring = true).assertExists()
+                val texts = renameDialogTexts()
+                assertTrue(texts.toString(), "Rename file" in texts && "IMG_0001.jpg" in texts)
+                assertTrue(texts.toString(), texts.any { "The ending .jpg stays" in it })
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -819,6 +873,8 @@ class ScreenshotTest {
                 openPhoneRename()
                 typeNameAndRename("IMG_0002.jpg")
                 assertTrue("A taken name must never be sent", sent.isEmpty())
+                val texts = renameDialogTexts()
+                assertTrue(texts.toString(), texts.any { "is already in this folder" in it })
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -855,16 +911,13 @@ class ScreenshotTest {
                 // Cancel: nothing sent, the selection stays.
                 selectCell("IMG_0001.jpg")
                 waitFor("1 selected")
-                compose.onNodeWithTag("rename-selected").press()
-                waitFor("Rename file")
-                tap("Cancel")
-                pump(DIALOG_FRAMES)
+                openRenameDialog()
+                cancelRenameDialog()
                 assertTrue("Cancel must not rename anything", sent.isEmpty())
                 assertEquals(setOf(1L), currentVm!!.selection.value)
 
                 // Confirm: exactly IMG_0001, to exactly the typed name.
-                compose.onNodeWithTag("rename-selected").press()
-                waitFor("Rename file")
+                openRenameDialog()
                 typeNameAndRename("Beach day.jpg")
                 val deadline = System.currentTimeMillis() + 5_000
                 while (currentVm!!.lastPhoneRename == null && System.currentTimeMillis() < deadline) pump(1)
@@ -928,13 +981,13 @@ class ScreenshotTest {
     fun driveRenameDialog() {
         grantMedia()
         eachVariant(
-            "drive-rename", expect = "Rename file", connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
+            "drive-rename", expect = null, connected = true, tab = AppViewModel.TAB_DRIVE, overlay = true,
             act = {
                 waitFor("Scan_0042.jpg")
                 selectDriveFile("Scan_0042.jpg")
                 waitFor("1 selected")
-                compose.onNodeWithTag("rename-selected").press()
-                waitFor("Rename file")
+                openRenameDialog()
+                assertTrue(renameDialogTexts().toString(), "Scan_0042.jpg" in renameDialogTexts())
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -966,14 +1019,11 @@ class ScreenshotTest {
                 compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst()
                     .performSemanticsAction(SemanticsActions.OnLongClick)
                 waitFor("1 selected")
-                compose.onNodeWithTag("rename-selected").press()
-                waitFor("Rename file")
-                tap("Cancel")
-                pump(DIALOG_FRAMES)
+                openRenameDialog()
+                cancelRenameDialog()
                 assertTrue("Cancel must not rename anything", drive.renames.isEmpty())
 
-                compose.onNodeWithTag("rename-selected").press()
-                waitFor("Rename file")
+                openRenameDialog()
                 typeNameAndRename("Receipt.jpg")
                 val deadline = System.currentTimeMillis() + 5_000
                 while (drive.renames.isEmpty() && System.currentTimeMillis() < deadline) pump(1)
