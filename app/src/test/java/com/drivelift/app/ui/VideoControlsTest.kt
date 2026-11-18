@@ -224,8 +224,10 @@ class VideoControlsTest {
         playing = true
     }
 
+    /** Issue #29: Step is offered while playing; the tap reaches the player, which pauses first. */
     @Test
-    fun frameStepIsHiddenWhilePlaying() {
+    fun frameStepIsOfferedWhilePlaying() {
+        val steps = mutableListOf<Boolean>()
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
@@ -237,13 +239,61 @@ class VideoControlsTest {
                                 speed = 1f, quality = qualityLabel(1920, 1080, 30f),
                             ),
                             onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
+                            onStepFrame = { steps += it },
                         )
                     }
                 }
             }
             pump()
-            assertEquals(0, compose.onAllNodesWithText("Step").fetchSemanticsNodes().size)
+            compose.onNodeWithContentDescription("Pause").assertExists()
+            for (label in listOf("Step back about one frame", "Step forward about one frame")) {
+                compose.onNodeWithContentDescription(label)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+            }
+            compose.onNodeWithContentDescription("Step forward about one frame").performClick()
+            compose.onNodeWithContentDescription("Step back about one frame").performClick()
+            pump()
+            assertEquals(listOf(true, false), steps)
         }
+    }
+
+    /** One step seek at a time; taps meanwhile move the pending target and are never lost. */
+    @Test
+    fun stepSeeksAreBoundedAndRapidTapsAddUp() {
+        val fps = 30f
+        val queue = StepSeekQueue()
+        val issued = mutableListOf<Long>()
+        fun tap(position: Long, forward: Boolean) {
+            val queued = queue.latest
+            // As in the player: a position the player was just sent to is a seek target.
+            val afterSeek = queued != null || issued.lastOrNull() == position
+            val target = frameStepTarget(queued ?: position, 10_000, fps, forward, afterSeek = afterSeek)
+            queue.request(target)?.let { issued += it }
+        }
+        // Paused at frame 30 (1000 ms); five quick forward taps before any frame is shown.
+        repeat(5) { tap(1_000, forward = true) }
+        assertEquals("only the first tap seeks at once", listOf(1_033L), issued)
+        assertEquals("the pending target already counts all five taps", 35L, frameIndexAt(queue.latest!!, fps.toDouble()))
+        // The first seek shows its frame: the newest target is sought next, once.
+        queue.completed()?.let { issued += it }
+        assertEquals(2, issued.size)
+        assertEquals(35L, frameIndexAt(issued.last(), fps.toDouble()))
+        // It shows its frame and nothing waits: the queue is idle.
+        assertEquals(null, queue.completed())
+        assertEquals(null, queue.latest)
+        // Back and forth while one seek runs ends on the expected frame.
+        tap(issued.last(), forward = false)
+        tap(issued.last(), forward = false)
+        tap(issued.last(), forward = true)
+        queue.completed()?.let { issued += it }
+        assertEquals(34L, frameIndexAt(issued.last(), fps.toDouble()))
+        // A scrub or skip replaces any waiting step.
+        tap(issued.last(), forward = true)
+        tap(issued.last(), forward = true)
+        queue.clear()
+        assertEquals(null, queue.latest)
+        assertEquals(null, queue.completed())
     }
 
     @Test

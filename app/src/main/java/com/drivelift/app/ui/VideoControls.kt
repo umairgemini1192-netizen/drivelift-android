@@ -110,6 +110,45 @@ internal fun frameIndexAt(position: Long, fps: Double, afterSeek: Boolean = true
 
 private const val FRAME_EPSILON = 1e-9
 
+/**
+ * Keeps frame steps bounded and in order. At most one step seek runs at a time; taps that arrive
+ * while it runs only move the pending target, and each step counts from the newest target, so
+ * rapid taps add up to the right frame without queueing one network or decode job per tap.
+ */
+internal class StepSeekQueue {
+    var inFlight: Long? = null
+        private set
+    var pending: Long? = null
+        private set
+
+    /** The newest step target asked for, or null when no step is running. */
+    val latest: Long? get() = pending ?: inFlight
+
+    /** Returns the target to seek to now, or null when it waits behind the seek in flight. */
+    fun request(target: Long): Long? =
+        if (inFlight == null) {
+            inFlight = target
+            target
+        } else {
+            pending = target
+            null
+        }
+
+    /** The running seek showed its frame (or gave up). Returns the next target to seek to, if any. */
+    fun completed(): Long? {
+        val next = pending
+        pending = null
+        inFlight = next
+        return next
+    }
+
+    /** Another seek (scrub, skip, play) replaces any step still waiting. */
+    fun clear() {
+        inFlight = null
+        pending = null
+    }
+}
+
 internal fun skipTarget(position: Long, duration: Long, deltaMs: Long): Long {
     val target = (position + deltaMs).coerceAtLeast(0)
     return if (duration > 0) target.coerceAtMost(duration) else target
@@ -142,7 +181,7 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
-    /** One frame back (false) or forward (true); offered while the video is paused. */
+    /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
     onStepFrame: (Boolean) -> Unit = {},
 ) {
     // While dragging, the bar and the time show the target, and the seek happens on release.
@@ -217,28 +256,27 @@ internal fun VideoControls(
                 )
             }
             // Small steps of about one frame, on their own row so the transport buttons keep 48 dp.
-            // Exact for constant frame rate; variable-rate or unknown-rate files can occasionally
-            // repeat or skip a frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
-            if (!state.playing) {
-                Row(
-                    Modifier.fillMaxWidth().testTag("frame-step"),
-                    horizontalArrangement = Arrangement.SpaceEvenly,
-                    verticalAlignment = Alignment.CenterVertically,
+            // Shown while playing too: a step pauses the video first (issue #29). Exact for constant
+            // frame rate; variable-rate or unknown-rate files can occasionally repeat or skip a
+            // frame, so the labels say "step", not "frame" (docs/HOW_IT_WORKS.md).
+            Row(
+                Modifier.fillMaxWidth().testTag("frame-step"),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = { onStepFrame(false) },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
                 ) {
-                    TextButton(
-                        onClick = { onStepFrame(false) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step back about one frame" },
-                    ) {
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                        Text("Step")
-                    }
-                    TextButton(
-                        onClick = { onStepFrame(true) },
-                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
-                    ) {
-                        Text("Step")
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
-                    }
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
+                    Text("Step")
+                }
+                TextButton(
+                    onClick = { onStepFrame(true) },
+                    modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = "Step forward about one frame" },
+                ) {
+                    Text("Step")
+                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
                 }
             }
             Row(

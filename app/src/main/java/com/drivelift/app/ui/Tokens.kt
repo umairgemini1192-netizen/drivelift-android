@@ -81,6 +81,18 @@ object Tokens {
 
         /** How often the video scrubber and times are refreshed (state feedback only). */
         const val VIDEO_POSITION_REFRESH = 250
+
+        /**
+         * A step seek that has not shown its frame after this long stops holding back the next
+         * step (for example a seek the player resolved without drawing a new frame).
+         */
+        const val VIDEO_STEP_TIMEOUT = 2_000
+
+        /**
+         * Media the player keeps behind the playing position, so stepping or skipping back a
+         * little reuses what was already streamed instead of fetching it from Drive again.
+         */
+        const val VIDEO_BACK_BUFFER = 15_000
     }
 }
 

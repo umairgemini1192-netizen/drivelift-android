@@ -58,6 +58,7 @@ import androidx.media3.common.Player
 import androidx.media3.common.util.UnstableApi
 import androidx.media3.datasource.HttpDataSource
 import androidx.media3.datasource.okhttp.OkHttpDataSource
+import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
 import com.drivelift.app.drive.AuthRequiredException
@@ -210,6 +211,13 @@ private fun VideoPlayer(
                 /* handleAudioFocus = */ true,
             )
             .setHandleAudioBecomingNoisy(true)
+            // Keeps recently played media, so a step or skip back reuses it instead of fetching
+            // it from Drive again. Bounded by the player's usual buffer size limit.
+            .setLoadControl(
+                DefaultLoadControl.Builder()
+                    .setBackBuffer(Tokens.Motion.VIDEO_BACK_BUFFER, /* retainBackBufferFromKeyframe = */ true)
+                    .build(),
+            )
             .build()
             .apply {
                 setMediaItem(MediaItem.fromUri(stream.url), savedPosition)
@@ -234,7 +242,20 @@ private fun VideoPlayer(
     // frame on screen is the one at or after it; after playback it is the one at or before.
     // Restoring after rotation or recreation is itself a seek to the saved position.
     var lastSeekTarget by remember(player) { mutableStateOf<Long?>(savedPosition) }
+    // Step seeks run one at a time; see StepSeekQueue. [stepIssued] restarts the give-up timer.
+    val steps = remember(player) { StepSeekQueue() }
+    var stepIssued by remember(player) { mutableIntStateOf(0) }
+    var stepTappedAt by remember(player) { mutableLongStateOf(0L) }
+    fun issueStep(target: Long) {
+        player.seekTo(target)
+        lastSeekTarget = target
+        stepIssued++
+    }
+    fun stepFinished() {
+        steps.completed()?.let(::issueStep)
+    }
     fun seekTo(target: Long) {
+        steps.clear()
         player.seekTo(target)
         lastSeekTarget = target
     }
@@ -274,6 +295,18 @@ private fun VideoPlayer(
                 ended = playbackState == Player.STATE_ENDED
             }
 
+            // After a seek the player draws the frame at the target; that is when a step is done.
+            override fun onRenderedFirstFrame() {
+                if (steps.inFlight != null) {
+                    // Local log only, to measure step latency on a phone (adb logcat -s DriveLiftStep).
+                    android.util.Log.d(
+                        "DriveLiftStep",
+                        "frame shown ${android.os.SystemClock.elapsedRealtime() - stepTappedAt} ms after the step tap",
+                    )
+                    stepFinished()
+                }
+            }
+
             override fun onIsPlayingChanged(isPlaying: Boolean) {
                 playing = isPlaying
                 // The screen stays on only while the video is actually playing.
@@ -302,6 +335,12 @@ private fun VideoPlayer(
             if (player.duration > 0) duration = player.duration
             delay(Tokens.Motion.VIDEO_POSITION_REFRESH.toLong())
         }
+    }
+    // A step seek that never draws a frame must not block the next step.
+    LaunchedEffect(stepIssued) {
+        if (steps.inFlight == null) return@LaunchedEffect
+        delay(Tokens.Motion.VIDEO_STEP_TIMEOUT.toLong())
+        stepFinished()
     }
     // Controls step aside after a few seconds of playback without a touch.
     LaunchedEffect(controlsVisible, playing, interaction, scrubbing) {
@@ -431,8 +470,12 @@ private fun VideoPlayer(
                     if (player.playWhenReady && player.playbackState != Player.STATE_ENDED) {
                         player.pause()
                     } else {
-                        // After the end, Play starts the video again from the beginning.
+                        // After the end, Play starts the video again from the beginning. A step
+                        // still waiting is applied first, so playback starts where the user stepped.
+                        val waiting = steps.pending
                         if (player.playbackState == Player.STATE_ENDED) seekTo(0)
+                        else if (waiting != null) seekTo(waiting)
+                        else steps.clear()
                         player.play()
                     }
                     touched()
@@ -452,14 +495,17 @@ private fun VideoPlayer(
                     touched()
                 },
                 onStepFrame = { forward ->
-                    // Stepping implies a still picture: pause first, then move exactly one frame.
+                    // Stepping implies a still picture: a tap while playing pauses first, then
+                    // moves about one frame. Rapid taps count from the newest step target.
                     player.pause()
+                    val queued = steps.latest
                     val now = player.currentPosition
                     val target = frameStepTarget(
-                        now, duration, player.videoFormat?.frameRate ?: -1f, forward,
-                        afterSeek = lastSeekTarget == now,
+                        queued ?: now, duration, player.videoFormat?.frameRate ?: -1f, forward,
+                        afterSeek = queued != null || lastSeekTarget == now,
                     )
-                    seekTo(target)
+                    stepTappedAt = android.os.SystemClock.elapsedRealtime()
+                    steps.request(target)?.let(::issueStep)
                     position = target
                     touched()
                 },
