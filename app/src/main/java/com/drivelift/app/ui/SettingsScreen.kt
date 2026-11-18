@@ -79,7 +79,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                     )
                     SwitchRow(
                         "Offer removal when verified",
-                        "Opens Android's confirmation as soon as a batch is fully verified.",
+                        autoRemoveDescription(mediaManagement),
                         autoRemove, vm.prefs::setAutoRemove,
                     )
                 }
@@ -93,7 +93,7 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                 Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)) {
                     Text(appVersionLabel(context), style = MaterialTheme.typography.bodyLarge)
                     Text(
-                        "Removal from this phone always asks Android to confirm, and only for files whose Drive copy matched in size and checksum.",
+                        REMOVAL_ABOUT,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Tiny),
@@ -103,6 +103,18 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
         }
     }
 }
+
+/**
+ * Who confirms removal depends on Media management access (invariant 3 in docs/AI_CONTEXT.md):
+ * with it, DriveLift lists the files as text; without it, Android shows its own dialog.
+ */
+internal fun autoRemoveDescription(textOnly: Boolean): String =
+    if (textOnly) "Lists the files for you to confirm as soon as a batch is fully verified."
+    else "Opens Android's confirmation as soon as a batch is fully verified."
+
+/** True in both access states, so it does not name who shows the confirmation. */
+internal const val REMOVAL_ABOUT =
+    "Nothing is removed from this phone until you confirm, and only files whose Drive copy matched in size and checksum are offered."
 
 @Composable
 private fun MediaManagementRow(granted: Boolean) {

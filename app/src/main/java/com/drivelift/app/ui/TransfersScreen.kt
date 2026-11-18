@@ -98,7 +98,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
         }
     }
 
-    // Removal from the phone always goes through Android's own confirmation dialog.
+    // Removal from the phone always needs the user's confirmation: Android's dialog, or
+    // DriveLift's text-only list when Media management is granted.
     var awaitingConfirm by remember { mutableStateOf<List<String>>(emptyList()) }
     // Set while DriveLift's text-only confirmation is open (Media management granted).
     var textOnlyBatch by remember { mutableStateOf<List<RemovalItem>?>(null) }
