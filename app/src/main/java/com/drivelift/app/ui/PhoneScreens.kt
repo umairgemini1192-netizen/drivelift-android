@@ -97,8 +97,15 @@ import kotlinx.coroutines.isActive
 // ---------------------------------------------------------------------------
 
 @Composable
-fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -> Unit) {
+fun PhoneScreen(
+    vm: AppViewModel,
+    onOpen: (Long) -> Unit,
+    onMoveFolder: (Long) -> Unit,
+    onOpenFavorites: () -> Unit = {},
+) {
     val context = LocalContext.current
+    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val media by vm.media.collectAsStateWithLifecycle()
     val loaded by vm.mediaLoaded.collectAsStateWithLifecycle()
@@ -132,6 +139,15 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
                 onConnect = { vm.connectDrive(interactive = true) },
                 modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
             )
+        }
+        if (favorites.isNotEmpty()) {
+            item(key = "favorites") {
+                FavoritesEntryRow(
+                    count = favorites.size,
+                    onClick = onOpenFavorites,
+                    modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+                )
+            }
         }
         if (MediaAccess.isPartial(context)) {
             item(key = "partial") {
@@ -167,7 +183,13 @@ fun PhoneScreen(vm: AppViewModel, onOpen: (Long) -> Unit, onMoveFolder: (Long) -
             }
         }
         items(folders, key = { it.bucketId }) { folder ->
-            FolderRow(folder, onOpen = { onOpen(folder.bucketId) }, onMove = { onMoveFolder(folder.bucketId) })
+            FolderRow(
+                folder,
+                favorite = com.drivelift.app.data.phoneFolderKey(folder.bucketId) in favoriteIds,
+                onToggleFavorite = { vm.toggleFavorite(folder) },
+                onOpen = { onOpen(folder.bucketId) },
+                onMove = { onMoveFolder(folder.bucketId) },
+            )
         }
     }
 }
@@ -223,7 +245,13 @@ private fun ConnectAction(conn: DriveConn, onConnect: () -> Unit, modifier: Modi
 }
 
 @Composable
-private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Unit) {
+private fun FolderRow(
+    folder: MediaFolder,
+    favorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onOpen: () -> Unit,
+    onMove: () -> Unit,
+) {
     val context = LocalContext.current
     GlassPanel(
         modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
@@ -253,6 +281,7 @@ private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Uni
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
+        FavoriteStar(favorite = favorite, name = folder.name, onToggle = onToggleFavorite)
         IconButton(onClick = onMove) {
             Icon(
                 Icons.Outlined.CloudUpload,

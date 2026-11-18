@@ -211,9 +211,13 @@ fun DriveFileViewer(
     onOpenExternally: () -> Unit,
     /** Moves this file to Google Drive's trash after confirmation (issue #36). */
     onDelete: (() -> Unit)? = null,
+    /** The Drive path the file is shown in, recorded when it is starred. */
+    location: String = "",
 ) {
     val context = LocalContext.current
     val conn by vm.driveConn.collectAsStateWithLifecycle()
+    val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
+    val favoriteAccount by vm.connectedAccountHash.collectAsStateWithLifecycle()
     val kind = remember(file.mimeType) { classifyDriveFile(file.mimeType) }
 
     BackHandler(onBack = onClose)
@@ -271,6 +275,9 @@ fun DriveFileViewer(
             modifier = Modifier.align(Alignment.TopCenter),
             onDelete = onDelete,
             deleteLabel = "Move to Google Drive's trash",
+            // Favorites belong to the connected account; without one there is nothing to star.
+            favorite = favoriteAccount?.let { vm.isDriveFavorite(favoriteIds, it, file.id) },
+            onToggleFavorite = { vm.toggleDriveFavorite(file, location) },
         )
         }
     }
@@ -293,6 +300,9 @@ internal fun ViewerTopBar(
     /** Moves this file to the trash after confirmation (the phone's or Google Drive's). */
     onDelete: (() -> Unit)? = null,
     deleteLabel: String = "Move to this phone's trash",
+    /** Null hides the star; otherwise whether this file is a favorite. */
+    favorite: Boolean? = null,
+    onToggleFavorite: () -> Unit = {},
 ) {
     GlassPanel(
         modifier = modifier
@@ -330,6 +340,9 @@ internal fun ViewerTopBar(
                 IconButton(onClick = onResetZoom, modifier = Modifier.size(Tokens.ViewerControl)) {
                     Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
                 }
+            }
+            if (favorite != null) {
+                FavoriteStar(favorite = favorite, name = title, onToggle = onToggleFavorite)
             }
             if (onDelete != null) {
                 IconButton(onClick = onDelete, modifier = Modifier.size(Tokens.ViewerControl)) {

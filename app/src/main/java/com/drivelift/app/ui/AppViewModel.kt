@@ -89,6 +89,129 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptySet())
     val presets: StateFlow<List<PresetEntity>> = graph.db.presets().observe()
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    // Favorites (file manager, issues #36 and #42)
+    private val favoriteDao = graph.db.favorites()
+    val favorites: StateFlow<List<com.drivelift.app.data.FavoriteEntity>> = favoriteDao.observe()
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptyList())
+    val favoriteIds: StateFlow<Set<String>> = favorites.map { list -> list.mapTo(HashSet()) { it.id } as Set<String> }
+        .stateIn(viewModelScope, SharingStarted.Eagerly, emptySet())
+
+    /**
+     * [com.drivelift.app.data.accountHash] of the connected Drive account (the saved pin), or null
+     * while Drive is not connected. Drive favorites of any other account are never looked up.
+     */
+    val connectedAccountHash: StateFlow<String?> = kotlinx.coroutines.flow.combine(driveConn, account) { conn, _ ->
+        if (conn == DriveConn.CONNECTED) prefs.accountEmail?.takeIf { it.isNotBlank() }?.let { com.drivelift.app.data.accountHash(it) }
+        else null
+    }.stateIn(viewModelScope, SharingStarted.Eagerly, null)
+
+    /** Drive lookups for favorites of the connected account, by favorite id. */
+    val driveChecks = MutableStateFlow<Map<String, com.drivelift.app.data.DriveCheck>>(emptyMap())
+
+    /**
+     * Every favorite with where it is now, or null until first worked out. Recomputed when the
+     * listing, account or a lookup changes.
+     */
+    val favoriteRows: StateFlow<List<com.drivelift.app.data.FavoriteRow>?> = kotlinx.coroutines.flow.combine(
+        favorites, media, mediaLoaded, folders, kotlinx.coroutines.flow.combine(connectedAccountHash, driveChecks, ::Pair),
+    ) { favs, items, loaded, folderList, (connected, checks) ->
+        val ctx = com.drivelift.app.data.FavoriteContext(
+            phoneLoaded = loaded,
+            visibility = MediaAccess.visibility(getApplication()),
+            mediaById = items.associateBy { it.id },
+            foldersByBucket = folderList.associateBy { it.bucketId },
+            connectedAccount = connected,
+            driveChecks = checks,
+        )
+        favs.map { com.drivelift.app.data.FavoriteRow(it, com.drivelift.app.data.resolveFavorite(it, ctx)) }
+    }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    private fun toggleFavorite(favorite: com.drivelift.app.data.FavoriteEntity) {
+        viewModelScope.launch {
+            val added = favoriteDao.toggle(favorite)
+            messages.emit(if (added) "Added ${favorite.name} to favorites" else "Removed ${favorite.name} from favorites")
+        }
+    }
+
+    fun toggleFavorite(folder: MediaFolder) = toggleFavorite(com.drivelift.app.data.favoriteOf(folder))
+
+    fun toggleFavorite(item: com.drivelift.app.data.MediaItem) = toggleFavorite(com.drivelift.app.data.favoriteOf(item))
+
+    /** Stars a Drive file or folder for the connected account. [location] is the Drive path it is in. */
+    fun toggleDriveFavorite(file: com.drivelift.app.drive.DriveFile, location: String) {
+        val account = connectedAccountHash.value
+        if (account == null) {
+            messages.tryEmit("Connect Google Drive first.")
+            return
+        }
+        // A file already saved keeps its first location; a new one records where it was starred.
+        toggleFavorite(com.drivelift.app.data.favoriteOf(file, account, location))
+    }
+
+    /** Whether the Drive item [driveId] is a favorite of the connected account. */
+    fun isDriveFavorite(ids: Set<String>, account: String?, driveId: String): Boolean =
+        account != null && com.drivelift.app.data.driveKey(account, driveId) in ids
+
+    /** Removes one favorite (for example one that can no longer be found). The item itself is not touched. */
+    fun removeFavorite(id: String) {
+        viewModelScope.launch {
+            val name = favoriteDao.get(id)?.name
+            if (favoriteDao.delete(id) > 0) messages.emit("Removed ${name ?: "it"} from favorites")
+            driveChecks.value = driveChecks.value - id
+        }
+    }
+
+    private var favoriteCheckJob: kotlinx.coroutines.Job? = null
+
+    /**
+     * Looks up, one by one, the Drive favorites saved from the connected account, as that
+     * account. Favorites of any other account are left alone: no call is made for them.
+     */
+    fun checkDriveFavorites() {
+        val hash = connectedAccountHash.value
+        val email = prefs.accountEmail?.takeIf { it.isNotBlank() }
+        val due = com.drivelift.app.data.driveFavoritesToCheck(favorites.value, hash)
+        if (hash == null || email == null || due.isEmpty()) return
+        favoriteCheckJob?.cancel()
+        driveChecks.value = driveChecks.value + due.associate { it.id to com.drivelift.app.data.DriveCheck.Checking }
+        favoriteCheckJob = viewModelScope.launch {
+            for (favorite in due) {
+                // The account may change while the list is checked; stop rather than ask as another.
+                if (connectedAccountHash.value != hash) break
+                val check = lookUpDriveFavorite(favorite.itemId, email)
+                driveChecks.value = driveChecks.value + (favorite.id to check)
+            }
+        }
+    }
+
+    private suspend fun lookUpDriveFavorite(driveId: String, email: String): com.drivelift.app.data.DriveCheck =
+        try {
+            driveFolders.fileInfo(driveId, email)?.let { com.drivelift.app.data.DriveCheck.Found(it) }
+                ?: com.drivelift.app.data.DriveCheck.Missing
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: com.drivelift.app.drive.AccountChangedException) {
+            com.drivelift.app.data.DriveCheck.Failed("The connected Google account changed. Try again.")
+        } catch (e: com.drivelift.app.drive.AuthRequiredException) {
+            com.drivelift.app.data.DriveCheck.Failed("Google Drive authorization expired. Reconnect and try again.")
+        } catch (e: com.drivelift.app.drive.DriveHttpException) {
+            if (e.code == 403) com.drivelift.app.data.DriveCheck.Denied(
+                "This account can no longer open it. The owner may have stopped sharing it.",
+            ) else com.drivelift.app.data.DriveCheck.Failed("Could not check it. ${com.drivelift.app.transfer.describeError(e)}.")
+        } catch (e: Exception) {
+            com.drivelift.app.data.DriveCheck.Failed("Could not check it. ${com.drivelift.app.transfer.describeError(e)}.")
+        }
+
+    /** A Drive folder to show next in the Drive tab, set when a favorite folder is opened. */
+    data class DriveFolderRequest(val id: String, val name: String)
+
+    val driveFolderRequest = MutableStateFlow<DriveFolderRequest?>(null)
+
+    fun openDriveFolder(file: com.drivelift.app.drive.DriveFile) {
+        driveFolderRequest.value = DriveFolderRequest(file.id, file.name)
+        tab.value = TAB_DRIVE
+    }
+
     val live = LiveProgress.state
     val pickerMetrics = MutableStateFlow(PickerWindowMetrics())
     val gridDensity: StateFlow<GridDensity> = graph.prefs.gridDensity

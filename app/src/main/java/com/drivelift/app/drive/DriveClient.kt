@@ -126,6 +126,15 @@ interface DriveFolders {
      */
     suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String): Unit =
         throw IOException("Moving files is not available")
+
+    /**
+     * Looks one file or folder up as [account], for a favorite saved from that account. Null when
+     * Drive says it does not exist. A trashed item is returned with `trashed` set. Throws
+     * [AccountChangedException], without sending anything, when the connected account is no
+     * longer [account], so a favorite is never looked up under another account.
+     */
+    suspend fun fileInfo(fileId: String, account: String): DriveFile? =
+        throw IOException("Looking files up is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -511,6 +520,18 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         val url = "$API/files/$fileId".toHttpUrl().newBuilder()
             .addQueryParameter("fields", FILE_FIELDS).build()
         return execute({ Request.Builder().url(url) }) { r ->
+            when {
+                r.code == 404 -> null
+                !r.isSuccessful -> fail(r)
+                else -> parseFile(JSONObject(r.body!!.string()))
+            }
+        }
+    }
+
+    override suspend fun fileInfo(fileId: String, account: String): DriveFile? {
+        val url = "$API/files/$fileId".toHttpUrl().newBuilder()
+            .addQueryParameter("fields", FILE_FIELDS).build()
+        return execute({ Request.Builder().url(url) }, account = account) { r ->
             when {
                 r.code == 404 -> null
                 !r.isSuccessful -> fail(r)

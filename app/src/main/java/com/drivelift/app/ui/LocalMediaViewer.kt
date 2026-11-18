@@ -18,6 +18,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -57,6 +58,7 @@ fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit, onD
     val transform = remember(item.id) { ImageTransformState() }
     // For videos the top bar hides together with the player controls, for a clear picture.
     var chromeVisible by remember(item.id) { mutableStateOf(true) }
+    val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val openElsewhere: () -> Unit = {
         openLocalExternally(context, item)?.let { vm.messages.tryEmit(it) }
     }
@@ -83,6 +85,8 @@ fun LocalMediaViewer(vm: AppViewModel, item: MediaItem, onClose: () -> Unit, onD
             onOpenExternally = openElsewhere,
             modifier = Modifier.align(Alignment.TopCenter),
             onDelete = onDelete,
+            favorite = com.drivelift.app.data.phoneMediaKey(item.id) in favoriteIds,
+            onToggleFavorite = { vm.toggleFavorite(item) },
         )
     }
 }

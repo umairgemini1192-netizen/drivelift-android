@@ -92,7 +92,9 @@ Enforce these in code and tests, not only in this document.
   `VERIFIED`), are left out of (b).
 - Analytics, crash reporting, ads, or any network call to a host other than Google's APIs.
 - Storing tokens, passwords, or account identifiers anywhere except the account email kept in
-  app-private preferences to pin background token requests.
+  app-private preferences to pin background token requests. **Scope (issue #42):** a Drive
+  favorite records a one-way SHA-256 of that email in the app-private database, so it opens and
+  is looked up only for the account it was starred with; the email itself is not stored there.
 - Emoji anywhere (UI, code, comments, docs, commit messages). Em-dashes in UI copy.
 
 ## Native design system

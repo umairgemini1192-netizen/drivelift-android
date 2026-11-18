@@ -167,8 +167,11 @@ fun AppRoot(vm: AppViewModel) {
     var selectionSynced by remember { mutableStateOf(false) }
     var viewingDriveFile by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
+    // Favorites opens over the Phone or Drive tab; Back returns there (issues #36 and #42).
+    var showFavorites by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
+    val inFavorites = showFavorites && tab != AppViewModel.TAB_TRANSFERS
 
     LaunchedEffect(selection) {
         if (!selectionSynced) {
@@ -184,6 +187,10 @@ fun AppRoot(vm: AppViewModel) {
             pickingDestination = false
         }
     }
+
+    // Favorites belongs to the Phone and Drive tabs; leaving for Transfers (for example from a
+    // notification) closes it.
+    LaunchedEffect(tab) { if (tab == AppViewModel.TAB_TRANSFERS) showFavorites = false }
 
     // Settings opens over Transfers; Back returns there.
     BackHandler(enabled = inSettings && !pickingDestination) { showSettings = false }
@@ -208,7 +215,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inSettings && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inSettings && !inFavorites && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -258,6 +265,19 @@ fun AppRoot(vm: AppViewModel) {
                                 vm.startTransfer(dest)
                             },
                         )
+                        inFavorites -> FavoritesScreen(
+                            vm = vm,
+                            onBack = { showFavorites = false },
+                            onOpenPhoneFolder = { bucketId ->
+                                showFavorites = false
+                                vm.tab.value = AppViewModel.TAB_PHONE
+                                openBucket = bucketId
+                            },
+                            onOpenDriveFolder = { file ->
+                                showFavorites = false
+                                vm.openDriveFolder(file)
+                            },
+                        )
                         tab == AppViewModel.TAB_PHONE -> when {
                             !hasPermission -> PermissionGate(
                                 onGrant = { permissionLauncher.launch(MediaAccess.runtimePermissions()) }
@@ -273,6 +293,7 @@ fun AppRoot(vm: AppViewModel) {
                             )
                             else -> PhoneScreen(
                                 vm = vm,
+                                onOpenFavorites = { showFavorites = true },
                                 onOpen = { openBucket = it },
                                 onMoveFolder = {
                                     vm.selectFolder(it)
@@ -285,6 +306,7 @@ fun AppRoot(vm: AppViewModel) {
                             vm = vm,
                             pickMode = false,
                             onViewingFileChange = { viewingDriveFile = it },
+                            onOpenFavorites = { showFavorites = true },
                         )
                         else -> TransfersScreen(vm, onOpenSettings = { showSettings = true })
                     }

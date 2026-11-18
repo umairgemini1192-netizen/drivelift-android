@@ -64,6 +64,8 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.performScrollToNode
+import kotlinx.coroutines.flow.first
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -999,6 +1001,221 @@ class ScreenshotTest {
         runBlocking { fence.endTrash("d1", trashedNow = false) }
     }
 
+    // ------------------------------------------------------------------ favorites (issues #36, #42)
+
+    private val favoriteDao get() = Graph.get(app).db.favorites()
+
+    /** Leaves exactly [favorites] saved, so every variant starts from the same list. */
+    private fun setFavorites(vararg favorites: com.drivelift.app.data.FavoriteEntity) = runBlocking {
+        favoriteDao.observe().first().forEach { favoriteDao.delete(it.id) }
+        favorites.forEach { favoriteDao.upsert(it) }
+    }
+
+    private fun savedFavoriteIds(): Set<String> = runBlocking { favoriteDao.observe().first().mapTo(HashSet()) { it.id } }
+
+    private val myAccount get() = com.drivelift.app.data.accountHash(TEST_EMAIL)
+
+    private fun phoneFolderFavorite(bucket: Long, name: String, path: String, added: Long) =
+        com.drivelift.app.data.FavoriteEntity(
+            id = com.drivelift.app.data.phoneFolderKey(bucket), kind = com.drivelift.app.data.FavoriteKind.PHONE_FOLDER.name,
+            itemId = bucket.toString(), accountHash = null, uri = null, name = name, mime = "", size = 0,
+            location = path, addedAt = added,
+        )
+
+    private fun phoneMediaFavorite(id: Long, name: String, added: Long) = com.drivelift.app.data.FavoriteEntity(
+        id = com.drivelift.app.data.phoneMediaKey(id), kind = com.drivelift.app.data.FavoriteKind.PHONE_MEDIA.name,
+        itemId = id.toString(), accountHash = null, uri = "content://media/external/images/media/$id", name = name,
+        mime = "image/jpeg", size = 3_400_000, location = "DCIM/Camera", addedAt = added,
+    )
+
+    private fun driveFavorite(driveId: String, name: String, folder: Boolean, added: Long, account: String = myAccount) =
+        com.drivelift.app.data.favoriteOf(
+            DriveFile(driveId, name, if (folder) DriveClient.FOLDER_MIME else "image/jpeg", 2_100_000, null, false),
+            account, "My Drive",
+        ).copy(addedAt = added)
+
+    /** Every kind of favorite, including ones that can no longer be opened. */
+    private fun seedMixedFavorites() = setFavorites(
+        phoneFolderFavorite(100, "Camera", "DCIM/Camera", added = 10),
+        phoneMediaFavorite(999, "IMG_0999.jpg", added = 9),
+        phoneMediaFavorite(1, "IMG_0001.jpg", added = 8),
+        driveFavorite("f1", "Archive 2024", folder = true, added = 7),
+        driveFavorite("d2", "Scan_0042.jpg", folder = false, added = 6),
+        driveFavorite("binned", "Old receipt.jpg", folder = false, added = 5),
+        driveFavorite("gone", "Deleted scan.jpg", folder = false, added = 4),
+        driveFavorite(
+            "d9", "Their holiday.jpg", folder = false, added = 3,
+            account = com.drivelift.app.data.accountHash("someone.else@example.com"),
+        ),
+    )
+
+    private fun openFavoritesFromPhone() {
+        waitFor("Favorites")
+        compose.onNodeWithText("Favorites").performClick()
+        waitFor("On this phone")
+    }
+
+    /** The Favorites view with available and unavailable phone items, and the start of the Drive part. */
+    @Test
+    fun favorites() {
+        grantMedia()
+        eachVariant(
+            "favorites", expect = "Unavailable", connected = true,
+            act = {
+                seedMixedFavorites()
+                openFavoritesFromPhone()
+                waitFor(com.drivelift.app.data.FavoriteReasons.MEDIA_GONE)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** The Drive part of Favorites, scrolled into view: trashed, missing and other-account items. */
+    @Test
+    fun favoritesDriveSection() {
+        grantMedia()
+        eachVariant(
+            "favorites-drive", expect = com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT, connected = true,
+            act = {
+                seedMixedFavorites()
+                openFavoritesFromPhone()
+                compose.onNodeWithTag("favorites-list").performScrollToNode(hasText("Their holiday.jpg"))
+                waitFor(com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** Removing the last favorite leaves the empty state, which says how to add one. */
+    @Test
+    fun favoritesEmpty() {
+        grantMedia()
+        eachVariant(
+            "favorites-empty", expect = "No favorites yet", connected = true,
+            act = {
+                setFavorites(phoneFolderFavorite(100, "Camera", "DCIM/Camera", added = 1))
+                openFavoritesFromPhone()
+                settle {
+                    compose.onAllNodesWithContentDescription("Remove Camera from favorites").fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithContentDescription("Remove Camera from favorites").press()
+                settle { savedFavoriteIds().isEmpty() }
+                settle { compose.onAllNodesWithText("No favorites yet", substring = true).fetchSemanticsNodes().isNotEmpty() }
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** The way into Favorites at the top of My Drive, with a starred folder. */
+    @Test
+    fun driveFavoritesEntry() {
+        grantMedia()
+        eachVariant(
+            "drive-favorites-entry", expect = "1 folder or file", connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            act = {
+                setFavorites(driveFavorite("f1", "Archive 2024", folder = true, added = 1))
+                waitFor("Scan_0042.jpg")
+                settle {
+                    compose.onAllNodesWithContentDescription("Remove Archive 2024 from favorites")
+                        .fetchSemanticsNodes().isNotEmpty()
+                }
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Real composables end to end: star a photo in the viewer and a Drive folder in its row, find
+     * both in Favorites (saved in Room), open the photo in the viewer and the folder in Drive.
+     */
+    @Test
+    fun starringAndOpeningFavorites() {
+        grantMedia()
+        eachVariant(
+            "favorites-flow", expect = null, connected = true, capture = false,
+            act = {
+                setFavorites()
+                // A photo, starred in the phone viewer.
+                waitFor("Camera")
+                compose.onNodeWithText("Camera").performClick()
+                waitFor("Select all")
+                compose.onAllNodesWithContentDescription("IMG_0001.jpg").onFirst().performClick()
+                settle { compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithContentDescription("Add IMG_0001.jpg to favorites").press()
+                settle { com.drivelift.app.data.phoneMediaKey(1) in savedFavoriteIds() }
+                settle {
+                    compose.onAllNodesWithContentDescription("Remove IMG_0001.jpg from favorites")
+                        .fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithContentDescription("Close viewer").press()
+                waitFor("Select all")
+                compose.onNodeWithContentDescription("Back to folders").press()
+
+                // A Drive folder, starred in its row; the key binds it to the connected account.
+                currentVm!!.tab.value = AppViewModel.TAB_DRIVE
+                waitFor("Scan_0042.jpg")
+                settle {
+                    compose.onAllNodesWithContentDescription("Add Archive 2024 to favorites").fetchSemanticsNodes().isNotEmpty()
+                }
+                compose.onNodeWithContentDescription("Add Archive 2024 to favorites").press()
+                settle { com.drivelift.app.data.driveKey(myAccount, "f1") in savedFavoriteIds() }
+                assertEquals(2, savedFavoriteIds().size)
+
+                // Favorites lists both; the photo opens in the viewer.
+                waitFor("2 folders and files")
+                compose.onNodeWithText("2 folders and files").performClick()
+                waitFor("On this phone")
+                waitFor("Google Drive")
+                compose.onNodeWithText("IMG_0001.jpg").performClick()
+                settle { compose.onAllNodesWithTag("viewer-image").fetchSemanticsNodes().isNotEmpty() }
+                compose.onNodeWithText("Photo on this phone", substring = true).assertExists()
+                compose.onNodeWithContentDescription("Close viewer").press()
+
+                // The folder opens in the Drive tab.
+                // Clickable once Drive has confirmed the folder is still there.
+                val archive = hasText("Archive 2024") and hasClickAction()
+                settle { compose.onAllNodes(archive).fetchSemanticsNodes().isNotEmpty() }
+                compose.onNode(archive).press()
+                waitFor("This folder is empty.")
+                compose.onNodeWithContentDescription("Up one folder").assertExists()
+                assertEquals(AppViewModel.TAB_DRIVE, currentVm!!.tab.value)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Recovery: favorites that cannot be opened stay listed with their reason and can be removed;
+     * the Drive favorite of another account is never looked up.
+     */
+    @Test
+    fun unavailableFavoritesShowWhyAndCanBeRemoved() {
+        grantMedia()
+        val drive = FakeDrive()
+        eachVariant(
+            "favorites-recovery", expect = null, connected = true, capture = false, drive = drive,
+            act = {
+                seedMixedFavorites()
+                openFavoritesFromPhone()
+                val list = compose.onNodeWithTag("favorites-list")
+                for (reason in listOf(
+                    com.drivelift.app.data.FavoriteReasons.MEDIA_GONE,
+                    com.drivelift.app.data.FavoriteReasons.DRIVE_TRASHED,
+                    com.drivelift.app.data.FavoriteReasons.DRIVE_MISSING,
+                    com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT,
+                )) {
+                    list.performScrollToNode(hasText(reason))
+                    waitFor(reason)
+                }
+                assertTrue("Only the connected account's favorites are looked up", "d9" !in drive.lookedUp)
+                assertTrue(drive.lookedUp.containsAll(listOf("f1", "d2", "binned", "gone")))
+
+                // Remove the missing phone photo: only its row goes; the phone listing is untouched.
+                list.performScrollToNode(hasText("IMG_0999.jpg"))
+                compose.onAllNodesWithText("Remove").onFirst().press()
+                settle { com.drivelift.app.data.phoneMediaKey(999) !in savedFavoriteIds() }
+                assertEquals(7, savedFavoriteIds().size)
+                assertEquals(13, currentVm!!.media.value.size)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun folderLargeDensity() {
         grantMedia()
@@ -1541,7 +1758,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.19 (build 18)",
+            "build-id", expect = "DriveLift 1.0.0-preview.22 (build 21)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -2035,6 +2252,18 @@ class ScreenshotTest {
             moves += Triple(fileId, fromFolderId, toFolderId)
         }
         override suspend fun createFolder(name: String, parentId: String) = create(name)
+
+        /** Drive ids the app looked up for favorites, in order. */
+        val lookedUp = java.util.Collections.synchronizedList(mutableListOf<String>())
+        override suspend fun fileInfo(fileId: String, account: String): DriveFile? {
+            assertEquals("Favorites are looked up only as the connected account", TEST_EMAIL, account)
+            lookedUp += fileId
+            return when (fileId) {
+                "gone" -> null
+                "binned" -> DriveFile("binned", "Old receipt.jpg", "image/jpeg", 90_000, null, trashed = true)
+                else -> (FOLDERS + FILES).firstOrNull { it.id == fileId }
+            }
+        }
 
         override suspend fun loadThumbnail(file: DriveFile, maxEdgePx: Int): ByteArray? = when (file.id) {
             "d2" -> pictureBytes(2)
