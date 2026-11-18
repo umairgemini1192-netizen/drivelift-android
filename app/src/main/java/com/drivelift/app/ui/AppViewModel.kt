@@ -341,11 +341,18 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * A phone trash request (issue #36): the exact batch, and whether Android's dialog has been
-     * started for it. Kept here, outside the lock-gated screen, so neither a rotation nor the app
-     * locking while Android's dialog is open can lose the result (see PhoneTrashHost).
+     * A phone trash request (issue #36). [ids] is what the user confirmed; [submitted] is the
+     * exact list of URIs handed to Android once its dialog is started (files that left the folder
+     * in between are not sent and are counted in [notSent]). Kept here, outside the lock-gated
+     * screen, so a rotation or the app locking cannot lose it; PhoneTrashHost also keeps a saved
+     * copy of [submitted] for process recreation.
      */
-    data class PendingTrash(val ids: List<Long>, val launched: Boolean = false)
+    data class PendingTrash(
+        val ids: List<Long>,
+        val launched: Boolean = false,
+        val submitted: List<String> = emptyList(),
+        val notSent: Int = 0,
+    )
 
     val pendingTrash = MutableStateFlow<PendingTrash?>(null)
 
@@ -354,54 +361,75 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (ids.isNotEmpty()) pendingTrash.value = PendingTrash(ids)
     }
 
-    /** Builds Android's request for the pending batch and marks it started, so it is never shown twice. */
+    /**
+     * Records the exact URIs sent to Android for the pending batch, marks it started (so it is
+     * never shown twice) and builds Android's request. Returns null when nothing is left to send.
+     */
     fun startPendingTrash(): android.app.PendingIntent? {
         val pending = pendingTrash.value?.takeIf { !it.launched } ?: return null
-        pendingTrash.value = pending.copy(launched = true)
         val byId = media.value.associateBy { it.id }
         val uris = pending.ids.mapNotNull { byId[it]?.uri }
+        if (uris.isEmpty()) {
+            pendingTrash.value = null
+            messages.tryEmit("These files are no longer in the folder. Nothing was sent to the trash.")
+            return null
+        }
+        pendingTrash.value = pending.copy(
+            launched = true,
+            submitted = uris.map { it.toString() },
+            notSent = pending.ids.size - uris.size,
+        )
         return graph.trashRequest(getApplication<android.app.Application>().contentResolver, uris)
     }
 
     /**
-     * Android answered (or could not show its dialog): report the result for the pending batch.
-     * [savedIds] is PhoneTrashHost's saved copy, used when the process was recreated while
-     * Android's dialog was open and this view model starts without the batch.
+     * Android answered (or could not show its dialog). The result applies only to the submitted
+     * URIs. [savedSubmitted] is PhoneTrashHost's saved copy, used when the process was recreated
+     * while Android's dialog was open and this view model starts without the batch.
      */
-    fun pendingTrashFinished(confirmed: Boolean, failure: String? = null, savedIds: List<Long>? = null) {
-        val ids = pendingTrash.value?.ids ?: savedIds ?: return
+    fun pendingTrashFinished(confirmed: Boolean, failure: String? = null, savedSubmitted: List<String>? = null) {
+        val pending = pendingTrash.value
+        val submitted = pending?.submitted?.takeIf { it.isNotEmpty() } ?: savedSubmitted
         pendingTrash.value = null
         if (failure != null) {
             messages.tryEmit("Android could not open the trash request: $failure")
             return
         }
-        finishPhoneDelete(ids, confirmed)
+        if (submitted.isNullOrEmpty()) return
+        finishPhoneTrash(submitted, pending?.notSent ?: 0, confirmed)
+    }
+
+    /** The user cancelled DriveLift's own confirmation: nothing was sent. */
+    fun cancelPhoneDelete() {
+        messages.tryEmit("Nothing was moved to the trash.")
     }
 
     /**
-     * After Android finished the trash request: reloads the phone listing and reports, per file,
-     * how many really left the folders. Selection is cleared because the items are gone.
+     * After Android finished the trash request: reads each submitted file's trash state back from
+     * MediaStore and reports confirmed, still present and unchecked files separately. Nothing is
+     * inferred from the file having left the listing.
      */
-    fun finishPhoneDelete(ids: List<Long>, confirmed: Boolean) {
+    private fun finishPhoneTrash(submitted: List<String>, notSent: Int, confirmed: Boolean) {
         viewModelScope.launch {
             if (!confirmed) {
                 messages.emit("Nothing was moved to the trash.")
                 return@launch
             }
+            val resolver = getApplication<android.app.Application>().contentResolver
+            val states = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                submitted.map { graph.trashState(resolver, android.net.Uri.parse(it)) }
+            }
+            lastTrashOutcome = com.drivelift.app.data.trashOutcome(states, notSent)
             graph.media.refresh()
-            val remaining = media.value.map { it.id }.toSet()
-            val stillHere = ids.count { it in remaining }
-            val moved = ids.size - stillHere
             clearSelection()
-            messages.emit(
-                when {
-                    stillHere == 0 -> if (moved == 1) "1 file moved to this phone's trash" else "$moved files moved to this phone's trash"
-                    moved == 0 -> "No files were moved to the trash."
-                    else -> "$moved moved to this phone's trash; $stillHere could not be moved"
-                },
-            )
+            messages.emit(lastTrashOutcome!!.message())
         }
     }
+
+    /** The last reported trash result; read by tests. */
+    @Volatile
+    var lastTrashOutcome: com.drivelift.app.data.TrashOutcome? = null
+        private set
 
     companion object {
         const val TAB_PHONE = 0

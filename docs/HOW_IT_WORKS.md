@@ -148,8 +148,11 @@ shows its own dialog. Cancel changes nothing.
 
 Files that are part of a transfer (waiting, uploading, being checked, or verified and waiting for
 removal on Transfers) are left out of the batch and named; finish or cancel them in Transfers
-first. After Android completes the request, DriveLift reloads the folder and reports how many
-files really moved to the trash and how many could not.
+first. DriveLift remembers exactly which files it sent to Android. After Android completes the
+request, it reads each of those files back from MediaStore and reports how many are confirmed in
+the trash, how many are still on the phone and how many could not be checked (for example after
+media access was withdrawn). Files that left the folder before the request was sent are not
+sent and are reported as such. A file missing from the listing is never counted as trashed.
 
 ## Viewing Drive videos
 

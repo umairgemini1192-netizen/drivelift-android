@@ -41,4 +41,16 @@ class PhoneDeletePlanTest {
         assertEquals(0, plan.blocked.size)
         assertEquals(1_000L, plan.totalBytes)
     }
+
+    @Test
+    fun trashResultWordingSaysWhatWasConfirmed() {
+        assertEquals("3 files moved to this phone's trash", trashOutcome(List(3) { TrashState.TRASHED }, notSent = 0).message())
+        assertEquals("1 file moved to this phone's trash", trashOutcome(listOf(TrashState.TRASHED), notSent = 0).message())
+        assertEquals(
+            "2 moved to this phone's trash; 1 was no longer in the folder and was not sent",
+            trashOutcome(List(2) { TrashState.TRASHED }, notSent = 1).message(),
+        )
+        assertEquals("1 could not be checked", trashOutcome(listOf(TrashState.UNKNOWN), notSent = 0).message())
+        assertEquals(TrashOutcome(0, 2, 0, 0), trashOutcome(List(2) { TrashState.PRESENT }, notSent = 0))
+    }
 }

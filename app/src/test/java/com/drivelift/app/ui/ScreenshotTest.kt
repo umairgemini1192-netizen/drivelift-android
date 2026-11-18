@@ -443,12 +443,16 @@ class ScreenshotTest {
         pump(12)
         val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
         compose.waitUntil(5_000) { pump(1); vm.media.value.any { it.id == img1.id } }
-        vm.requestPhoneTrash(listOf(img1.id))
-        assertEquals(listOf(img1.id), vm.pendingTrash.value?.ids)
-        // Started once only, even if asked again (as after recomposition).
+        // IMG_0001 is in the folder; id 999999 left it after the user confirmed.
+        vm.requestPhoneTrash(listOf(img1.id, 999_999L))
+        assertEquals(listOf(img1.id, 999_999L), vm.pendingTrash.value?.ids)
+        // Started once only, even if asked again (as after recomposition), with exactly the file
+        // still present; the one that left is counted as not sent.
         Graph.get(app).trashRequest = { _, _ -> throw IllegalStateException("No Android trash dialog in tests") }
         runCatching { vm.startPendingTrash() }
         assertEquals(true, vm.pendingTrash.value?.launched)
+        assertEquals(listOf(img1.uri.toString()), vm.pendingTrash.value?.submitted)
+        assertEquals(1, vm.pendingTrash.value?.notSent)
         assertEquals(null, vm.startPendingTrash())
         // The lock removes AppRoot; nothing in the screen holds the request. Android answers.
         Graph.get(app).lock.lock()
@@ -463,8 +467,46 @@ class ScreenshotTest {
         assertEquals(null, fresh.pendingTrash.value)
         fresh.setSelected(listOf(img1.id, 999_999L), true)
         compose.waitUntil(5_000) { pump(1); fresh.selection.value == setOf(img1.id) }
-        fresh.pendingTrashFinished(confirmed = false, savedIds = listOf(img1.id))
+        // Android confirmed after recreation: only the saved submitted URI is checked, and its
+        // state comes from MediaStore, not from the listing.
+        val checked = mutableListOf<String>()
+        Graph.get(app).trashState = { _, uri -> checked += uri.toString(); com.drivelift.app.data.TrashState.TRASHED }
+        fresh.pendingTrashFinished(confirmed = true, savedSubmitted = listOf(img1.uri.toString()))
+        compose.waitUntil(5_000) { pump(1); fresh.lastTrashOutcome != null }
+        assertEquals(listOf(img1.uri.toString()), checked)
+        assertEquals(com.drivelift.app.data.TrashOutcome(trashed = 1, stillPresent = 0, unknown = 0, notSent = 0), fresh.lastTrashOutcome)
         assertEquals(null, fresh.pendingTrash.value)
+    }
+
+    /**
+     * ChatGPT review on 27ea5ba: results are counted only over submitted files and read back from
+     * MediaStore. A file that vanished from the listing (here: media access withdrawn, so the
+     * listing is empty) is "could not be checked", never "moved to the trash".
+     */
+    @Test
+    fun phoneTrashResultsAreReadBackPerSubmittedFile() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val imgs = FakeMediaStore.files.filter { !it.video }.take(3)
+        compose.waitUntil(5_000) { pump(1); imgs.all { f -> vm.media.value.any { it.id == f.id } } }
+        Graph.get(app).trashRequest = { _, _ -> throw IllegalStateException("No Android trash dialog in tests") }
+        vm.requestPhoneTrash(imgs.map { it.id })
+        runCatching { vm.startPendingTrash() }
+        assertEquals(imgs.map { it.uri.toString() }, vm.pendingTrash.value?.submitted)
+        // One confirmed in the trash, one still present, one unreadable after access was withdrawn.
+        val states = mapOf(
+            imgs[0].uri.toString() to com.drivelift.app.data.TrashState.TRASHED,
+            imgs[1].uri.toString() to com.drivelift.app.data.TrashState.PRESENT,
+            imgs[2].uri.toString() to com.drivelift.app.data.TrashState.UNKNOWN,
+        )
+        Graph.get(app).trashState = { _, uri -> states.getValue(uri.toString()) }
+        shadowOf(app).denyPermissions(Manifest.permission.READ_MEDIA_IMAGES, Manifest.permission.READ_MEDIA_VIDEO)
+        vm.pendingTrashFinished(confirmed = true)
+        compose.waitUntil(5_000) { pump(1); vm.lastTrashOutcome != null }
+        val outcome = vm.lastTrashOutcome!!
+        assertEquals(com.drivelift.app.data.TrashOutcome(trashed = 1, stillPresent = 1, unknown = 1, notSent = 0), outcome)
+        assertEquals("1 moved to this phone's trash; 1 still on the phone; 1 could not be checked", outcome.message())
     }
 
     /** Without Media management and nothing held back, Android's own dialog confirms (invariant 3). */
