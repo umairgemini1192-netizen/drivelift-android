@@ -151,6 +151,76 @@ class ZipBrowseTest {
         assertTrue((result as ZipListResult.Refused).reason.contains("Encrypted"))
     }
 
+    /** An archive whose names are IBM437 (no UTF-8 flag), as Windows archivers write non-ASCII names. */
+    private fun ibm437Zip(name: String): ByteArray {
+        val out = ByteArrayOutputStream()
+        ZipOutputStream(out, java.nio.charset.Charset.forName("IBM437")).use { zos ->
+            zos.putNextEntry(ZipEntry(name))
+            zos.write("x".toByteArray())
+            zos.closeEntry()
+        }
+        return out.toByteArray()
+    }
+
+    @Test
+    fun ibm437NameListsAsItsDecodedText() {
+        val bytes = ibm437Zip("café.txt")
+        val result = listOf(bytes) as ZipListResult.Listed
+        assertEquals("café.txt", result.entries.single().path)
+    }
+
+    @Test
+    fun ibm437NameCanBeOpenedByItsDecodedText() {
+        val bytes = ibm437Zip("café.txt")
+        val opened = ZipBrowse.open(ZipSource.of(bytes), "café.txt", maxBytes = 100)
+        assertArrayEquals("x".toByteArray(), (opened as ZipOpenResult.Opened).bytes)
+    }
+
+    @Test
+    fun nameFlaggedAsUtf8ButNotValidUtf8IsRefusedNotThrown() {
+        val bytes = ibm437Zip("café.txt")
+        // Set the UTF-8 flag (bit 11) on the central directory record: 0x82 is not valid UTF-8.
+        val cen = find(bytes, centralSig)
+        bytes[cen + 9] = (bytes[cen + 9].toInt() or 0x08).toByte()
+        val result = listOf(bytes)
+        assertTrue(result is ZipListResult.Refused)
+        assertTrue((result as ZipListResult.Refused).reason.contains("UTF-8"))
+    }
+
+    @Test
+    fun utf8NameWithAccentListsCorrectly() {
+        val bytes = zip("café.txt" to "x".toByteArray())
+        val result = listOf(bytes) as ZipListResult.Listed
+        assertEquals("café.txt", result.entries.single().path)
+    }
+
+    @Test
+    fun streamIsClosedWhenTheStartIsNotAZipHeader() {
+        // A valid directory whose first local header signature is corrupted: the walk refuses at
+        // the start, and the stream it opened for that must still be closed.
+        val bytes = zip("a.txt" to ByteArray(3))
+        bytes[2] = 7
+        var opened = 0
+        var closed = 0
+        val source = object : ZipSource {
+            override val length: Long = bytes.size.toLong()
+            override fun open(offset: Long): java.io.InputStream {
+                opened++
+                val inner = java.io.ByteArrayInputStream(bytes, offset.toInt(), bytes.size - offset.toInt())
+                return object : java.io.FilterInputStream(inner) {
+                    override fun close() {
+                        closed++
+                        super.close()
+                    }
+                }
+            }
+        }
+        val result = ZipBrowse.list(source)
+        assertTrue(result is ZipListResult.Refused)
+        assertEquals("This file is not a ZIP archive.", (result as ZipListResult.Refused).reason)
+        assertEquals(opened, closed)
+    }
+
     @Test
     fun openReturnsTheBytesOfAFileEntry() {
         val bytes = zip("docs/readme.txt" to "hello".toByteArray(), "other.bin" to ByteArray(3))
