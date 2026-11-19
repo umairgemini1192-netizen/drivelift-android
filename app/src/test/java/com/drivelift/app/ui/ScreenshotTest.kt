@@ -64,7 +64,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
+import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -1900,8 +1900,26 @@ class ScreenshotTest {
         waitFor("Photos and videos")
     }
 
+    /**
+     * Scrolls the Storage list until a node with [text] is fully inside it. performScrollToNode
+     * animates the lazy list, and that animation never ends while the test clock is paused, so
+     * this jumps one item at a time instead (scrollToItem, no animation).
+     */
     private fun scrollStorageTo(text: String) {
-        compose.onNodeWithTag("storage-list").performScrollToNode(hasText(text, substring = true))
+        val list = compose.onNodeWithTag("storage-list")
+        fun inView(): Boolean {
+            val bounds = list.fetchSemanticsNode().boundsInRoot
+            return compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().any {
+                it.boundsInRoot.top >= bounds.top && it.boundsInRoot.bottom <= bounds.bottom
+            }
+        }
+        var index = 0
+        while (!inView()) {
+            // The screen has a few dozen items at most; past the last one the scroll itself fails.
+            assertTrue("\"$text\" is not in the Storage list", index < 100)
+            list.performScrollToIndex(index++)
+            pump(2)
+        }
         pump(4)
     }
 
