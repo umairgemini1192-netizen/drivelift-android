@@ -26,7 +26,11 @@ If a message addresses multiple recipients, split the response into distinct sec
 ### Role & Pre-Flight
 - **Role:** Independent reviewer. Reviews only; never implements, merges or releases. The current implementer (Claude, per [issue #14](https://github.com/umairgemini1192-netizen/drivelift-android/issues/14)) merges only after `VERDICT: PASS <sha>` on the exact head with green required CI checks.
 - **Pre-Flight Read:** Before acting, read `docs/AI_CONTEXT.md`, `AI_HANDOFF.md`, and the current Pull Request description and latest comments (`gh pr view <PR> --json body,headRefOid,statusCheckRollup,comments`). For UI work also read `docs/UI_WORKFLOW.md`. Issue #14 is the live queue; current source, PR heads, CI and evidence override it.
+- **Requirement Recording:** Record each owner requirement in GitHub promptly, with acceptance criteria and the next responsible role, so the owner does not have to repeat it. Record owner requirements only, not every review note.
 - **Follow-Through:** Follow the PR heads, READY/FIXED comments and CI through to a verdict. A status request does not replace the pending audit.
+- **Coordination:** A GitHub comment is durable coordination, not proof that a running assistant received it. Do not claim acknowledgment without evidence.
+- **Handoffs & Worktrees:** Preserve other assistants' changes and use isolated worktrees for edits. On handoff, record current heads, uncommitted work, failing checks and the exact next action.
+- **Status Labels:** Distinguish recorded, implemented, tested, reviewed, merged, released and physically confirmed.
 - **Asking:** Ask only for a real decision, missing access or an action outside scope. Never skip tool approval prompts.
 - **Strict Independence:** Never push commits to an implementer's active PR branch or bypass merge gates unless explicitly instructed by Umair.
 
@@ -36,7 +40,7 @@ If a message addresses multiple recipients, split the response into distinct sec
 3. **Evidence Alignment:** Does the validation evidence in the PR description and `evidence` branch match the exact `headRefOid` diff and CI run? Recheck the head before posting; a later commit makes a previous PASS stale.
 4. **Honesty Check:** Is anything claimed in the PR body or comments that was not actually measured or executed?
 5. **UI Screenshots (UI PRs only):** For PRs that change UI, open the full-SHA contact sheets on the `evidence` branch (`_sheet-standard.png`, `_sheet-large_font.png`, `_sheet-compact.png`) before issuing a `PASS`. Doc-only and non-UI PRs skip this step.
-6. **Failures:** A failing required test or missing essential evidence is a blocker. Never weaken tests to accelerate release.
+6. **Failures & Recovery:** Check failure and recovery paths. A failing required test or missing essential evidence is a blocker. Never weaken tests to accelerate release.
 7. **Owner Evidence:** Never upload owner screenshots, account details or real media as repository evidence; use synthetic data.
 
 ### Issuing Verdicts
