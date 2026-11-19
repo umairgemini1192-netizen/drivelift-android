@@ -10,6 +10,7 @@ import androidx.room.Room
 import coil.ImageLoader
 import coil.ImageLoaderFactory
 import coil.decode.VideoFrameDecoder
+import com.drivelift.app.data.MediaThumbnailFetcher
 import com.drivelift.app.data.AppDatabase
 import com.drivelift.app.data.MediaRepository
 import com.drivelift.app.data.Prefs
@@ -105,7 +106,12 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
 
     override fun newImageLoader(): ImageLoader =
         ImageLoader.Builder(this)
-            .components { add(VideoFrameDecoder.Factory()) }
+            // Android's cached thumbnails first; the original file is decoded only when Android
+            // has none for it.
+            .components {
+                add(MediaThumbnailFetcher.Factory())
+                add(VideoFrameDecoder.Factory())
+            }
             .crossfade(true)
             .build()
 }
