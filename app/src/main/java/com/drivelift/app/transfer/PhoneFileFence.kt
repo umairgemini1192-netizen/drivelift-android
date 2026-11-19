@@ -15,7 +15,8 @@ import kotlinx.coroutines.sync.withLock
  *   and a group whose kept copy is gone, changed size, is in an open removal request or is being
  *   trashed is refused whole. The reservation lasts until Android has answered (including while
  *   the user is deciding), so nothing that happens after the check can undercut it.
- * - Queuing a transfer runs under the same lock and leaves out a file that is being trashed.
+ * - Queuing a transfer and retrying failed ones (the only ways a file comes to be held by a
+ *   transfer) run under the same lock and leave out a file that is being trashed.
  * - A removal request (verified files) reserves its files ("removing") until Android answered,
  *   leaving out kept copies and files being trashed.
  * - Every phone trash request leaves out kept copies and reserves what it sends.

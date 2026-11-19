@@ -2595,6 +2595,13 @@ class ScreenshotTest {
                 settle { vm.tab.value == AppViewModel.TAB_TRANSFERS }
                 assertTrue(rowsFor(wa12.uri).isEmpty())
 
+                // A failed transfer of the copy being trashed is not retried meanwhile.
+                vm.tab.value = AppViewModel.TAB_PHONE
+                seedTransfers(row(wa12.id, wa12.name, TransferStatus.FAILED, size = wa12.size, error = "Network"))
+                runBlocking { graph.transfers.retryFailed() }
+                assertEquals(listOf(TransferStatus.FAILED.name), rowsFor(wa12.uri).map { it.status })
+                runBlocking { graph.db.transfers().clearFinished() }
+
                 // The copy that stays cannot be put in a removal request meanwhile.
                 seedTransfers(row(wa13.id, wa13.name, TransferStatus.VERIFIED, size = wa13.size))
                 assertEquals(emptyList<String>(), runBlocking { graph.transfers.verifiedForRemoval(10) })
@@ -2603,6 +2610,13 @@ class ScreenshotTest {
                 // Android answered: both are free again.
                 vm.pendingTrashFinished(confirmed = false)
                 pump(4)
+                seedTransfers(row(wa12.id, wa12.name, TransferStatus.FAILED, size = wa12.size, error = "Network"))
+                runBlocking { graph.transfers.retryFailed() }
+                assertEquals(listOf(TransferStatus.QUEUED.name), rowsFor(wa12.uri).map { it.status })
+                runBlocking {
+                    graph.db.transfers().cancelAllPending()
+                    graph.db.transfers().clearFinished()
+                }
                 assertEquals(listOf(wa13.uri.toString()), runBlocking { graph.transfers.verifiedForRemoval(10) })
                 runBlocking { graph.transfers.removalFinished() }
                 vm.tab.value = AppViewModel.TAB_PHONE

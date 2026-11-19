@@ -199,7 +199,8 @@ each group keeps (`transfer/PhoneFileFence.kt`, one lock shared with queuing tra
 - a group whose kept copy is gone, changed size, is in an open removal request on Transfers, or
   is being trashed sends nothing;
 - until Android has answered (including while its dialog is open), a reserved copy cannot be
-  queued for Drive, and a kept copy cannot be put in a removal request or another trash request.
+  queued or retried for Drive, and a kept copy cannot be put in a removal request or another
+  trash request.
 
 Only copies that pass go to the released Phone trash flow (`MediaStore.createTrashRequest`, see
 "Moving phone files to the trash"): without Media management Android shows its own dialog after

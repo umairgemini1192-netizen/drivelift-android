@@ -120,8 +120,12 @@ class TransferRepository(
         LiveProgress.cancelItemId = LiveProgress.state.value.itemId
     }
 
+    /**
+     * Sends failed rows back to the queue. Like [enqueue] this runs under the [PhoneFileFence]
+     * lock: a file a phone trash request is sending stays failed until Android has answered.
+     */
     suspend fun retryFailed() {
-        dao.retryFailed()
+        phoneFence.whileEnqueueing { blocked -> dao.retryFailedExcept(blocked.toList()) }
         kickUpload(ExistingWorkPolicy.APPEND_OR_REPLACE)
     }
 
