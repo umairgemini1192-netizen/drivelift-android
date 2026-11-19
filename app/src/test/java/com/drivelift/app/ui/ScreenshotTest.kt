@@ -2683,6 +2683,41 @@ class ScreenshotTest {
         pump(12)
         assertEquals(AppViewModel.DuplicateScan.Idle, vm.duplicateScan.value)
         assertTrue(vm.duplicateGroups.value.isEmpty())
+
+        // Codex on 30fffd1: Stop while a read is blocked inside the file. When that read returns
+        // after Stop, its progress must not bring Reading back, and a new check must start.
+        val reading = CountDownLatch(1)
+        val unblock = CountDownLatch(1)
+        val readReturned = CountDownLatch(1)
+        Graph.get(app).openOriginalStream = { _, _ ->
+            object : java.io.InputStream() {
+                private var served = false
+                override fun read(): Int = throw UnsupportedOperationException()
+                override fun read(b: ByteArray, off: Int, len: Int): Int {
+                    if (served) return -1
+                    reading.countDown()
+                    unblock.await(10, java.util.concurrent.TimeUnit.SECONDS)
+                    served = true
+                    readReturned.countDown()
+                    return 1
+                }
+            }
+        }
+        try {
+            vm.startDuplicateScan()
+            assertTrue(reading.await(10, java.util.concurrent.TimeUnit.SECONDS))
+            vm.cancelDuplicateScan()
+        } finally {
+            unblock.countDown()
+        }
+        assertTrue(readReturned.await(10, java.util.concurrent.TimeUnit.SECONDS))
+        Thread.sleep(200)
+        pump(12)
+        assertEquals(AppViewModel.DuplicateScan.Idle, vm.duplicateScan.value)
+        Graph.get(app).openOriginalStream = original
+        vm.startDuplicateScan()
+        compose.waitUntil(10_000) { pump(1); vm.duplicateScan.value is AppViewModel.DuplicateScan.Done }
+        Graph.get(app).openOriginalStream = original
     }
 
     // ------------------------------------------------------------------ steps

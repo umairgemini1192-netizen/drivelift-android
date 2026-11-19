@@ -529,6 +529,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val duplicateScan = MutableStateFlow<DuplicateScan>(DuplicateScan.Idle)
     private var duplicateJob: kotlinx.coroutines.Job? = null
 
+    /**
+     * Which scan may publish its state. Stop and every new start move it on, so a read that
+     * returns after Stop (it can be blocked inside the file read) cannot bring Reading back.
+     */
+    private var duplicateScanRun = 0
+    private val duplicateScanLock = Any()
+
+    private fun publishScan(run: Int, state: DuplicateScan) {
+        synchronized(duplicateScanLock) { if (run == duplicateScanRun) duplicateScan.value = state }
+    }
+
     /** The checked groups, minus files that have since left the listing or changed size. */
     val duplicateGroups: StateFlow<List<com.drivelift.app.data.DuplicateGroup>> =
         kotlinx.coroutines.flow.combine(duplicateScan, media) { scan, items ->
@@ -574,20 +585,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val candidates = com.drivelift.app.data.sizeCandidates(media.value)
         val files = candidates.sumOf { it.size }
         val bytes = candidates.sumOf { group -> group.sumOf { it.size } }
-        duplicateScan.value = DuplicateScan.Running(0, files, 0, bytes)
+        val run = synchronized(duplicateScanLock) {
+            duplicateScanRun++
+            duplicateScan.value = DuplicateScan.Running(0, files, 0, bytes)
+            duplicateScanRun
+        }
         duplicateJob = viewModelScope.launch {
             var filesDone = 0
             var bytesDone = 0L
             val result = com.drivelift.app.data.findDuplicates(candidates) { item ->
                 digestOf(item) { read ->
                     bytesDone += read
-                    duplicateScan.value = DuplicateScan.Running(filesDone, files, bytesDone, bytes)
+                    publishScan(run, DuplicateScan.Running(filesDone, files, bytesDone, bytes))
                 }.also {
                     filesDone++
-                    duplicateScan.value = DuplicateScan.Running(filesDone, files, bytesDone, bytes)
+                    publishScan(run, DuplicateScan.Running(filesDone, files, bytesDone, bytes))
                 }
             }
-            duplicateScan.value = DuplicateScan.Done(result, graph.clock(), files)
+            publishScan(run, DuplicateScan.Done(result, graph.clock(), files))
         }
     }
 
@@ -596,7 +611,10 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         if (duplicateScan.value !is DuplicateScan.Running) return
         job.cancel()
         duplicateJob = null
-        duplicateScan.value = DuplicateScan.Idle
+        synchronized(duplicateScanLock) {
+            duplicateScanRun++
+            duplicateScan.value = DuplicateScan.Idle
+        }
         messages.tryEmit("Duplicate check stopped. Nothing was changed.")
     }
 
