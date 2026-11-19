@@ -2859,8 +2859,7 @@ class ScreenshotTest {
                 /** Confirms a cleanup of IMG-WA12 and runs [during] while its bytes are being read. */
                 fun confirmWhile(during: () -> Unit) {
                     asked.clear()
-                    vm.duplicateSelection.value = setOf(wa12.id)
-                    pump(4)
+                    selectOnlyCopy(vm, wa12.id)
                     tap("Move to trash")
                     waitFor("Move 1 copy to this phone's trash?")
                     val reading = CountDownLatch(1)
@@ -2947,8 +2946,7 @@ class ScreenshotTest {
                 val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
                 assertTrue(vm.requestPhoneTrash(listOf(img1.id)))
                 assertTrue(vm.startPendingTrash() != null)
-                vm.duplicateSelection.value = setOf(wa12.id)
-                pump(4)
+                selectOnlyCopy(vm, wa12.id)
                 tap("Move to trash")
                 waitFor("Move 1 copy to this phone's trash?")
                 confirmCleanup()
@@ -2961,8 +2959,7 @@ class ScreenshotTest {
                 pump(4)
                 asked.clear()
 
-                vm.duplicateSelection.value = setOf(wa12.id)
-                pump(4)
+                selectOnlyCopy(vm, wa12.id)
                 tap("Move to trash")
                 waitFor("Move 1 copy to this phone's trash?")
                 confirmCleanup()
@@ -3330,6 +3327,18 @@ class ScreenshotTest {
             quiet = if (imagesStarted.get() == imagesFinished.get()) quiet + 1 else 0
             assertTrue("Thumbnails never finished loading", System.currentTimeMillis() < deadline)
         }
+    }
+
+    /**
+     * Leaves [id] as the only picked copy, the way a user picks one: through the view model's
+     * toggle, then a wait until the cleanup bar shows it. Writing the selection state directly
+     * left the bar unchecked, so the next tap raced the screen.
+     */
+    private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
+        vm.duplicateSelection.value = emptySet()
+        vm.toggleDuplicate(id)
+        pump(4)
+        waitFor("1 copy selected")
     }
 
     private fun pump(times: Int) = repeat(times) {
