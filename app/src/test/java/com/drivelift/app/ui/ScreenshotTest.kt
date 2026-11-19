@@ -1600,10 +1600,13 @@ class ScreenshotTest {
         }
         pump(4)
         val list = compose.onNodeWithTag("favorites-list")
-        val half = list.fetchSemanticsNode().boundsInRoot.let { it.top + it.height / 2 }
+        val bounds = list.fetchSemanticsNode().boundsInRoot
+        val half = bounds.top + bounds.height / 2
         for (i in 0 until 40) {
+            // A row composed ahead of scrolling is not placed and reports a top of 0: only a placed
+            // row inside the list counts.
             val found = compose.onAllNodesWithText(text).fetchSemanticsNodes()
-            if (found.any { it.boundsInRoot.top < half }) return
+            if (found.any { it.layoutInfo.isPlaced && it.boundsInRoot.top >= bounds.top && it.boundsInRoot.top < half }) return
             // Past the last item the action refuses the index: the end of the list is reached.
             val scrolled = runCatching {
                 list.performSemanticsAction(SemanticsActions.ScrollToIndex) { it(i) }
