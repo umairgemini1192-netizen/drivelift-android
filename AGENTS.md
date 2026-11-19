@@ -17,6 +17,7 @@ If a message addresses multiple recipients, split the response into distinct sec
 ### Proactive Execution & Honesty
 - **Follow Through to Verdict/Completion:** During active implementation or review work, proactively track relevant PR heads, implementer comments, and CI runs through to a definitive verdict (`VERDICT: PASS` / `VERDICT: CHANGES`) or explicit blocker (`ESCALATION: BLOCKED`) without repeated owner reminders[cite: 1]. Never substitute repeated status reports for pending audits or fixes.
 - **No Unverified Claims:** Never claim a command, test, or screenshot verification was run if it was not executed against the exact commit SHA[cite: 1].
+- **Temp and Gradle Cache on D (Umair's Windows PC only):** On that PC, before `./gradlew`, set `TEMP`, `TMP` and `GRADLE_USER_HOME` to folders under `D:\DevCache` (for example `D:\DevCache\temp` and `D:\DevCache\gradle`). This moves temporary files and the Gradle cache to D:. It does not move Robolectric's cache (`%USERPROFILE%\.m2`) or the Android SDK, which stay on C:. CI and cloud sessions are not affected. Do not delete another session's cache folders.
 - **Scheduled Monitoring Truth:** Continuous execution outside an active chat session requires an actively configured scheduled mechanism (cron/hook/CI workflow). Never claim background monitoring is running unless actually configured.
 
 ---
