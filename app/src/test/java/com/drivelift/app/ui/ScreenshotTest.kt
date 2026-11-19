@@ -94,6 +94,10 @@ import com.drivelift.app.Graph
 import com.drivelift.app.data.PresetEntity
 import com.drivelift.app.data.TransferEntity
 import com.drivelift.app.data.TransferStatus
+import com.drivelift.app.data.DriveEntry
+import com.drivelift.app.data.DriveEntryPage
+import com.drivelift.app.data.FOLDER_MIME_TYPE
+import com.drivelift.app.data.SHORTCUT_MIME_TYPE
 import com.drivelift.app.drive.DriveAbout
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
@@ -111,6 +115,7 @@ import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -2697,6 +2702,301 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    // ------------------------------------------------------------------ Drive folder details (issue #42)
+
+    private fun waitForPart(text: String) =
+        settle { compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().isNotEmpty() }
+
+    /** Opens Storage, scrolls to the Drive folders section and, if asked, starts the count. */
+    private fun openDriveFolders(count: Boolean) {
+        currentVm!!.driveScanRetryDelayMs = 0
+        openStorage()
+        scrollStorageTo(hasText("Google Drive folders"))
+        if (count) tap("Count Drive folders")
+    }
+
+    @Test
+    fun storageDriveFoldersNotCounted() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-idle", expect = "Count Drive folders", connected = true, drive = CountedDrive(),
+            act = {
+                openDriveFolders(count = false)
+                compose.onNodeWithText("Read only: nothing on Drive is changed.", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersCounting() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-counting", expect = "Counting My Drive: 40 items read", connected = true,
+            drive = CountedDrive(hangAtPage = 2),
+            act = {
+                openDriveFolders(count = true)
+                waitFor("Counting My Drive: 40 items read")
+                compose.onNodeWithText("Stop").assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersCounted() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-counted", expect = "Count again", connected = true, drive = CountedDrive(),
+            act = {
+                openDriveFolders(count = true)
+                waitForPart("Counted at")
+                val done = currentVm!!.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertTrue(done.complete)
+                assertEquals(CountedDrive.COUNTED_FILES, done.tree.root.fileCount)
+                assertEquals(CountedDrive.COUNTED_BYTES, done.tree.root.bytes)
+                assertEquals(TEST_EMAIL, done.account)
+                for (text in listOf(
+                    DRIVE_FOLDERS_SUBFOLDERS,
+                    "5 files report no size",
+                    "1 shortcut is counted as a link",
+                    "of this is in files other people own",
+                    "2 items shared with you but not added to My Drive are not counted.",
+                    "not the account quota below, which Drive, Gmail and Google Photos share",
+                )) compose.onNodeWithText(text, substring = true).assertExists()
+                scrollStorageTo(hasText("Google Drive folders"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersShowMore() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-more", expect = "Recipes", connected = true, drive = CountedDrive(),
+            act = {
+                openDriveFolders(count = true)
+                waitForPart("Counted at")
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+                // Eight folders first, the largest at the top; the other three behind the button.
+                compose.onNodeWithText("Camera uploads").assertExists()
+                compose.onNodeWithText("Recipes").assertDoesNotExist()
+                compose.onNodeWithTag("drive-folders-more").press()
+                waitFor("Recipes")
+                compose.onNodeWithTag("drive-folders-more").assertDoesNotExist()
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFolderOpened() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folder-open", expect = "Back to My Drive", connected = true, drive = CountedDrive(),
+            act = {
+                openDriveFolders(count = true)
+                waitForPart("Counted at")
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+                compose.onNodeWithText("Camera uploads").press()
+                waitFor("Back to My Drive")
+                compose.onNodeWithText("Inside Camera uploads").assertExists()
+                compose.onNodeWithText("Files directly in Camera uploads").assertExists()
+                compose.onNodeWithText("2026").assertExists()
+                // The summary above names the open folder and its totals.
+                scrollStorageTo(hasText("Google Drive folders"))
+                compose.onNodeWithText("My Drive / Camera uploads").assertExists()
+                // Back on the list returns to My Drive.
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+                compose.onNodeWithText("Back to My Drive").press()
+                settle { currentVm!!.driveFolderOpen.value == null }
+                compose.onNodeWithText("Camera uploads").press()
+                waitFor("Back to My Drive")
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersIncompleteAfterConnectionError() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-incomplete", expect = "Count again", connected = true,
+            drive = CountedDrive(failAtPage = 2),
+            act = {
+                openDriveFolders(count = true)
+                waitForPart("Incomplete: the count stopped after 40 items.")
+                val done = currentVm!!.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertFalse(done.complete)
+                compose.onNodeWithText("Connection problem", substring = true).assertExists()
+                scrollStorageTo(hasText("Google Drive folders"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersFailedNeedsSignIn() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-failed", expect = "Reconnect", connected = true,
+            drive = CountedDrive(failRoot = AuthRequiredException()),
+            act = {
+                openDriveFolders(count = true)
+                waitFor("Drive folders could not be counted.")
+                compose.onNodeWithText("Google Drive needs you to sign in again.").assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun aSignInFailureCanBeRecoveredAfterReconnectingTheSameAccount() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-recover", expect = null, connected = true, capture = false,
+            drive = CountedDrive(failRoot = AuthRequiredException()),
+            act = {
+                val vm = currentVm!!
+                openDriveFolders(count = true)
+                waitFor("Reconnect")
+                compose.onNodeWithText("Try again").assertExists()
+                // Reconnecting the same account clears the failure; the count can start again.
+                vm.driveConn.value = DriveConn.CONNECTING
+                pump(2)
+                vm.driveConn.value = DriveConn.CONNECTED
+                settle { vm.driveFolderScan.value == AppViewModel.DriveFolderScan.Idle }
+                vm.driveFolders = CountedDrive()
+                tap("Count Drive folders")
+                waitForPart("Counted at")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveFolderCountIsDroppedWhenTheAccountChangesAndStopKeepsWhatWasRead() {
+        grantMedia()
+        val drive = CountedDrive(hangAtPage = 2)
+        eachVariant(
+            "storage-drive-folders-account", expect = null, connected = true, capture = false, drive = drive,
+            act = {
+                val vm = currentVm!!
+                openDriveFolders(count = true)
+                waitFor("Counting My Drive: 40 items read")
+                // The page in flight never answers here, so Stop waits for it; an account change
+                // ends the count at once, without asking for another page.
+                vm.stopDriveFolderScan()
+                waitFor("Stopping after this page")
+                Graph.get(app).prefs.accountEmail = "someone.else@example.com"
+                settle { vm.driveFolderScan.value == AppViewModel.DriveFolderScan.Idle }
+                Graph.get(app).prefs.accountEmail = TEST_EMAIL
+                val pagesBefore = drive.pagesAsked.size
+                vm.driveFolders = CountedDrive()
+                vm.startDriveFolderScan()
+                settle { vm.driveFolderScan.value is AppViewModel.DriveFolderScan.Done }
+                Graph.get(app).prefs.accountEmail = "someone.else@example.com"
+                settle { vm.driveFolderScan.value == AppViewModel.DriveFolderScan.Idle }
+                waitFor("Count Drive folders")
+                assertEquals("the old account's listing is not asked for again", pagesBefore, drive.pagesAsked.size)
+                Graph.get(app).prefs.accountEmail = TEST_EMAIL
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun driveFolderStopKeepsWhatWasReadAsIncomplete() {
+        grantMedia()
+        val stopAfterSecondPage = object : DriveFolders by FakeDrive() {
+            var vm: AppViewModel? = null
+            override suspend fun myDriveRootId() = CountedDrive.ROOT_ID
+            override suspend fun listEntriesPage(pageToken: String?): DriveEntryPage {
+                val page = CountedDrive().listEntriesPage(pageToken)
+                if (pageToken == "page-1") vm?.stopDriveFolderScan()
+                return page
+            }
+        }
+        eachVariant(
+            "storage-drive-folders-stopped", expect = null, connected = true, capture = false, drive = stopAfterSecondPage,
+            act = {
+                stopAfterSecondPage.vm = currentVm
+                openDriveFolders(count = true)
+                waitForPart("Incomplete: you stopped the count after 40 items.")
+                val done = currentVm!!.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertEquals(com.drivelift.app.data.ScanStop.ByUser, done.stop)
+                assertEquals(40, done.items)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * A made-up My Drive for the folder count: eleven top-level folders, nested years, Google
+     * files with no size, a shortcut, files someone else owns, loose files and two items shared
+     * from outside My Drive. Served [PAGE] items per page. No network.
+     */
+    private class CountedDrive(
+        private val failRoot: Exception? = null,
+        private val failAtPage: Int = -1,
+        private val hangAtPage: Int = -1,
+    ) : DriveFolders by FakeDrive() {
+        val pagesAsked: MutableList<String?> = java.util.Collections.synchronizedList(mutableListOf())
+
+        override suspend fun myDriveRootId(): String {
+            failRoot?.let { throw it }
+            return ROOT_ID
+        }
+
+        override suspend fun listEntriesPage(pageToken: String?): DriveEntryPage {
+            pagesAsked += pageToken
+            val index = pageToken?.removePrefix("page-")?.toInt() ?: 0
+            if (index == hangAtPage) awaitCancellation()
+            if (index == failAtPage) throw IOException("timeout")
+            val next = if ((index + 1) * PAGE < ENTRIES.size) "page-${index + 1}" else null
+            return DriveEntryPage(ENTRIES.drop(index * PAGE).take(PAGE), next)
+        }
+
+        companion object {
+            const val ROOT_ID = "drive-root"
+            const val PAGE = 20
+            private const val OUTSIDE = "someone-elses-folder"
+
+            val ENTRIES: List<DriveEntry> = buildList {
+                fun folder(id: String, name: String, parent: String) =
+                    add(DriveEntry(id, name, FOLDER_MIME_TYPE, null, listOf(parent)))
+                fun file(id: String, size: Long?, parent: String, mime: String = "image/jpeg", mine: Boolean = true) =
+                    add(DriveEntry(id, "", mime, size, listOf(parent), mine))
+                folder("cam", "Camera uploads", ROOT_ID)
+                folder("cam25", "2025", "cam")
+                folder("cam26", "2026", "cam")
+                folder("cam26trip", "Coast trip", "cam26")
+                repeat(6) { file("c25-$it", 180_000_000L + it * 7_000_000L, "cam25", "video/mp4") }
+                repeat(9) { file("c26-$it", 4_200_000L + it * 310_000L, "cam26") }
+                repeat(4) { file("trip-$it", 96_000_000L, "cam26trip", "video/mp4") }
+                file("cam-loose", 3_100_000, "cam")
+                folder("docs", "Documents", ROOT_ID)
+                repeat(5) { file("gdoc-$it", null, "docs", "application/vnd.google-apps.document") }
+                repeat(3) { file("pdf-$it", 1_250_000L, "docs", "application/pdf") }
+                folder("family", "Shared with family", ROOT_ID)
+                repeat(4) { file("fam-$it", 22_000_000L, "family", mine = false) }
+                folder("proj", "Projects", ROOT_ID)
+                add(DriveEntry("short-1", "", SHORTCUT_MIME_TYPE, null, listOf("proj")))
+                file("proj-1", 640_000, "proj", "application/zip")
+                listOf(
+                    "Archive 2024" to 48_000_000L, "Music" to 31_000_000L, "Receipts" to 900_000L,
+                    "Scans" to 12_500_000L, "Wallpapers" to 8_800_000L, "Old phone backup" to 410_000_000L,
+                    "Recipes" to 210_000L,
+                ).forEachIndexed { i, (name, bytes) ->
+                    folder("misc$i", name, ROOT_ID)
+                    file("misc$i-a", bytes / 2, "misc$i")
+                    file("misc$i-b", bytes - bytes / 2, "misc$i")
+                }
+                file("root-1", 2_400_000, ROOT_ID)
+                file("root-2", 760_000, ROOT_ID, "application/pdf")
+                file("outside-1", 55_000_000, OUTSIDE)
+                file("outside-2", 1_000, OUTSIDE)
+            }
+
+            /** Files inside My Drive: everything but folders and the two outside items. */
+            val COUNTED_FILES = ENTRIES.count { !it.isFolder && OUTSIDE !in it.parents }
+            val COUNTED_BYTES = ENTRIES.filter { !it.isFolder && OUTSIDE !in it.parents }.sumOf { it.size ?: 0L }
+        }
+    }
+
     @Test
     fun storageQuotaAndLargestFiles() {
         grantMedia()
@@ -2891,9 +3191,19 @@ class ScreenshotTest {
 
                 // P2: the copy that stays leaves the phone (outside DriveLift).
                 confirmWhile { FakeMediaStore.hidden = setOf(wa13.id) }
+                // The refused cleanup listed the phone again without IMG-WA13, so its group is gone.
+                // The groups follow the listing off the main thread, so wait until they show that
+                // before IMG-WA13 comes back. Otherwise the old groups (from before it left) pass the
+                // wait below, the late "group gone" update lands after the next case has picked
+                // IMG-WA12, the selection is rightly dropped, and the cleanup bar never shows.
+                settle { vm.duplicateGroups.value.none { g -> g.items.any { it.id == wa13.id } } }
                 FakeMediaStore.hidden = emptySet()
                 runBlocking { graph.media.refresh() }
-                settle { vm.duplicateGroups.value.isNotEmpty() }
+                settle {
+                    vm.duplicateGroups.value.any { g ->
+                        g.items.map { it.id }.containsAll(listOf(wa12.id, wa13.id))
+                    }
+                }
 
                 // P2: the copy that stays is in an open removal request (verified on Drive).
                 seedTransfers(row(wa13.id, wa13.name, TransferStatus.VERIFIED, size = wa13.size))
@@ -3335,36 +3645,15 @@ class ScreenshotTest {
      * left the bar unchecked, so the next tap raced the screen.
      */
     private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
-        fun snapshot(frame: Int) =
-            "f=$frame groups=${vm.duplicateGroups.value.map { g -> g.items.map { i -> i.id } }} " +
-                "scan=${vm.duplicateScan.value.javaClass.simpleName} " +
-                "selected=${vm.duplicateSelection.value} media=${vm.media.value.size}"
-        val timeline = ArrayList<String>()
+        fun state() = "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
+            "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value}"
         vm.duplicateSelection.value = emptySet()
-        timeline += "before ${snapshot(-1)}"
         vm.toggleDuplicate(id)
-        timeline += "after-toggle ${snapshot(0)}"
-        // Selection must hold the copy right after the toggle; a later drop is recorded below.
-        assertTrue("The toggle did not select $id. ${timeline.joinToString(" | ")}", id in vm.duplicateSelection.value)
-        var firstSeen = -1
-        var droppedAt = -1
-        for (frame in 1..240) {
-            pump(1)
-            val bar = compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
-            val holds = id in vm.duplicateSelection.value
-            if (bar && firstSeen < 0) firstSeen = frame
-            if (!holds && droppedAt < 0) {
-                droppedAt = frame
-                timeline += snapshot(frame)
-            }
-            if (bar) break
+        assertTrue("The toggle did not select $id. ${state()}", id in vm.duplicateSelection.value)
+        pump(4)
+        settle({ "The cleanup bar never showed 1 copy selected. ${state()}" }) {
+            compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
         }
-        timeline += "end ${snapshot(-2)}"
-        assertTrue(
-            "The cleanup bar never showed 1 copy selected (firstSeen=$firstSeen droppedAt=$droppedAt). " +
-                timeline.joinToString(" | "),
-            firstSeen >= 0,
-        )
     }
 
     private fun pump(times: Int) = repeat(times) {
@@ -3374,12 +3663,15 @@ class ScreenshotTest {
     }
 
     /** Runs the UI until [done], so data arriving from the database has reached the screen. */
-    private fun settle(done: () -> Boolean) {
+    private fun settle(
+        describe: () -> String = { "The screen never reached the expected state" },
+        done: () -> Boolean,
+    ) {
         val deadline = System.currentTimeMillis() + 15_000
         while (true) {
             pump(1)
             if (done()) break
-            assertTrue("The screen never reached the expected state", System.currentTimeMillis() < deadline)
+            if (System.currentTimeMillis() >= deadline) fail(describe())
         }
         pump(4)
     }
