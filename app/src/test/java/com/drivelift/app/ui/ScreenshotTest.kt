@@ -2826,6 +2826,9 @@ class ScreenshotTest {
                 val done = currentVm!!.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
                 assertFalse(done.complete)
                 compose.onNodeWithText("Connection problem", substring = true).assertExists()
+                // An incomplete count is not called counted (audit P3 on PR 50).
+                compose.onNodeWithText("Partly counted at", substring = true).assertExists()
+                compose.onNodeWithText("Counted at", substring = true).assertDoesNotExist()
                 scrollStorageTo(hasText("Google Drive folders"))
             },
         ) { vm -> AppRoot(vm) }
@@ -2919,6 +2922,7 @@ class ScreenshotTest {
                 val done = currentVm!!.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
                 assertEquals(com.drivelift.app.data.ScanStop.ByUser, done.stop)
                 assertEquals(40, done.items)
+                compose.onNodeWithText("Partly counted at", substring = true).assertExists()
             },
         ) { vm -> AppRoot(vm) }
     }
