@@ -23,7 +23,10 @@ import com.drivelift.app.ui.BiometricAuthenticator
 /** Process-wide singletons. Small enough that a DI framework would be overhead. */
 class Graph(app: Application) {
     val db: AppDatabase = Room.databaseBuilder(app, AppDatabase::class.java, "drivelift.db")
-        .fallbackToDestructiveMigration()
+        // Each schema step is a real migration, so an update keeps the transfer ledger. Only a
+        // downgrade (an older build installed over a newer one) starts a fresh database.
+        .addMigrations(*com.drivelift.app.data.ALL_MIGRATIONS)
+        .fallbackToDestructiveMigrationOnDowngrade()
         .build()
     val prefs = Prefs(app)
     val media = MediaRepository(app)

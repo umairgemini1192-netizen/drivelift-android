@@ -13,8 +13,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 24
-        versionName = "1.0.0-preview.25"
+        versionCode = 25
+        versionName = "1.0.0-preview.26"
     }
 
     signingConfigs {
@@ -55,10 +55,12 @@ android {
             isIncludeAndroidResources = true
             all {
                 it.maxHeapSize = "1536m"
-                // Each test is named in the CI log as it starts and ends, so a test that stalls
-                // until the job times out (no report is uploaded then) can still be identified.
+                // Each test is named in the CI log as it starts and ends, with full failures, so a
+                // test that stalls until the job times out (no report is uploaded then) can still
+                // be identified and a failed check explained.
                 it.testLogging {
                     events("started", "passed", "failed", "skipped")
+                    exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
                 }
                 // Images are written only when asked for: ./gradlew testDebugUnitTest -PrecordScreenshots
                 if (project.hasProperty("recordScreenshots")) {

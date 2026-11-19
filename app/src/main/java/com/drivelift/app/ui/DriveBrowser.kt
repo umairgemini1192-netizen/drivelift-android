@@ -176,6 +176,8 @@ fun DriveBrowser(
     onViewingFileChange: ((Boolean) -> Unit)? = null,
     /** False when the picked folder is not a transfer destination (moving Drive files). */
     offerPreset: Boolean = true,
+    /** Opens the Favorites view; the way in is shown at the top of My Drive once something is starred. */
+    onOpenFavorites: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val view = LocalView.current
@@ -186,6 +188,9 @@ fun DriveBrowser(
     val conn by vm.driveConn.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
     val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
+    val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
+    val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
+    val favoriteAccount by vm.connectedAccountHash.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
 
     var stack by rememberSaveable(stateSaver = CrumbStackSaver) {
@@ -283,6 +288,22 @@ fun DriveBrowser(
             error = describeError(e)
         }
     }
+
+    // A favorite folder opened from Favorites: show it under My Drive. Only the browsing tab
+    // follows it; the folder pickers keep their own place.
+    val folderRequest by vm.driveFolderRequest.collectAsStateWithLifecycle()
+    LaunchedEffect(folderRequest) {
+        val request = folderRequest ?: return@LaunchedEffect
+        if (pickMode) return@LaunchedEffect
+        selectedIds = emptySet()
+        viewerFile = null
+        stack = listOf(Crumb(DriveClient.ROOT, "My Drive"), Crumb(request.id, request.name))
+        vm.driveFolderRequest.value = null
+    }
+
+    /** The star for a folder row, or null where folders are not starred (the folder pickers). */
+    fun folderStar(file: DriveFile): Boolean? =
+        if (pickMode || favoriteAccount == null) null else vm.isDriveFavorite(favoriteIds, favoriteAccount, file.id)
 
     fun openFolder(file: DriveFile) {
         selectedIds = emptySet()
@@ -502,6 +523,16 @@ fun DriveBrowser(
                 }
             }
 
+            // Shown also while Drive is not connected: the Phone tab is behind the photo access
+            // gate, so this may be the only way to see why favorites cannot open and remove them.
+            if (!pickMode && !selecting && stack.size == 1 && favoriteCounts.any && onOpenFavorites != null) {
+                FavoritesEntryRow(
+                    counts = favoriteCounts,
+                    onClick = onOpenFavorites,
+                    modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+                )
+            }
+
             Box(Modifier.weight(1f).fillMaxWidth()) {
                 val list = shown
                 when {
@@ -559,6 +590,8 @@ fun DriveBrowser(
                                         thumb = null,
                                         padded = false,
                                         onClick = { openFolder(file) },
+                                        favorite = folderStar(file),
+                                        onToggleFavorite = { vm.toggleDriveFavorite(file, path) },
                                     )
                                 } else {
                                     val thumb = rememberDriveThumb(
@@ -610,6 +643,8 @@ fun DriveBrowser(
                                 },
                                 selected = if (selecting && !file.isFolder) file.id in selectedIds else null,
                                 onLongClick = if (file.isFolder || pickMode) null else { { selectedIds = selectedIds + file.id } },
+                                favorite = if (file.isFolder) folderStar(file) else null,
+                                onToggleFavorite = { vm.toggleDriveFavorite(file, path) },
                             )
                         }
                     }
@@ -719,6 +754,7 @@ fun DriveBrowser(
                         openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
                     },
                     onDelete = { askTrash(listOf(openFile)) },
+                    location = path,
                 )
             }
         }
@@ -978,6 +1014,9 @@ private fun DriveRow(
     onClick: (() -> Unit)?,
     selected: Boolean? = null,
     onLongClick: (() -> Unit)? = null,
+    /** Null hides the star (files, and folders in the pickers). */
+    favorite: Boolean? = null,
+    onToggleFavorite: () -> Unit = {},
 ) {
     val icon = if (file.isFolder) Icons.Outlined.Folder else fileTypeIcon(classifyDriveFile(file.mimeType))
     val rowPadding = if (padded) {
@@ -997,8 +1036,11 @@ private fun DriveRow(
         onLongClick = onLongClick,
         onLongClickLabel = "Select",
     ) {
+        // The star's 48 dp touch target is taller than the 24 dp icon line; take the difference out
+        // of the padding so a folder row keeps its height and the files below stay where they were.
+        val vertical = if (favorite != null) Tokens.RowLoose - (Tokens.TouchTarget - Tokens.Icon) / 2 else Tokens.RowLoose
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.RowLoose),
+            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = vertical),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selected != null) {
@@ -1033,6 +1075,7 @@ private fun DriveRow(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (favorite != null) FavoriteStar(favorite = favorite, name = file.name, onToggle = onToggleFavorite)
             if (file.isFolder || onClick != null) Icon(
                 Icons.Outlined.ChevronRight,
                 contentDescription = null,

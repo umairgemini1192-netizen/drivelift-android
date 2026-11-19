@@ -181,8 +181,17 @@ interface PresetDao {
     suspend fun clear()
 }
 
-@Database(entities = [TransferEntity::class, PresetEntity::class], version = 1, exportSchema = false)
+/**
+ * Version 2 added [FavoriteEntity]. Schema changes go through a real migration ([ALL_MIGRATIONS]),
+ * never a destructive fallback, so an update never wipes the transfer ledger.
+ */
+@Database(
+    entities = [TransferEntity::class, PresetEntity::class, FavoriteEntity::class],
+    version = 2,
+    exportSchema = false,
+)
 abstract class AppDatabase : RoomDatabase() {
     abstract fun transfers(): TransferDao
     abstract fun presets(): PresetDao
+    abstract fun favorites(): FavoriteDao
 }

@@ -21,6 +21,11 @@ class Prefs(context: Context) : AccountPinStore {
     private val _gridDensity = MutableStateFlow(GridDensity.fromStored(sp.getString(KEY_GRID_DENSITY, null)))
     val gridDensity: StateFlow<GridDensity> = _gridDensity
 
+    private val _accountEmailFlow = MutableStateFlow(sp.getString(KEY_ACCOUNT, null))
+
+    /** [accountEmail] as it changes, so favorites follow the saved pin (issue #42). */
+    val accountEmailFlow: StateFlow<String?> = _accountEmailFlow
+
     // Sort choice of Phone folders and of Drive folders, each kept across restarts (issue #36).
     private val _phoneSort = MutableStateFlow(FileSort.fromStored(sp.getString(KEY_PHONE_SORT, null), FileSort.PHONE_DEFAULT))
     val phoneSort: StateFlow<FileSort> = _phoneSort
@@ -40,7 +45,10 @@ class Prefs(context: Context) : AccountPinStore {
     /** Email of the connected Drive account. Only used to pin Drive token requests. */
     override var accountEmail: String?
         get() = sp.getString(KEY_ACCOUNT, null)
-        set(value) = sp.edit().putString(KEY_ACCOUNT, value).apply()
+        set(value) {
+            sp.edit().putString(KEY_ACCOUNT, value).apply()
+            _accountEmailFlow.value = value
+        }
 
     fun setWifiOnly(value: Boolean) {
         sp.edit().putBoolean(KEY_WIFI, value).apply()

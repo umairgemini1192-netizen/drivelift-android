@@ -274,6 +274,55 @@ Choosing the folder the files are already in moves nothing. Like a trash, the ba
 the account that was connected at confirmation, account switching is refused while it runs, and
 on a change the remaining files are reported as not tried.
 
+## Favorites
+
+Tap the star on a phone folder (Phone tab), a Drive folder (Drive tab), or at the top of the
+viewer of a phone photo or video or a Drive file. Once something is starred, a **Favorites** row
+appears at the top of the Phone tab and of My Drive (also while Drive is not connected, since
+with photo access off the Phone tab shows only the access screen); it opens one list, phone items
+first, then Google Drive. A folder opens in its own tab; a photo, video or Drive file opens in the viewer.
+Tapping the filled star (or Remove) takes an item out of favorites. A favorite is only a pointer:
+starring or removing never copies, moves or changes the file.
+
+Favorites are kept in the app's database (`favorites` table, `data/Favorites.kt`) and survive
+restarts. Phone files are keyed by their MediaStore id (so a file moved to another phone folder
+is still found), phone folders by their bucket id. Drive items are keyed by the Drive id plus a
+one-way SHA-256 of the account email they were starred with; the email itself is not stored in
+the database. The database went from version 1 to 2 with a real migration that only adds this
+table, so updating keeps the transfer ledger; the old wipe-on-upgrade fallback is gone (only a
+downgrade, an older build installed over a newer one, starts a fresh database).
+
+Each time the list is shown DriveLift works out where every favorite is now:
+
+| Situation | Shown as |
+|---|---|
+| Phone file or folder in the current listing | Opens |
+| Phone listing still loading | Checking |
+| Photo access off | Unavailable: allow access |
+| Partial photo access and not visible | Unavailable: not visible with the current access (not called deleted) |
+| Phone file gone from a full listing (deleted, trashed, recopied by another app) | Unavailable |
+| Phone folder with no photos or videos (emptied, renamed or deleted) | Unavailable |
+| Drive not connected (or signed out) | Not listed: counted in "N favorites hidden" |
+| Starred with another Google account | Not listed: counted in "N favorites hidden". Never looked up |
+| Drive item found (also after a move to another Drive folder) | Opens |
+| In Drive's trash / not found / access refused | Unavailable, with that reason |
+| The lookup failed (offline, authorization expired, Drive asked to slow down) | Unavailable, with Try again |
+
+Account isolation: a Drive favorite is shown (name, type, place, icon) only while the account it
+was starred with is connected. Favorites of another account, and every Drive favorite while Drive
+is not connected, stay out of the list, its counts, labels and messages; one **N favorites
+hidden** row says how many there are and offers **Remove**, which asks first and removes them all
+without naming any. The account key is a SHA-256 for matching, not encryption: the saved name is
+still in the app-private database, which is why the screen keeps it out of sight. Connecting that
+account again brings its favorites back.
+
+Drive favorites of the connected account are looked up one by one with `files.get` and a token
+proven to belong to that account; nothing is sent for favorites of any other account. An
+unavailable favorite stays listed until the user removes it. Limits: phone favorites cover what
+DriveLift lists (photos and videos); a folder renamed on the phone gets a new bucket id, so its
+favorite shows as unavailable; a Drive folder opened from Favorites appears directly under My
+Drive in the path line, whatever its real parent is.
+
 ## Renaming one file
 
 Select exactly one file, in a Phone folder or in the Drive tab, and tap **Rename** beside the
@@ -341,7 +390,8 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 |---|---|
 | `DriveLiftApp.kt` | App start, shared objects, restart of unfinished work |
 | `data/Media.kt` | Phone photos and videos, permissions, opening original bytes |
-| `data/Db.kt` | `transfers` and `presets` tables and their queries |
+| `data/Db.kt` | `transfers` and `presets` tables and their queries, database version |
+| `data/Favorites.kt` | `favorites` table, migration 1 to 2, where each favorite is now |
 | `data/Prefs.kt` | Wi-Fi only, auto-offer removal, paused, connected account email |
 | `drive/DriveAuth.kt` | Google sign-in and access tokens, pinned to the connected account |
 | `drive/DriveClient.kt` | Drive REST calls: list, create folder, resumable upload, metadata, trash, move, rename |
@@ -360,6 +410,7 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `data/StorageInsights.kt` | Breakdown, size-then-SHA-256 duplicate grouping, cleanup plan |
 | `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
+| `ui/Favorites.kt` | Favorites list, star button, way in from Phone and Drive |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |
 | `ui/TransfersScreen.kt` | Progress, controls, removal |
 | `ui/Theme.kt` | The one dark theme: every colour, type, formatting helpers |

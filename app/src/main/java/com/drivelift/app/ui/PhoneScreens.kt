@@ -106,9 +106,12 @@ fun PhoneScreen(
     vm: AppViewModel,
     onOpen: (Long) -> Unit,
     onMoveFolder: (Long) -> Unit,
+    onOpenFavorites: () -> Unit = {},
     onOpenStorage: () -> Unit = {},
 ) {
     val context = LocalContext.current
+    val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
+    val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val media by vm.media.collectAsStateWithLifecycle()
     val loaded by vm.mediaLoaded.collectAsStateWithLifecycle()
@@ -142,6 +145,15 @@ fun PhoneScreen(
                 onConnect = { vm.connectDrive(interactive = true) },
                 modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
             )
+        }
+        if (favoriteCounts.any) {
+            item(key = "favorites") {
+                FavoritesEntryRow(
+                    counts = favoriteCounts,
+                    onClick = onOpenFavorites,
+                    modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+                )
+            }
         }
         item(key = "storage") {
             StorageEntryRow(onOpenStorage, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny))
@@ -180,7 +192,13 @@ fun PhoneScreen(
             }
         }
         items(folders, key = { it.bucketId }) { folder ->
-            FolderRow(folder, onOpen = { onOpen(folder.bucketId) }, onMove = { onMoveFolder(folder.bucketId) })
+            FolderRow(
+                folder,
+                favorite = com.drivelift.app.data.phoneFolderKey(folder.bucketId) in favoriteIds,
+                onToggleFavorite = { vm.toggleFavorite(folder) },
+                onOpen = { onOpen(folder.bucketId) },
+                onMove = { onMoveFolder(folder.bucketId) },
+            )
         }
     }
 }
@@ -258,7 +276,13 @@ private fun ConnectAction(conn: DriveConn, onConnect: () -> Unit, modifier: Modi
 }
 
 @Composable
-private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Unit) {
+private fun FolderRow(
+    folder: MediaFolder,
+    favorite: Boolean,
+    onToggleFavorite: () -> Unit,
+    onOpen: () -> Unit,
+    onMove: () -> Unit,
+) {
     val context = LocalContext.current
     GlassPanel(
         modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
@@ -288,6 +312,7 @@ private fun FolderRow(folder: MediaFolder, onOpen: () -> Unit, onMove: () -> Uni
                 maxLines = 1, overflow = TextOverflow.Ellipsis,
             )
         }
+        FavoriteStar(favorite = favorite, name = folder.name, onToggle = onToggleFavorite)
         IconButton(onClick = onMove) {
             Icon(
                 Icons.Outlined.CloudUpload,
