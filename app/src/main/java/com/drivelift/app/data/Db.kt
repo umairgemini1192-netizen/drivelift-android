@@ -159,6 +159,10 @@ interface TransferDao {
 
     @Query("UPDATE transfers SET status = 'QUEUED', lastError = NULL WHERE status = 'FAILED'")
     suspend fun retryFailed()
+
+    /** Retries failed rows except files a phone trash request is sending ([blocked]). */
+    @Query("UPDATE transfers SET status = 'QUEUED', lastError = NULL WHERE status = 'FAILED' AND mediaUri NOT IN (:blocked)")
+    suspend fun retryFailedExcept(blocked: List<String>)
 }
 
 @Dao
