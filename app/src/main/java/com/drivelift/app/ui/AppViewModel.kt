@@ -145,12 +145,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /**
      * Work that belongs to the connected account and blocks switching to another one: transfers
-     * that can still call Drive, and a confirmed Drive trash or move batch that is still running.
+     * that can still call Drive, and a confirmed Drive trash, move or rename that is still running.
      */
     suspend fun accountSwitchBlockers(): Int =
         dao.count(ACCOUNT_BOUND_STATUSES) +
             (if (driveTrashRun.value?.working == true) 1 else 0) +
-            (if (driveMoveRun.value?.working == true) 1 else 0)
+            (if (driveMoveRun.value?.working == true) 1 else 0) +
+            (if (driveRenameRun.value?.working == true) 1 else 0)
 
     /** Account this session has a working authorization for. Null until a connection succeeds. */
     private var provenEmail: String? = null
@@ -816,6 +817,221 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return com.drivelift.app.data.DriveMoveOutcome(
             plan.toName, moved, failed, skipped, fromFolderId = plan.fromFolderId, toFolderId = plan.toFolderId,
         )
+    }
+
+    // ------------------------------------------------------------------ rename (issue #42)
+
+    /**
+     * Works out a rename of the phone file [id] (issue #42): refused while a transfer depends on
+     * it. Null when the file is no longer in the listing. Nothing is changed.
+     */
+    suspend fun planPhoneRename(id: Long): com.drivelift.app.data.PhoneRenamePlan? {
+        if (!mediaLoaded.value && MediaAccess.hasPermission(getApplication())) mediaLoaded.first { it }
+        val item = media.value.firstOrNull { it.id == id } ?: return null
+        val rows = graph.db.transfers().byMediaUris(listOf(item.uri.toString()))
+        return com.drivelift.app.data.planPhoneRename(item, rows, phoneFolderNames(item))
+    }
+
+    /**
+     * Names already in [item]'s folder, the item itself left out: the photos and videos listed,
+     * plus every other file MediaStore shows DriveLift there.
+     */
+    private suspend fun phoneFolderNames(item: com.drivelift.app.data.MediaItem): List<String> {
+        val listed = media.value
+            .filter { it.bucketId == item.bucketId && it.relativePath == item.relativePath && it.id != item.id }
+            .map { it.name }
+        val resolver = getApplication<android.app.Application>().contentResolver
+        val others = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            graph.folderNames(resolver, item.relativePath)
+        }
+        // MediaStore lists the item itself under its current name; that is not a collision.
+        return (listed + others.filterNot { it == item.name }).distinct()
+    }
+
+    /**
+     * A phone rename waiting for Android's write consent (a file DriveLift does not own). Kept here,
+     * outside the lock-gated screen, so the app locking while Android's dialog is open keeps it.
+     */
+    data class PendingRename(val uri: String, val from: String, val to: String, val launched: Boolean = false)
+
+    val pendingRename = MutableStateFlow<PendingRename?>(null)
+
+    /** True from a confirmed phone rename until its result is reported; the dialog waits for it. */
+    val phoneRenameWorking = MutableStateFlow(false)
+
+    /** The last phone rename message; read by tests. */
+    @Volatile
+    var lastPhoneRename: String? = null
+        private set
+
+    /**
+     * Renames the planned phone file to [newName] (already checked). Before anything is sent the
+     * transfers are read again, so a file a transfer came to depend on is left alone. When Android
+     * needs the user's consent first, [pendingRename] is set and PhoneRenameHost asks.
+     */
+    fun startPhoneRename(plan: com.drivelift.app.data.PhoneRenamePlan, newName: String) {
+        if (phoneRenameWorking.value || pendingRename.value != null) return
+        phoneRenameWorking.value = true
+        viewModelScope.launch {
+            var waiting = false
+            try {
+                if (applyPhoneRename(plan.item.uri.toString(), plan.item.name, newName) == RenameStep.NEEDS_CONSENT) {
+                    pendingRename.value = PendingRename(plan.item.uri.toString(), plan.item.name, newName)
+                    waiting = true
+                }
+            } finally {
+                if (!waiting) phoneRenameWorking.value = false
+            }
+        }
+    }
+
+    private enum class RenameStep { DONE, NEEDS_CONSENT }
+
+    /**
+     * Sends the new name and reads it back. Returns NEEDS_CONSENT, having changed nothing, when
+     * Android needs the user's write consent first.
+     */
+    private suspend fun applyPhoneRename(uri: String, from: String, to: String): RenameStep {
+        val rows = graph.db.transfers().byMediaUris(listOf(uri))
+        if (rows.any { it.status in com.drivelift.app.data.TRANSFER_HOLDS_FILE }) {
+            finishPhoneRename("$from is now part of a transfer, so it was not renamed.", renamed = false)
+            return RenameStep.DONE
+        }
+        val resolver = getApplication<android.app.Application>().contentResolver
+        val parsed = android.net.Uri.parse(uri)
+        val failure: Exception? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            try {
+                graph.renameMedia(resolver, parsed, to)
+                null
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                e
+            }
+        }
+        if (failure is SecurityException) return RenameStep.NEEDS_CONSENT
+        if (failure != null) {
+            finishPhoneRename("Could not rename $from: ${com.drivelift.app.transfer.describeError(failure)}", renamed = false)
+            return RenameStep.DONE
+        }
+        val after = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { graph.mediaName(resolver, parsed) }
+        finishPhoneRename(com.drivelift.app.data.phoneRenameMessage(from, to, after), renamed = after != from)
+        return RenameStep.DONE
+    }
+
+    private suspend fun finishPhoneRename(message: String, renamed: Boolean) {
+        lastPhoneRename = message
+        if (renamed) {
+            graph.media.refresh()
+            clearSelection()
+        }
+        messages.emit(message)
+    }
+
+    /** Marks the pending rename as shown to Android (never twice) and builds Android's request. */
+    fun startPendingRename(): android.app.PendingIntent? {
+        val pending = pendingRename.value?.takeIf { !it.launched } ?: return null
+        pendingRename.value = pending.copy(launched = true)
+        val resolver = getApplication<android.app.Application>().contentResolver
+        return graph.writeRequest(resolver, listOf(android.net.Uri.parse(pending.uri)))
+    }
+
+    /**
+     * Android answered its write-consent dialog (or could not show it). Only on consent is the name
+     * sent; on refusal nothing changes.
+     */
+    fun pendingRenameFinished(confirmed: Boolean, failure: String? = null) {
+        val pending = pendingRename.value ?: return
+        pendingRename.value = null
+        viewModelScope.launch {
+            try {
+                when {
+                    failure != null -> finishPhoneRename("Android could not open the rename request: $failure", renamed = false)
+                    !confirmed -> finishPhoneRename("Nothing was renamed.", renamed = false)
+                    // Consent given: a second refusal is reported, never asked about again.
+                    applyPhoneRename(pending.uri, pending.from, pending.to) == RenameStep.NEEDS_CONSENT ->
+                        finishPhoneRename("Android did not allow DriveLift to rename ${pending.from}. Nothing was changed.", renamed = false)
+                }
+            } finally {
+                phoneRenameWorking.value = false
+            }
+        }
+    }
+
+    /** The user cancelled the rename dialog: nothing was sent. */
+    fun cancelRename() {
+        messages.tryEmit("Nothing was renamed.")
+    }
+
+    /**
+     * Works out a rename of the Drive [file] in [folderId], whose listing holds [siblings]. The plan
+     * records the connected account; the rename runs for it only. Nothing is changed.
+     */
+    suspend fun planDriveRename(
+        file: com.drivelift.app.drive.DriveFile,
+        folderId: String,
+        siblings: List<String>,
+    ): com.drivelift.app.data.DriveRenamePlan {
+        val dao = graph.db.transfers()
+        val rows = transferRowsFor(listOf(file)) + dao.byStatus(com.drivelift.app.data.TransferStatus.QUEUED.name, Int.MAX_VALUE) +
+            dao.byStatus(com.drivelift.app.data.TransferStatus.UPLOADING.name, Int.MAX_VALUE)
+        return com.drivelift.app.data.planDriveRename(file, folderId, rows.distinctBy { it.id }, siblings, prefs.accountEmail)
+    }
+
+    /** A confirmed Drive rename: running, then its outcome until the screen applies it. */
+    data class DriveRenameRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveRenameOutcome? = null)
+
+    val driveRenameRun = MutableStateFlow<DriveRenameRun?>(null)
+
+    /** Runs a confirmed Drive rename in the view model's scope, so a rotation does not cancel it. */
+    fun startDriveRename(plan: com.drivelift.app.data.DriveRenamePlan, newName: String) {
+        if (driveRenameRun.value?.working == true) return
+        driveRenameRun.value = DriveRenameRun(working = true)
+        viewModelScope.launch {
+            val outcome = renameDriveFile(plan, newName)
+            driveRenameRun.value = DriveRenameRun(working = false, outcome = outcome)
+            // A taken name is shown in the dialog, which stays open for another name.
+            if (!outcome.nameTaken) messages.emit(outcome.message())
+        }
+    }
+
+    /** The screen applied the outcome. */
+    fun driveRenameApplied() {
+        if (driveRenameRun.value?.working == false) driveRenameRun.value = null
+    }
+
+    /**
+     * Renames exactly the plan's file, for the plan's account only. Before the call the transfers
+     * are read again (a file a transfer now depends on is left alone, and a name a transfer is now
+     * uploading is refused) and the connected account must still be the plan's.
+     */
+    suspend fun renameDriveFile(
+        plan: com.drivelift.app.data.DriveRenamePlan,
+        newName: String,
+    ): com.drivelift.app.data.DriveRenameOutcome {
+        val file = plan.file
+        fun failed(reason: String) =
+            com.drivelift.app.data.DriveRenameOutcome(file, newName, failure = reason, folderId = plan.folderId)
+        val account = plan.account ?: return failed(NOT_CONNECTED)
+        if (!plan.allowed) return failed("DriveLift can't rename this item")
+        if (!account.equals(prefs.accountEmail, ignoreCase = true)) return failed(ACCOUNT_CHANGED)
+        val rows = transferRowsFor(listOf(file)) + graph.db.transfers().dependingOnDriveFiles(emptyList(), listOf(newName))
+        if (com.drivelift.app.data.transferHolds(file, rows)) return failed("a transfer now depends on it")
+        if (com.drivelift.app.data.nameOfActiveUpload(newName, rows)) return failed("a transfer is now uploading a file with that name")
+        return try {
+            val renamed = driveFolders.renameFile(file.id, plan.folderId, newName, account)
+            com.drivelift.app.data.DriveRenameOutcome(file, newName, renamed = renamed, folderId = plan.folderId)
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: com.drivelift.app.drive.NameTakenException) {
+            com.drivelift.app.data.DriveRenameOutcome(file, newName, nameTaken = true, folderId = plan.folderId)
+        } catch (e: com.drivelift.app.drive.AccountChangedException) {
+            failed(ACCOUNT_CHANGED)
+        } catch (e: com.drivelift.app.drive.AuthRequiredException) {
+            failed("Google Drive authorization expired. Reconnect and try again.")
+        } catch (e: Exception) {
+            failed(com.drivelift.app.transfer.describeError(e))
+        }
     }
 
     companion object {

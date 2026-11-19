@@ -10,6 +10,9 @@ import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import com.drivelift.app.data.DriveMovePlan
+import com.drivelift.app.data.DriveRenamePlan
+import com.drivelift.app.data.checkDriveRename
+import com.drivelift.app.data.endingChangeNote
 import com.drivelift.app.data.DriveTrashPlan
 import com.drivelift.app.data.shownDriveEntries
 import androidx.compose.foundation.shape.CircleShape
@@ -207,6 +210,11 @@ fun DriveBrowser(
     var movePlan by remember { mutableStateOf<DriveMovePlan?>(null) }
     val moveRun by vm.driveMoveRun.collectAsStateWithLifecycle()
     val moving = moveRun?.working == true
+    // Renaming one selected file (issue #42). [renameTaken] is a name Drive reported as taken.
+    var renamePlan by remember { mutableStateOf<DriveRenamePlan?>(null) }
+    var renameTaken by remember { mutableStateOf<String?>(null) }
+    val renameRun by vm.driveRenameRun.collectAsStateWithLifecycle()
+    val renaming = renameRun?.working == true
     val selecting = selectedIds.isNotEmpty() && !pickMode
     // The tab bar steps aside while a file is open or files are selected, as in Phone folders,
     // so the selection bar has the bottom of the screen to itself.
@@ -304,6 +312,29 @@ fun DriveBrowser(
             outcome.toFolderId -> if (gone.isNotEmpty()) reload++
         }
         vm.driveMoveApplied()
+    }
+    fun askRename(file: DriveFile) {
+        val siblings = entries.orEmpty().filter { it.id != file.id }.map { it.name }
+        renameTaken = null
+        scope.launch { renamePlan = vm.planDriveRename(file, here.id, siblings) }
+    }
+    // Applies a finished rename: a taken name keeps the dialog open; otherwise the listing shows
+    // the new name if the file's folder is the one shown now.
+    LaunchedEffect(renameRun?.outcome) {
+        val outcome = renameRun?.outcome ?: return@LaunchedEffect
+        if (outcome.nameTaken) {
+            // With the dialog open, the reason shows under the field. If the screen was recreated
+            // while Drive was asked, the dialog is gone, so the reason is reported as a message.
+            if (renamePlan?.file?.id == outcome.file.id) renameTaken = outcome.newName
+            else vm.messages.emit(outcome.message())
+        } else {
+            renamePlan = null
+            outcome.renamed?.let { renamed ->
+                if (here.id == outcome.folderId) entries = entries?.map { if (it.id == renamed.id) renamed else it }
+                selectedIds = selectedIds - renamed.id
+            }
+        }
+        vm.driveRenameApplied()
     }
     // Applies a finished batch, including one that finished while the screen was recreated.
     LaunchedEffect(trashRun?.outcome) {
@@ -593,12 +624,19 @@ fun DriveBrowser(
                         .glassBar()
                         .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
                 ) {
-                    Text("${chosen.size} items", style = MaterialTheme.typography.titleMedium)
-                    Text(
-                        formatBytes(context, chosen.sumOf { it.size }),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
+                    // Rename sits beside the count when exactly one file is selected, as in Phone folders.
+                    SummaryWithRename(
+                        showRename = chosen.size == 1,
+                        onRename = { askRename(chosen.first()) },
+                        enabled = !renaming,
+                    ) {
+                        Text("${chosen.size} items", style = MaterialTheme.typography.titleMedium)
+                        Text(
+                            formatBytes(context, chosen.sumOf { it.size }),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                     Row(
                         Modifier.fillMaxWidth().padding(top = Tokens.Small),
                         horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -681,6 +719,36 @@ fun DriveBrowser(
                         openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
                     },
                     onDelete = { askTrash(listOf(openFile)) },
+                )
+            }
+        }
+        renamePlan?.let { plan ->
+            if (!plan.allowed) {
+                RenameBlockedDialog(
+                    name = plan.file.name,
+                    reason = "A transfer still depends on this copy in Google Drive. Finish it in Transfers first.",
+                    onDismiss = { renamePlan = null },
+                )
+            } else {
+                RenameDialog(
+                    original = plan.file.name,
+                    explanation = "Only the name changes. The file keeps its folder, content and sharing in Google Drive, " +
+                        "and nothing on this phone is changed.",
+                    validate = { typed ->
+                        val check = checkDriveRename(plan, typed)
+                        if (check.error == null && check.name == renameTaken) {
+                            check.copy(error = "A file named ${check.name} is already in this folder. Choose another name.")
+                        } else check
+                    },
+                    note = { check -> if (check.error == null) endingChangeNote(plan.file.name, check.name) else null },
+                    working = renaming,
+                    onConfirm = { name -> vm.startDriveRename(plan, name) },
+                    onDismiss = {
+                        if (!renaming) {
+                            vm.cancelRename()
+                            renamePlan = null
+                        }
+                    },
                 )
             }
         }

@@ -260,6 +260,39 @@ Choosing the folder the files are already in moves nothing. Like a trash, the ba
 the account that was connected at confirmation, account switching is refused while it runs, and
 on a change the remaining files are reported as not tried.
 
+## Renaming one file
+
+Select exactly one file, in a Phone folder or in the Drive tab, and tap **Rename** beside the
+count in the selection bar. A solid dialog shows the current name with the part before the ending
+selected. The new name is checked as it is typed and **Rename** stays off, with the reason under
+the field, while it is empty, unchanged, `.` or `..`, contains `/` or control characters, or is
+longer than 255 bytes. A name already in the folder is never used: DriveLift says so and the user
+picks another; nothing is overwritten. Cancel renames nothing.
+
+Only the name changes. The bytes are not touched, a phone file keeps its MediaStore address (URI)
+and a Drive file keeps its id, so transfer rows still point at the same file.
+
+- **Phone** (`data/Rename.kt`, `ui/Rename.kt`): the ending (`.jpg`, `.mp4`) must stay the same,
+  because Android ties it to the file's type and would change the name itself; storage-unsafe
+  characters (`\ : * ? " < > |`) and a leading dot are refused. Names in the folder are the listed
+  photos and videos plus every file MediaStore shows DriveLift there, compared without letter case
+  like the phone's storage. DriveLift sets `DISPLAY_NAME`; for a file it does not own Android asks
+  first (`MediaStore.createWriteRequest`, shown above the lock like the trash request), and a
+  refusal renames nothing. Afterwards DriveLift reads the name back and reports what Android
+  saved, including a name Android changed or one that could not be checked.
+- **Drive** (`drive/DriveClient.kt` `renameFile`): before `files.update` with the new `name`,
+  DriveLift checks the file is still in the folder shown and that no other item there has that
+  name (Drive itself would allow two); Drive's answer must show the new name on the same id. A
+  changed ending is allowed with a note: the file's content and type stay the same. A name a
+  transfer is still uploading is refused, so an upload never lands beside a renamed file of the
+  same name. Like trash and move, the rename runs only for the account connected at
+  confirmation and blocks account switching while it runs. Folders cannot be selected and are not
+  renamed in this version.
+
+A file a transfer still depends on is refused with the reason: on the phone a file in a
+`QUEUED`, `UPLOADING`, `UPLOADED` or `VERIFIED` transfer, in Drive a copy being uploaded or checked
+or verified and waiting for removal. The transfers are read again just before the name is sent.
+
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the
@@ -297,7 +330,9 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `data/Db.kt` | `transfers` and `presets` tables and their queries |
 | `data/Prefs.kt` | Wi-Fi only, auto-offer removal, paused, connected account email |
 | `drive/DriveAuth.kt` | Google sign-in and access tokens, pinned to the connected account |
-| `drive/DriveClient.kt` | Drive REST calls: list, create folder, resumable upload, metadata, trash |
+| `drive/DriveClient.kt` | Drive REST calls: list, create folder, resumable upload, metadata, trash, move, rename |
+| `data/Rename.kt` | Rename name checks, plans and outcomes; MediaStore name updates |
+| `ui/Rename.kt` | Rename dialog, phone rename flow, Android write-consent host |
 | `transfer/TransferRepository.kt` | Queueing, starting and stopping the jobs |
 | `transfer/TransferWorker.kt` | The upload job |
 | `transfer/VerifyWorker.kt` | The verification job: reads the phone file, computes MD5, retries |

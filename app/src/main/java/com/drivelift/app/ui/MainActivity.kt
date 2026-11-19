@@ -90,8 +90,10 @@ class MainActivity : FragmentActivity() {
             DriveLiftTheme {
                 GlassBackdrop {
                     // Outside the lock gate: a phone trash request keeps its result handler if the
-                    // app locks while Android's dialog is open (issue #36).
+                    // app locks while Android's dialog is open (issue #36). The same holds for
+                    // Android's write consent for a rename (issue #42).
                     PhoneTrashHost(vm)
+                    PhoneRenameHost(vm)
                     LockGate(graph.lock, graph.authenticator) { AppRoot(vm) }
                 }
             }

@@ -42,6 +42,8 @@ class DriveHttpException(val code: Int, val reason: String?, message: String) : 
 class SessionExpiredException : IOException("The upload session expired, starting this file again")
 /** A file to be moved is no longer in the folder it was selected in; nothing was changed. */
 class NotInFolderException : IOException("It is no longer in this folder")
+/** Another file in the folder already has the name asked for; nothing was renamed. */
+class NameTakenException(name: String) : IOException("A file named $name is already in this folder")
 
 data class DriveFile(
     val id: String,
@@ -126,6 +128,16 @@ interface DriveFolders {
      */
     suspend fun moveFile(fileId: String, fromFolderId: String, toFolderId: String, account: String): Unit =
         throw IOException("Moving files is not available")
+
+    /**
+     * Renames one file in folder [folderId] to [newName] as [account] (user-directed, issue #42).
+     * Only the name changes: the id, content and folder stay the same. Throws [NameTakenException]
+     * when another item in [folderId] already has [newName] and [NotInFolderException] when the
+     * file is no longer there, both without changing anything, and [AccountChangedException] as
+     * [moveToTrash] does. Returns the file as Drive shows it after the rename.
+     */
+    suspend fun renameFile(fileId: String, folderId: String, newName: String, account: String): DriveFile =
+        throw IOException("Renaming files is not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -549,6 +561,38 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
             parentsOf(JSONObject(r.body!!.string()))
         }
         if (to !in after || from in after) throw IOException("Drive did not confirm the move")
+    }
+
+    override suspend fun renameFile(fileId: String, folderId: String, newName: String, account: String): DriveFile {
+        val folder = folderIdFor(folderId, account)
+        // Read where the file is now: it is renamed only while it is in the folder the user saw.
+        val readUrl = "$API/files/$fileId".toHttpUrl().newBuilder().addQueryParameter("fields", "parents").build()
+        val parents = execute({ Request.Builder().url(readUrl) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            parentsOf(JSONObject(r.body!!.string()))
+        }
+        if (folder !in parents) throw NotInFolderException()
+        // Drive allows two files with one name; DriveLift never makes one, so a taken name is refused.
+        val query = "name = '${escape(newName)}' and '${escape(folder)}' in parents and trashed = false"
+        val findUrl = "$API/files".toHttpUrl().newBuilder()
+            .addQueryParameter("q", query)
+            .addQueryParameter("fields", "files(id)")
+            .addQueryParameter("pageSize", "10")
+            .build()
+        val taken = execute({ Request.Builder().url(findUrl) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            val files = JSONObject(r.body!!.string()).optJSONArray("files") ?: JSONArray()
+            (0 until files.length()).any { files.getJSONObject(it).optString("id") != fileId }
+        }
+        if (taken) throw NameTakenException(newName)
+        val url = "$API/files/$fileId".toHttpUrl().newBuilder().addQueryParameter("fields", FILE_FIELDS).build()
+        val body = JSONObject().put("name", newName).toString().toRequestBody(JSON)
+        val after = execute({ Request.Builder().url(url).patch(body) }, account = account) { r ->
+            if (!r.isSuccessful) fail(r)
+            parseFile(JSONObject(r.body!!.string()))
+        }
+        if (after.id != fileId || after.name != newName) throw IOException("Drive did not confirm the new name")
+        return after
     }
 
     /** The real id of [folderId], resolving the "root" alias once for [account]. */
