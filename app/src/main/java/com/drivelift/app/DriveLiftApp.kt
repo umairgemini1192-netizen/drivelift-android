@@ -33,7 +33,9 @@ class Graph(app: Application) {
     val drive = DriveClient(app, prefs)
     /** Keeps a user-directed Drive trash apart from verification and phone removal (issue #36). */
     val driveCopyFence = com.drivelift.app.transfer.DriveCopyFence()
-    val transfers = TransferRepository(app, db, prefs, media, driveCopyFence)
+    /** Keeps phone trash requests apart from queuing, removal and kept duplicate copies (#36, #42). */
+    val phoneFileFence = com.drivelift.app.transfer.PhoneFileFence()
+    val transfers = TransferRepository(app, db, prefs, media, driveCopyFence, phoneFileFence)
     /** In memory only, so a new process starts locked. */
     val lock = AppLock()
     /** Replaced by a fake in tests; the app uses Android's BiometricPrompt. */
@@ -64,6 +66,16 @@ class Graph(app: Application) {
     /** Names of the files MediaStore lists in a folder ([relativePath]), for the rename collision check. */
     var folderNames: (android.content.ContentResolver, String) -> List<String> =
         { resolver, path -> com.drivelift.app.data.queryFolderNames(resolver, path) }
+
+    /**
+     * Opens the unredacted original bytes of a phone file for the duplicate check (issue #42),
+     * the same read the verifier uses. Replaced in tests, which have no original-file access.
+     */
+    var openOriginalStream: (Context, android.net.Uri) -> java.io.InputStream = { context, uri ->
+        android.os.ParcelFileDescriptor.AutoCloseInputStream(com.drivelift.app.data.MediaAccess.open(context, uri))
+    }
+    /** Wall clock for the times the Storage screen shows. Fixed in screenshot tests. */
+    var clock: () -> Long = System::currentTimeMillis
 
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph

@@ -39,6 +39,8 @@ import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
+import androidx.compose.material.icons.outlined.PieChart
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -105,6 +107,7 @@ fun PhoneScreen(
     onOpen: (Long) -> Unit,
     onMoveFolder: (Long) -> Unit,
     onOpenFavorites: () -> Unit = {},
+    onOpenStorage: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
@@ -152,6 +155,9 @@ fun PhoneScreen(
                 )
             }
         }
+        item(key = "storage") {
+            StorageEntryRow(onOpenStorage, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny))
+        }
         if (MediaAccess.isPartial(context)) {
             item(key = "partial") {
                 Text(
@@ -193,6 +199,28 @@ fun PhoneScreen(
                 onOpen = { onOpen(folder.bucketId) },
                 onMove = { onMoveFolder(folder.bucketId) },
             )
+        }
+    }
+}
+
+/** Opens Storage insights (issue #42). */
+@Composable
+private fun StorageEntryRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier.fillMaxWidth().testTag("storage-entry"), onClick = onOpen, onClickLabel = "Open storage") {
+        Row(
+            Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.Outlined.PieChart, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f).padding(start = Tokens.Medium)) {
+                Text("Storage", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Sizes, largest files, duplicates",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
         }
     }
 }

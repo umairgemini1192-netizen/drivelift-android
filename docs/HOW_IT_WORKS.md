@@ -154,6 +154,62 @@ the trash, how many are still on the phone and how many could not be checked (fo
 media access was withdrawn). Files that left the folder before the request was sent are not
 sent and are reported as such. A file missing from the listing is never counted as trashed.
 
+## Storage insights (`ui/StorageScreen.kt`, `data/StorageInsights.kt`)
+
+Open it from the Storage row on the Phone tab. It measures two things, each labelled with its
+scope and the time it was read:
+
+- **Phone photos and videos DriveLift can see**: the same MediaStore listing the Phone tab uses.
+  The total, photos against videos by count and bytes, the folders by size, and the largest files
+  (tap one to open it in the viewer). With "selected photos only" access the figures cover only
+  the selected photos, and the screen says so.
+- **Google Drive quota** of the connected account (`about.storageQuota`): used and total, read
+  when Drive connected or when you tap refresh. The quota is shared by Drive, Gmail and Google
+  Photos, so it is not DriveLift's usage alone.
+
+Not covered: documents, audio, downloads, APK files, and other apps' files and caches. Measuring
+them needs a scoped-storage design of its own, planned for later. No permission was added.
+
+### Duplicate candidates
+
+Tap Check for duplicates. Files are first grouped by exact byte size; only files that share a
+size with another file are read. Each of those is read in full (the original bytes, as the
+verifier reads them) and its SHA-256 checksum computed, in a background job with a progress bar
+and a Stop button; it keeps going if you leave the screen and stops if the app is closed. Files
+with the same size and the same checksum form a group. Names are never used, files that could not
+be read are left out of every group, and empty files are skipped. A group is a candidate, not a
+statement that a copy is safe to delete.
+
+### Cleanup
+
+Nothing is selected after a check. Inside a group you tick the copies you want gone; the last
+unticked copy of a group cannot be ticked, so every group keeps one. Copies that are part of a
+transfer (waiting, uploading, being checked, or verified and waiting for removal) cannot be
+ticked and are marked.
+
+Move to trash first reads every ticked copy and the copies meant to stay again, and checks
+transfers again. DriveLift's confirmation then names the copies that go, their count and total
+size, the copy that stays in each group, and every copy left out with its reason (part of a
+transfer, content changed or unreadable, would leave no copy, no longer on the phone). Confirming
+reads the copies again. Then, in one step right before Android is asked, DriveLift reads the
+transfers and the phone listing again and reserves the copies going to the trash and the copy
+each group keeps (`transfer/PhoneFileFence.kt`, one lock shared with queuing transfers):
+
+- a copy a transfer now holds is left out;
+- a group whose kept copy is gone, changed size, is in an open removal request on Transfers, or
+  is being trashed sends nothing;
+- until Android has answered (including while its dialog is open), a reserved copy cannot be
+  queued or retried for Drive, and a kept copy cannot be put in a removal request or another
+  trash request.
+- one phone trash request is open at a time: a cleanup confirmed while another is still open
+  sends nothing and says so, so each answer applies to its own request.
+
+Only copies that pass go to the released Phone trash flow (`MediaStore.createTrashRequest`, see
+"Moving phone files to the trash"): without Media management Android shows its own dialog after
+DriveLift's, results are read back per file, and files stay recoverable from Android's trash for
+a limited time. There is no automatic cleanup. Another app editing or deleting a file after that
+last check is outside what DriveLift can prevent.
+
 ## Moving Drive files to the trash
 
 In the Drive tab, hold a file to select it (tap more to add them, or use Select all) and tap the
@@ -350,6 +406,9 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `transfer/Notifications.kt` | Progress and result notifications |
 | `ui/MainActivity.kt` | App shell, tabs, permission request |
 | `ui/PhoneScreens.kt` | Folder list, photo grid, drag selection |
+| `ui/StorageScreen.kt` | Storage insights: breakdown, Drive quota, largest files, duplicate cleanup |
+| `data/StorageInsights.kt` | Breakdown, size-then-SHA-256 duplicate grouping, cleanup plan |
+| `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/Favorites.kt` | Favorites list, star button, way in from Phone and Drive |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |

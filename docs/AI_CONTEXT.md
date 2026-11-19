@@ -72,6 +72,11 @@ These protect the user's files. A change that touches them is high risk and need
    with Media management, otherwise Android's). It needs no Drive copy or `VERIFIED` status and
    never implies one exists. Files in a `QUEUED`, `UPLOADING`, `UPLOADED` or `VERIFIED` transfer
    are left out and named, so no transfer or removal step acts on a trashed source.
+   Duplicate cleanup on the Storage screen (issue #42) is this same user-directed delete: the
+   user picks copies inside a group of files with equal size and SHA-256, at least one copy of
+   each group always stays, and the picked and kept copies are read again right before the
+   request. Duplicates are candidates, never presented as safe to delete; nothing is removed
+   automatically.
 4. **Retries have no limit.** Recoverable errors are retried forever with capped backoff. A
    dropped connection resumes from the byte Drive confirms, never from an assumed offset.
 5. **A bad copy is never left looking good.** A size or checksum mismatch trashes the Drive copy
