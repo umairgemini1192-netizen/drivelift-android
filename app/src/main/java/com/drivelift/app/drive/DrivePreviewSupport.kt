@@ -14,6 +14,72 @@ enum class DrivePreviewKind {
     UNSUPPORTED,
 }
 
+/** Google Vids. A Google-native type: `alt=media` and `files.export` both refuse it. */
+const val GOOGLE_VIDS_MIME = "application/vnd.google-apps.vid"
+
+/**
+ * How the in-app player gets bytes for a video. Google-native types cannot use `alt=media`
+ * (fileNotDownloadable). Vids are rendered to MP4 by `files.download`, which returns a long-running
+ * operation whose response carries the download URI.
+ */
+enum class DrivePlaybackSource { DIRECT_MEDIA, VIDS_DOWNLOAD_OPERATION }
+
+fun drivePlaybackSource(mimeType: String): DrivePlaybackSource =
+    if (mimeType.lowercase().trim() == GOOGLE_VIDS_MIME) {
+        DrivePlaybackSource.VIDS_DOWNLOAD_OPERATION
+    } else {
+        DrivePlaybackSource.DIRECT_MEDIA
+    }
+
+/** Wait before polling the download operation again: 2 s, doubling, capped at 15 s. */
+fun drivePollDelayMillis(attempt: Int): Long =
+    (2_000L shl attempt.coerceIn(0, 3)).coerceAtMost(15_000L)
+
+/** The operation name without a leading `operations/`, for the `operations/{name}` path. */
+fun driveOperationName(name: String): String = name.removePrefix("operations/")
+
+/** The parts of a `files.download` operation the player needs. Null when Drive omitted them. */
+data class DriveRenderOperation(
+    val name: String?,
+    val done: Boolean,
+    val errorMessage: String?,
+    val downloadUri: String?,
+)
+
+/**
+ * Starts a Vids render and waits for its download URI. The HTTP calls, the clock and the delay are
+ * passed in, so the whole flow is tested with fakes. [poll] receives the operation id, not the
+ * full name. Any error, a missing name or link, a timeout, or an untrusted URI stops it. A
+ * cancelled coroutine stops it too, because [wait] is suspending.
+ */
+suspend fun awaitVidsRender(
+    start: suspend () -> DriveRenderOperation,
+    poll: suspend (operationId: String) -> DriveRenderOperation,
+    wait: suspend (delayMillis: Long) -> Unit,
+    now: () -> Long,
+    timeoutMillis: Long,
+    isTrusted: (HttpUrl) -> Boolean,
+): HttpUrl {
+    var operation = start()
+    operation.errorMessage?.let { throw java.io.IOException(it) }
+    val name = operation.name?.takeIf { it.isNotBlank() }
+        ?: throw java.io.IOException("Drive did not start the video render")
+    val deadline = now() + timeoutMillis
+    var attempt = 0
+    while (!operation.done) {
+        if (now() > deadline) {
+            throw java.io.IOException("Drive is still preparing this video. Try again later.")
+        }
+        wait(drivePollDelayMillis(attempt++))
+        operation = poll(driveOperationName(name))
+        operation.errorMessage?.let { throw java.io.IOException(it) }
+    }
+    val uri = operation.downloadUri?.toHttpUrlOrNull()
+        ?: throw java.io.IOException("Drive returned no video link")
+    if (!isTrusted(uri)) throw java.io.IOException("Blocked media request to untrusted host")
+    return uri
+}
+
 fun classifyDriveFile(mimeType: String): DrivePreviewKind = when (mimeType.lowercase().trim()) {
     "image/jpeg",
     "image/jpg",
@@ -30,6 +96,9 @@ fun classifyDriveFile(mimeType: String): DrivePreviewKind = when (mimeType.lower
     "video/webm",
     "video/x-matroska",
     "video/quicktime",
+    // Google Vids projects have no bytes of their own. Drive renders them to MP4 on demand, see
+    // [drivePlaybackSource].
+    GOOGLE_VIDS_MIME,
     -> DrivePreviewKind.VIDEO
 
     "application/pdf" -> DrivePreviewKind.PDF
