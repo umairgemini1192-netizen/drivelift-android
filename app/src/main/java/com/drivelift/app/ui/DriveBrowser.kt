@@ -968,8 +968,11 @@ private fun DriveRow(
         onLongClick = onLongClick,
         onLongClickLabel = "Select",
     ) {
+        // The star's 48 dp touch target is taller than the 24 dp icon line; take the difference out
+        // of the padding so a folder row keeps its height and the files below stay where they were.
+        val vertical = if (favorite != null) Tokens.RowLoose - (Tokens.TouchTarget - Tokens.Icon) / 2 else Tokens.RowLoose
         Row(
-            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.RowLoose),
+            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = vertical),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             if (selected != null) {
