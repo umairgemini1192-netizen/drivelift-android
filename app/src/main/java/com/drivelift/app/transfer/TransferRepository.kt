@@ -32,6 +32,7 @@ class TransferRepository(
     private val prefs: Prefs,
     private val media: MediaRepository,
     private val fence: DriveCopyFence,
+    private val phoneFence: PhoneFileFence = PhoneFileFence(),
 ) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val dao get() = db.transfers()
@@ -41,12 +42,15 @@ class TransferRepository(
         .setRequiredNetworkType(if (prefs.wifiOnly.value) NetworkType.UNMETERED else NetworkType.CONNECTED)
         .build()
 
-    /** Queues files and starts the pipeline. Returns how many were newly added. */
-    suspend fun enqueue(items: List<MediaItem>, dest: Destination): Int {
+    /**
+     * Queues files and starts the pipeline. Returns how many were newly added. A file that is
+     * being moved to the phone's trash (its request is open) is not queued ([PhoneFileFence]).
+     */
+    suspend fun enqueue(items: List<MediaItem>, dest: Destination): Int = phoneFence.whileEnqueueing { blocked ->
         // A fresh batch starts with a clean ledger; anything still in flight stays.
         if (dao.count(PENDING) == 0) dao.clearFinished()
         var added = 0
-        items.chunked(400).forEach { chunk ->
+        items.filter { it.uri.toString() !in blocked }.chunked(400).forEach { chunk ->
             dao.purgeFinished(chunk.map { it.uri.toString() })
             added += dao.insertAll(chunk.map { m ->
                 TransferEntity(
@@ -58,7 +62,7 @@ class TransferRepository(
         }
         prefs.setPaused(false)
         kickUpload(ExistingWorkPolicy.APPEND_OR_REPLACE)
-        return added
+        added
     }
 
     fun kickUpload(policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
@@ -128,9 +132,10 @@ class TransferRepository(
      * prompt. Rows whose file is already gone are closed out as removed, but only
      * while the app can see every photo and video: otherwise "not visible" is not "gone".
      *
-     * The returned files are reserved in the [DriveCopyFence] until [removalFinished]: no Drive
-     * trash can take their copies while the request is open, and a file whose copy is being
-     * trashed is left out. The rows are read before the fence is asked, so a copy reserved for a
+     * The returned files are reserved in the [DriveCopyFence] and the [PhoneFileFence] until
+     * [removalFinished]: no Drive trash can take their copies and no duplicate cleanup can keep
+     * them while the request is open. A file whose copy is being trashed, a copy a duplicate
+     * cleanup keeps, and a file a phone trash request is sending are left out. The rows are read before the fence is asked, so a copy reserved for a
      * trash after that read is seen by the trash as VERIFIED and left alone.
      */
     suspend fun verifiedForRemoval(limit: Int): List<String> {
@@ -144,11 +149,15 @@ class TransferRepository(
         )
         markRemoved(gone)
         val copyOf = rows.associate { it.mediaUri to it.driveFileId }
-        return fence.beginRemoval(onPhone.map { it to copyOf[it] })
+        // Copies a duplicate cleanup keeps, and files a phone trash request is sending, stay out.
+        return fence.beginRemoval(phoneFence.beginRemoval(onPhone).map { it to copyOf[it] })
     }
 
     /** The removal request from [verifiedForRemoval] was answered, cancelled or never shown. */
-    suspend fun removalFinished() = fence.endRemoval()
+    suspend fun removalFinished() {
+        phoneFence.endRemoval()
+        fence.endRemoval()
+    }
 
     suspend fun markRemoved(uris: List<String>) {
         uris.chunked(400).forEach { dao.markRemoved(it) }

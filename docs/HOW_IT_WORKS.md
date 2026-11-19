@@ -191,10 +191,21 @@ Move to trash first reads every ticked copy and the copies meant to stay again, 
 transfers again. DriveLift's confirmation then names the copies that go, their count and total
 size, the copy that stays in each group, and every copy left out with its reason (part of a
 transfer, content changed or unreadable, would leave no copy, no longer on the phone). Confirming
-repeats those checks once more and sends only copies that still pass to the released Phone trash
-flow (`MediaStore.createTrashRequest`, see "Moving phone files to the trash"): without Media
-management Android shows its own dialog after DriveLift's, results are read back per file, and
-files stay recoverable from Android's trash for a limited time. There is no automatic cleanup.
+reads the copies again. Then, in one step right before Android is asked, DriveLift reads the
+transfers and the phone listing again and reserves the copies going to the trash and the copy
+each group keeps (`transfer/PhoneFileFence.kt`, one lock shared with queuing transfers):
+
+- a copy a transfer now holds is left out;
+- a group whose kept copy is gone, changed size, is in an open removal request on Transfers, or
+  is being trashed sends nothing;
+- until Android has answered (including while its dialog is open), a reserved copy cannot be
+  queued for Drive, and a kept copy cannot be put in a removal request or another trash request.
+
+Only copies that pass go to the released Phone trash flow (`MediaStore.createTrashRequest`, see
+"Moving phone files to the trash"): without Media management Android shows its own dialog after
+DriveLift's, results are read back per file, and files stay recoverable from Android's trash for
+a limited time. There is no automatic cleanup. Another app editing or deleting a file after that
+last check is outside what DriveLift can prevent.
 
 ## Moving Drive files to the trash
 
@@ -344,6 +355,7 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `ui/PhoneScreens.kt` | Folder list, photo grid, drag selection |
 | `ui/StorageScreen.kt` | Storage insights: breakdown, Drive quota, largest files, duplicate cleanup |
 | `data/StorageInsights.kt` | Breakdown, size-then-SHA-256 duplicate grouping, cleanup plan |
+| `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |
 | `ui/TransfersScreen.kt` | Progress, controls, removal |

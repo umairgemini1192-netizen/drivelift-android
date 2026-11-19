@@ -289,7 +289,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val skipped = items.size - added
             messages.emit(
                 if (skipped == 0) "$added items queued for Drive"
-                else "$added queued. $skipped were already in a transfer"
+                else "$added queued. $skipped were already in a transfer or are waiting to go to the trash"
             )
             tab.value = TAB_TRANSFERS
         }
@@ -384,13 +384,21 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val launched: Boolean = false,
         val submitted: List<String> = emptyList(),
         val notSent: Int = 0,
+        /** A duplicate cleanup's reservation (issue #42), released once Android has answered. */
+        val cleanup: com.drivelift.app.transfer.PhoneFileFence.Reservation? = null,
     )
 
     val pendingTrash = MutableStateFlow<PendingTrash?>(null)
 
     /** Asks for exactly [ids] to be moved to the phone's trash; PhoneTrashHost shows Android's dialog. */
-    fun requestPhoneTrash(ids: List<Long>) {
-        if (ids.isNotEmpty()) pendingTrash.value = PendingTrash(ids)
+    fun requestPhoneTrash(ids: List<Long>, cleanup: com.drivelift.app.transfer.PhoneFileFence.Reservation? = null) {
+        if (ids.isEmpty()) {
+            cleanup?.let(graph.phoneFileFence::endCleanup)
+            return
+        }
+        // A batch that was never shown is replaced; its reservation must not outlive it.
+        pendingTrash.value?.takeIf { !it.launched }?.cleanup?.let(graph.phoneFileFence::endCleanup)
+        pendingTrash.value = PendingTrash(ids, cleanup = cleanup)
     }
 
     /**
@@ -400,9 +408,13 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     fun startPendingTrash(): android.app.PendingIntent? {
         val pending = pendingTrash.value?.takeIf { !it.launched } ?: return null
         val byId = media.value.associateBy { it.id }
-        val uris = pending.ids.mapNotNull { byId[it]?.uri }
+        // Reserved until Android answers: no transfer can be queued for these meanwhile, and a
+        // copy a duplicate cleanup keeps is never sent ([com.drivelift.app.transfer.PhoneFileFence]).
+        val allowed = graph.phoneFileFence.beginTrash(pending.ids.mapNotNull { byId[it]?.uri?.toString() }).toSet()
+        val uris = pending.ids.mapNotNull { byId[it]?.uri }.filter { it.toString() in allowed }
         if (uris.isEmpty()) {
             pendingTrash.value = null
+            pending.cleanup?.let(graph.phoneFileFence::endCleanup)
             messages.tryEmit("These files are no longer in the folder. Nothing was sent to the trash.")
             return null
         }
@@ -423,6 +435,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val pending = pendingTrash.value
         val submitted = pending?.submitted?.takeIf { it.isNotEmpty() } ?: savedSubmitted
         pendingTrash.value = null
+        submitted?.let(graph.phoneFileFence::endTrash)
+        pending?.cleanup?.let(graph.phoneFileFence::endCleanup)
         if (failure != null) {
             messages.tryEmit("Android could not open the trash request: $failure")
             return
@@ -619,9 +633,12 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * The user confirmed. Right before anything is asked of Android, every confirmed file and the
-     * copies that stay are read again and transfers are checked again; only files that still pass
-     * go to the phone's trash request (the released Phone trash flow, issue #36).
+     * The user confirmed. Every confirmed file and the copies that stay are read again. Then, in
+     * one step under the [com.drivelift.app.transfer.PhoneFileFence] lock and right before Android
+     * is asked, transfers and the phone listing are read again and the files to trash and the
+     * copies that stay are reserved until Android has answered. A copy a transfer now holds is
+     * left out; a group whose kept copy is gone, changed, or in an open removal request is
+     * refused. Only files that pass go to the trash request (the released Phone trash flow, #36).
      */
     fun confirmDuplicateCleanup() {
         val shown = (duplicateCleanup.value as? DuplicateCleanup.Confirm)?.plan ?: return
@@ -629,15 +646,39 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch {
             val confirmed = shown.eligible.mapTo(HashSet()) { it.id }
             val fresh = planCleanupFor(confirmed)
-            val ids = fresh.eligible.map { it.id }.filter { it in confirmed }
+            val going = fresh.eligible.filter { it.id in confirmed }
+            val fenceGroups = fresh.kept.mapNotNull { keeper ->
+                val group = duplicateGroups.value.firstOrNull { g -> g.items.any { it.id == keeper.id } }
+                    ?: return@mapNotNull null
+                val trash = going.filter { f -> group.items.any { it.id == f.id } }.map { it.uri.toString() }
+                com.drivelift.app.transfer.PhoneFileFence.Group(keeper.uri.toString(), trash, group.size)
+            }
+            val reservation = graph.phoneFileFence.beginCleanup(
+                fenceGroups,
+                held = { uris ->
+                    uris.chunked(400).flatMap { graph.db.transfers().byMediaUris(it) }
+                        .filter { it.status in com.drivelift.app.data.TRANSFER_HOLDS_FILE }
+                        .mapTo(HashSet()) { it.mediaUri }
+                },
+                present = {
+                    graph.media.refresh()
+                    graph.media.items.value.associate { it.uri.toString() to it.size }
+                },
+            )
+            val reserved = reservation.trash.toSet()
+            val ids = going.filter { it.uri.toString() in reserved }.map { it.id }
             duplicateCleanup.value = null
             lastCleanupSent = ids
             val dropped = confirmed.size - ids.size
             when {
-                ids.isEmpty() -> messages.emit("Nothing was sent to the trash: the files changed or became part of a transfer.")
-                dropped > 0 -> messages.emit("$dropped left out because they changed or became part of a transfer since you confirmed.")
+                ids.isEmpty() -> messages.emit(
+                    "Nothing was sent to the trash: the files or the copy that stays changed, or they became part of a transfer."
+                )
+                dropped > 0 -> messages.emit(
+                    "$dropped left out because they or the copy that stays changed, or they became part of a transfer."
+                )
             }
-            if (ids.isNotEmpty()) requestPhoneTrash(ids)
+            requestPhoneTrash(ids, reservation)
         }
     }
 
