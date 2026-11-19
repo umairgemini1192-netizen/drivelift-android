@@ -5,6 +5,7 @@ import android.os.ParcelFileDescriptor
 import com.drivelift.app.data.Prefs
 import com.google.android.gms.common.api.ApiException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.runBlocking
@@ -16,6 +17,7 @@ import okhttp3.Call
 import okhttp3.Callback
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.MediaType
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -425,10 +427,13 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
 
     override suspend fun openVideoStream(file: DriveFile): DriveVideoStream {
         val current = AtomicReference(token())
-        val url = "$API/files".toHttpUrl().newBuilder()
-            .addPathSegment(file.id)
-            .addQueryParameter("alt", "media")
-            .build()
+        val url = when (drivePlaybackSource(file.mimeType)) {
+            DrivePlaybackSource.DIRECT_MEDIA -> "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addQueryParameter("alt", "media")
+                .build()
+            DrivePlaybackSource.VIDS_DOWNLOAD_OPERATION -> vidsDownloadUri(file.id)
+        }
         val client = http.newBuilder()
             .readTimeout(30, TimeUnit.SECONDS)
             // A token can expire during a long pause or a late seek. On 401 the rejected token is
@@ -452,6 +457,44 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
             .addNetworkInterceptor { chain -> chain.proceed(authorizedMediaRequest(chain.request(), current.get())) }
             .build()
         return DriveVideoStream(url.toString(), client)
+    }
+
+    /**
+     * Starts Drive's MP4 render of a Google Vids file (`files.download`) and polls its operation
+     * with backoff until it is done. Returns the trusted download URI from the response. Gives up
+     * after [VIDS_RENDER_TIMEOUT_MS], so the player shows an error instead of spinning forever.
+     */
+    private suspend fun vidsDownloadUri(fileId: String): HttpUrl {
+        val startUrl = "$API/files".toHttpUrl().newBuilder()
+            .addPathSegment(fileId)
+            .addPathSegment("download")
+            .build()
+        var operation = execute({ Request.Builder().url(startUrl).post(ByteArray(0).toRequestBody(null)) }) { r ->
+            if (!r.isSuccessful) fail(r)
+            JSONObject(r.body!!.string())
+        }
+        val name = operation.optString("name")
+        if (name.isEmpty()) throw IOException("Drive did not start the video render")
+        val pollUrl = "$API/operations".toHttpUrl().newBuilder()
+            .addPathSegments(driveOperationName(name))
+            .build()
+        val deadline = System.currentTimeMillis() + VIDS_RENDER_TIMEOUT_MS
+        var attempt = 0
+        while (!operation.optBoolean("done", false)) {
+            if (System.currentTimeMillis() > deadline) {
+                throw IOException("Drive is still preparing this video. Try again later.")
+            }
+            delay(drivePollDelayMillis(attempt++))
+            operation = getJson(pollUrl)
+        }
+        operation.optJSONObject("error")?.let {
+            throw IOException(it.optString("message", "Drive could not prepare this video"))
+        }
+        val downloadUri = operation.optJSONObject("response")?.optString("downloadUri").orEmpty()
+        val uri = downloadUri.toHttpUrlOrNull()
+            ?: throw IOException("Drive returned no video link")
+        if (!isTrustedDriveMediaUrl(uri)) throw IOException("Blocked media request to untrusted host")
+        return uri
     }
 
     private suspend fun <T> executeTrustedMedia(initialUrl: HttpUrl, handle: suspend (Response) -> T): T {
@@ -762,6 +805,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         private const val PAGE_SIZE = "1000"
         private const val MAX_CONCURRENT_THUMBNAILS = 4
         private const val MAX_REDIRECTS = 5
+        private const val VIDS_RENDER_TIMEOUT_MS = 15L * 60L * 1000L
         private const val MAX_THUMB_BYTES = 2L * 1024L * 1024L
         private const val MAX_THUMB_FALLBACK_BYTES = 8L * 1024L * 1024L
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)
