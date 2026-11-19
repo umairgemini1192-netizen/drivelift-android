@@ -195,7 +195,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         } catch (e: com.drivelift.app.drive.AuthRequiredException) {
             com.drivelift.app.data.DriveCheck.Failed("Google Drive authorization expired. Reconnect and try again.")
         } catch (e: com.drivelift.app.drive.DriveHttpException) {
-            if (e.code == 403) com.drivelift.app.data.DriveCheck.Denied(
+            if (com.drivelift.app.data.isDriveAccessRefused(e.code, e.reason)) com.drivelift.app.data.DriveCheck.Denied(
                 "This account can no longer open it. The owner may have stopped sharing it.",
             ) else com.drivelift.app.data.DriveCheck.Failed("Could not check it. ${com.drivelift.app.transfer.describeError(e)}.")
         } catch (e: Exception) {

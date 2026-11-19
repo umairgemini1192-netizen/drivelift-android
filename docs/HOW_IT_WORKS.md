@@ -222,8 +222,9 @@ on a change the remaining files are reported as not tried.
 
 Tap the star on a phone folder (Phone tab), a Drive folder (Drive tab), or at the top of the
 viewer of a phone photo or video or a Drive file. Once something is starred, a **Favorites** row
-appears at the top of the Phone tab and of My Drive; it opens one list, phone items first, then
-Google Drive. A folder opens in its own tab; a photo, video or Drive file opens in the viewer.
+appears at the top of the Phone tab and of My Drive (also while Drive is not connected, since
+with photo access off the Phone tab shows only the access screen); it opens one list, phone items
+first, then Google Drive. A folder opens in its own tab; a photo, video or Drive file opens in the viewer.
 Tapping the filled star (or Remove) takes an item out of favorites. A favorite is only a pointer:
 starring or removing never copies, moves or changes the file.
 
@@ -249,7 +250,7 @@ Each time the list is shown DriveLift works out where every favorite is now:
 | Starred with another Google account | Unavailable: connect that account. Never looked up |
 | Drive item found (also after a move to another Drive folder) | Opens |
 | In Drive's trash / not found / access refused | Unavailable, with that reason |
-| The lookup failed (offline, authorization expired) | Unavailable, with Try again |
+| The lookup failed (offline, authorization expired, Drive asked to slow down) | Unavailable, with Try again |
 
 Drive favorites of the connected account are looked up one by one with `files.get` and a token
 proven to belong to that account; nothing is sent for favorites of any other account. An

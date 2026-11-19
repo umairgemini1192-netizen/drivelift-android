@@ -250,3 +250,11 @@ fun resolveFavorite(favorite: FavoriteEntity, ctx: FavoriteContext): FavoriteSta
 fun driveFavoritesToCheck(favorites: List<FavoriteEntity>, connectedAccount: String?): List<FavoriteEntity> =
     if (connectedAccount == null) emptyList()
     else favorites.filter { !it.onPhone && it.accountHash == connectedAccount }
+
+/**
+ * Whether a Drive refusal while looking a favorite up means this account cannot open the item.
+ * Drive also answers 403 when it asks to slow down (rate and daily limits): that is temporary, so
+ * it is a failed check that can be tried again, not lost access.
+ */
+fun isDriveAccessRefused(code: Int, reason: String?): Boolean =
+    code == 403 && reason?.let { it.contains("limit", ignoreCase = true) || it == "quotaExceeded" } != true

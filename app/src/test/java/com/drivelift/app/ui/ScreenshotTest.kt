@@ -1750,6 +1750,32 @@ class ScreenshotTest {
     }
 
     /**
+     * With photo access off and Drive not connected the Phone tab shows only the access gate, so
+     * the Favorites row stays in the Drive tab: each favorite shows why it cannot open and can be
+     * removed, with nothing looked up.
+     */
+    @Test
+    fun favoritesStayReachableWithoutPhotoAccessOrDrive() {
+        val drive = FakeDrive()
+        eachVariant(
+            "favorites-no-access", expect = null, capture = false, tab = AppViewModel.TAB_DRIVE, drive = drive,
+            act = {
+                setFavorites(
+                    phoneFolderFavorite(100, "Camera", "DCIM/Camera", added = 2),
+                    driveFavorite("d2", "Scan_0042.jpg", folder = false, added = 1),
+                )
+                waitFor("2 folders and files")
+                compose.onNodeWithText("2 folders and files").performClick()
+                waitFor(com.drivelift.app.data.FavoriteReasons.PHOTO_ACCESS_OFF)
+                waitFor(com.drivelift.app.data.FavoriteReasons.DRIVE_NOT_CONNECTED)
+                assertTrue("Nothing is looked up without a connected account", drive.lookedUp.isEmpty())
+                compose.onAllNodesWithText("Remove").onFirst().press()
+                settle { savedFavoriteIds().size == 1 }
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
      * Recovery: favorites that cannot be opened stay listed with their reason and can be removed;
      * the Drive favorite of another account is never looked up.
      */

@@ -112,4 +112,16 @@ class FavoritesTest {
         val asFile = resolveFavorite(folder, ctx(checks = mapOf(folder.id to DriveCheck.Found(driveFile("f1")))))
         assertEquals(FavoriteReasons.NOT_A_FOLDER, reason(asFile))
     }
+
+    @Test
+    fun onlyARealRefusalCountsAsLostAccessNotASlowDown() {
+        assertTrue(isDriveAccessRefused(403, "forbidden"))
+        assertTrue(isDriveAccessRefused(403, null))
+        assertTrue(!isDriveAccessRefused(403, "userRateLimitExceeded"))
+        assertTrue(!isDriveAccessRefused(403, "rateLimitExceeded"))
+        assertTrue(!isDriveAccessRefused(403, "dailyLimitExceeded"))
+        assertTrue(!isDriveAccessRefused(403, "quotaExceeded"))
+        assertTrue(!isDriveAccessRefused(429, null))
+        assertTrue(!isDriveAccessRefused(500, null))
+    }
 }

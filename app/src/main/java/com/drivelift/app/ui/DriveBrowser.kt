@@ -523,9 +523,9 @@ fun DriveBrowser(
                 }
             }
 
-            if (!pickMode && !selecting && stack.size == 1 && conn == DriveConn.CONNECTED &&
-                favorites.isNotEmpty() && onOpenFavorites != null
-            ) {
+            // Shown also while Drive is not connected: the Phone tab is behind the photo access
+            // gate, so this may be the only way to see why favorites cannot open and remove them.
+            if (!pickMode && !selecting && stack.size == 1 && favorites.isNotEmpty() && onOpenFavorites != null) {
                 FavoritesEntryRow(
                     count = favorites.size,
                     onClick = onOpenFavorites,
