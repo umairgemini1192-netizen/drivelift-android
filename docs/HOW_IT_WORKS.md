@@ -201,6 +201,8 @@ each group keeps (`transfer/PhoneFileFence.kt`, one lock shared with queuing tra
 - until Android has answered (including while its dialog is open), a reserved copy cannot be
   queued or retried for Drive, and a kept copy cannot be put in a removal request or another
   trash request.
+- one phone trash request is open at a time: a cleanup confirmed while another is still open
+  sends nothing and says so, so each answer applies to its own request.
 
 Only copies that pass go to the released Phone trash flow (`MediaStore.createTrashRequest`, see
 "Moving phone files to the trash"): without Media management Android shows its own dialog after

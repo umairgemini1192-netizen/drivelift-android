@@ -2578,6 +2578,26 @@ class ScreenshotTest {
                 val vm = currentVm!!
                 openStorage()
                 checkDuplicates()
+
+                // Codex on 5ca2a2d: a cleanup confirmed while another trash dialog is open does not
+                // replace that batch; it is refused and its reservation released.
+                val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+                assertTrue(vm.requestPhoneTrash(listOf(img1.id)))
+                assertTrue(vm.startPendingTrash() != null)
+                vm.duplicateSelection.value = setOf(wa12.id)
+                pump(4)
+                tap("Move to trash")
+                waitFor("Move 1 copy to this phone's trash?")
+                confirmCleanup()
+                settle { vm.duplicateCleanup.value == null }
+                assertEquals(emptyList<Long>(), vm.lastCleanupSent)
+                assertEquals(listOf(img1.id), vm.pendingTrash.value?.ids)
+                assertEquals(listOf(listOf(img1.uri.toString())), asked)
+                assertTrue(runBlocking { graph.phoneFileFence.whileEnqueueing { it } } == setOf(img1.uri.toString()))
+                vm.pendingTrashFinished(confirmed = false)
+                pump(4)
+                asked.clear()
+
                 vm.duplicateSelection.value = setOf(wa12.id)
                 pump(4)
                 tap("Move to trash")
@@ -2601,6 +2621,10 @@ class ScreenshotTest {
                 runBlocking { graph.transfers.retryFailed() }
                 assertEquals(listOf(TransferStatus.FAILED.name), rowsFor(wa12.uri).map { it.status })
                 runBlocking { graph.db.transfers().clearFinished() }
+
+                // Another trash request cannot replace the open one meanwhile.
+                assertFalse(vm.requestPhoneTrash(listOf(img1.id)))
+                assertEquals(listOf(wa12.id), vm.pendingTrash.value?.ids)
 
                 // The copy that stays cannot be put in a removal request meanwhile.
                 seedTransfers(row(wa13.id, wa13.name, TransferStatus.VERIFIED, size = wa13.size))

@@ -390,15 +390,23 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val pendingTrash = MutableStateFlow<PendingTrash?>(null)
 
-    /** Asks for exactly [ids] to be moved to the phone's trash; PhoneTrashHost shows Android's dialog. */
-    fun requestPhoneTrash(ids: List<Long>, cleanup: com.drivelift.app.transfer.PhoneFileFence.Reservation? = null) {
-        if (ids.isEmpty()) {
+    /**
+     * Asks for exactly [ids] to be moved to the phone's trash; PhoneTrashHost shows Android's
+     * dialog. One request at a time: while another is pending (or its dialog is open) nothing is
+     * replaced, this one is refused and its [cleanup] reservation released, so each answer
+     * applies to its own batch and each reservation lasts until its own answer. Returns whether
+     * the request was taken.
+     */
+    fun requestPhoneTrash(ids: List<Long>, cleanup: com.drivelift.app.transfer.PhoneFileFence.Reservation? = null): Boolean {
+        if (ids.isEmpty() || pendingTrash.value != null) {
             cleanup?.let(graph.phoneFileFence::endCleanup)
-            return
+            if (ids.isNotEmpty()) {
+                messages.tryEmit("Another trash request is still open. Nothing was sent; try again once it is answered.")
+            }
+            return false
         }
-        // A batch that was never shown is replaced; its reservation must not outlive it.
-        pendingTrash.value?.takeIf { !it.launched }?.cleanup?.let(graph.phoneFileFence::endCleanup)
         pendingTrash.value = PendingTrash(ids, cleanup = cleanup)
+        return true
     }
 
     /**
@@ -668,7 +676,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val reserved = reservation.trash.toSet()
             val ids = going.filter { it.uri.toString() in reserved }.map { it.id }
             duplicateCleanup.value = null
-            lastCleanupSent = ids
             val dropped = confirmed.size - ids.size
             when {
                 ids.isEmpty() -> messages.emit(
@@ -678,7 +685,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     "$dropped left out because they or the copy that stays changed, or they became part of a transfer."
                 )
             }
-            requestPhoneTrash(ids, reservation)
+            lastCleanupSent = if (requestPhoneTrash(ids, reservation)) ids else emptyList()
         }
     }
 
