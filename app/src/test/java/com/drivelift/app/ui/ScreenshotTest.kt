@@ -2292,7 +2292,14 @@ class ScreenshotTest {
         scrollStorageTo("Check for duplicates")
         tap("Check for duplicates")
         waitFor("1 group of files with matching content.")
-        // The group goes to the top of the list (scrollToItem by its key, no animation).
+        showDuplicateGroup()
+    }
+
+    /**
+     * Scrolls the first duplicate group as high as the list allows (scrollToItem by its key, no
+     * animation). Called again after a copy is ticked: the cleanup bar shortens the list.
+     */
+    private fun showDuplicateGroup() {
         val key = currentVm!!.duplicateGroups.value.first().key
         compose.onNodeWithTag("storage-list").performScrollToKey("group-$key")
         pump(4)
@@ -2360,6 +2367,7 @@ class ScreenshotTest {
                 )
                 compose.onNodeWithText("IMG-WA12.jpg").press()
                 waitFor("Stays: one copy is always kept")
+                showDuplicateGroup()
             },
         ) { vm -> AppRoot(vm) }
     }
