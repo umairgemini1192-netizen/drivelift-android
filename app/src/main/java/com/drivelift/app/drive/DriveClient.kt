@@ -149,6 +149,17 @@ interface DriveFolders {
      */
     suspend fun renameFile(fileId: String, folderId: String, newName: String, account: String): DriveFile =
         throw IOException("Renaming files is not available")
+
+    /** The id of the connected account's My Drive root (Storage folder details, issue #42). Read only. */
+    suspend fun myDriveRootId(): String = throw IOException("Drive folder details are not available")
+
+    /**
+     * One page of every item the connected account can see that is not in the trash, with only
+     * what folder totals need (Storage folder details, issue #42). Read only. [pageToken] is null
+     * for the first page.
+     */
+    suspend fun listEntriesPage(pageToken: String?): com.drivelift.app.data.DriveEntryPage =
+        throw IOException("Drive folder details are not available")
 }
 
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
@@ -315,6 +326,40 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
             val page = List(files.length()) { parseFile(files.getJSONObject(it)) }
             page to json.optString("nextPageToken").ifEmpty { null }
         }
+    }
+
+    override suspend fun myDriveRootId(): String {
+        val url = "$API/files/$ROOT".toHttpUrl().newBuilder().addQueryParameter("fields", "id").build()
+        return getJson(url).getString("id")
+    }
+
+    override suspend fun listEntriesPage(pageToken: String?): com.drivelift.app.data.DriveEntryPage {
+        val url = "$API/files".toHttpUrl().newBuilder()
+            .addQueryParameter("q", "trashed = false")
+            .addQueryParameter("corpora", "user")
+            .addQueryParameter("spaces", "drive")
+            .addQueryParameter("fields", "nextPageToken,files(id,name,mimeType,size,parents,ownedByMe)")
+            .addQueryParameter("pageSize", PAGE_SIZE)
+            .apply { pageToken?.let { addQueryParameter("pageToken", it) } }
+            .build()
+        val json = getJson(url)
+        val files = json.optJSONArray("files") ?: JSONArray()
+        val entries = List(files.length()) { i -> parseEntry(files.getJSONObject(i)) }
+        return com.drivelift.app.data.DriveEntryPage(entries, json.optString("nextPageToken").ifEmpty { null })
+    }
+
+    private fun parseEntry(o: JSONObject): com.drivelift.app.data.DriveEntry {
+        val mime = o.optString("mimeType")
+        val parents = o.optJSONArray("parents")
+        return com.drivelift.app.data.DriveEntry(
+            id = o.getString("id"),
+            // Only folder names are shown; file names are not kept, to keep a large listing small.
+            name = if (mime == FOLDER_MIME) o.optString("name") else "",
+            mimeType = mime,
+            size = o.optString("size").toLongOrNull(),
+            parents = if (parents == null) emptyList() else List(parents.length()) { parents.getString(it) },
+            ownedByMe = o.optBoolean("ownedByMe", true),
+        )
     }
 
     override suspend fun createFolder(name: String, parentId: String): DriveFile {

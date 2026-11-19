@@ -109,6 +109,9 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
     val selected by vm.duplicateSelection.collectAsStateWithLifecycle()
     val held by vm.trackedUris.collectAsStateWithLifecycle()
     val cleanup by vm.duplicateCleanup.collectAsStateWithLifecycle()
+    val driveScan by vm.driveFolderScan.collectAsStateWithLifecycle()
+    val driveOpen by vm.driveFolderOpen.collectAsStateWithLifecycle()
+    val driveShown by vm.driveFoldersShown.collectAsStateWithLifecycle()
 
     val breakdown = remember(media) { storageBreakdown(media) }
     val largest = remember(media) { largestItems(media, LARGEST_SHOWN) }
@@ -171,7 +174,7 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
                         }
                     }
                     if (breakdown.folders.isNotEmpty()) item(key = "folders") {
-                        Section("By folder") {
+                        Section("Phone folders") {
                             GlassPanel(Modifier.fillMaxWidth()) {
                                 Column(Modifier.padding(vertical = Tokens.Small)) {
                                     breakdown.folders.take(FOLDERS_SHOWN).forEach { folder ->
@@ -192,6 +195,28 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
                             }
                         }
                     }
+                }
+                item(key = "drive-folders") {
+                    Section("Google Drive folders") {
+                        DriveFoldersSummary(
+                            scan = driveScan,
+                            conn = conn,
+                            openId = driveOpen,
+                            onStart = vm::startDriveFolderScan,
+                            onStop = vm::stopDriveFolderScan,
+                            onConnect = { vm.connectDrive(interactive = true) },
+                        )
+                    }
+                }
+                val done = (driveScan as? AppViewModel.DriveFolderScan.Done)?.takeIf { conn == DriveConn.CONNECTED }
+                if (done != null) item(key = "drive-folder-list") {
+                    DriveFolderList(
+                        tree = done.tree,
+                        openId = driveOpen,
+                        shown = driveShown,
+                        onOpen = vm::openDriveFolder,
+                        onMore = vm::showMoreDriveFolders,
+                    )
                 }
                 item(key = "quota") {
                     Section("Google Drive quota") {
@@ -301,7 +326,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun EmptyLine(text: String) {
+internal fun EmptyLine(text: String) {
     Text(
         text,
         style = MaterialTheme.typography.bodyMedium,
@@ -312,7 +337,7 @@ private fun EmptyLine(text: String) {
 
 /** A title and detail on the left, a figure on the right; stacks with large text or a narrow screen. */
 @Composable
-private fun LabelValueRow(title: String, detail: String?, value: String) {
+internal fun LabelValueRow(title: String, detail: String?, value: String) {
     val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
     val tnum = MaterialTheme.typography.bodyLarge
     Row(

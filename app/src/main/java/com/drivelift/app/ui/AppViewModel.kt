@@ -671,6 +671,221 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    // ------------------------------------------------------------------ Drive folder details (issue #42)
+
+    /**
+     * Counting the files in My Drive folders. Bound to the account it started for: a result of
+     * another account is never shown. [Done] may be incomplete; its [Done.stop] says why.
+     */
+    sealed interface DriveFolderScan {
+        data object Idle : DriveFolderScan
+        data class Running(val account: String, val items: Int, val pages: Int, val stopping: Boolean = false) : DriveFolderScan
+        data class Done(
+            val account: String,
+            val tree: com.drivelift.app.data.DriveFolderTree,
+            val items: Int,
+            val at: Long,
+            /** Null when every page was read; otherwise why the count stopped early. */
+            val stop: com.drivelift.app.data.ScanStop?,
+        ) : DriveFolderScan {
+            val complete: Boolean get() = stop == null
+        }
+
+        /** Nothing could be counted. */
+        data class Failed(val account: String, val message: String, val needsSignIn: Boolean) : DriveFolderScan
+    }
+
+    val driveFolderScan = MutableStateFlow<DriveFolderScan>(DriveFolderScan.Idle)
+
+    /** The Drive folder whose subfolders the Storage screen lists; null for My Drive itself. */
+    val driveFolderOpen = MutableStateFlow<String?>(null)
+
+    /** How many folders of [driveFolderOpen] are listed; "Show more folders" raises it. */
+    val driveFoldersShown = MutableStateFlow(DRIVE_FOLDERS_FIRST)
+
+    /** Waits before a retry of a failed page. Zero in tests. */
+    var driveScanRetryDelayMs = 2_000L
+
+    private var driveScanJob: kotlinx.coroutines.Job? = null
+    private var driveScanRun = 0
+    private val driveScanLock = Any()
+
+    private fun publishDriveScan(run: Int, state: DriveFolderScan) {
+        synchronized(driveScanLock) { if (run == driveScanRun) driveFolderScan.value = state }
+    }
+
+    init {
+        // A count belongs to one account: when the saved pin moves to another, it is stopped and
+        // dropped, so no figure of the old account is shown under the new one.
+        viewModelScope.launch {
+            prefs.accountEmailFlow.collect { pin ->
+                val owner = when (val s = driveFolderScan.value) {
+                    DriveFolderScan.Idle -> null
+                    is DriveFolderScan.Running -> s.account
+                    is DriveFolderScan.Done -> s.account
+                    is DriveFolderScan.Failed -> s.account
+                }
+                if (owner != null && !owner.equals(pin, ignoreCase = true)) resetDriveFolderScan()
+            }
+        }
+        // A count that failed (for example on a sign-in error) is cleared once Drive connects
+        // again, so Count Drive folders is offered instead of a stale Reconnect.
+        viewModelScope.launch {
+            driveConn.collect { conn ->
+                if (conn == DriveConn.CONNECTED && driveFolderScan.value is DriveFolderScan.Failed) {
+                    synchronized(driveScanLock) {
+                        if (driveFolderScan.value is DriveFolderScan.Failed) driveFolderScan.value = DriveFolderScan.Idle
+                    }
+                }
+            }
+        }
+    }
+
+    private fun resetDriveFolderScan() {
+        driveScanJob?.cancel()
+        driveScanJob = null
+        synchronized(driveScanLock) {
+            driveScanRun++
+            driveFolderScan.value = DriveFolderScan.Idle
+        }
+        driveFolderOpen.value = null
+        driveFoldersShown.value = DRIVE_FOLDERS_FIRST
+    }
+
+    /**
+     * Reads every item of the connected account page by page and counts My Drive folders. Runs in
+     * the view model, so leaving the screen does not stop it; [stopDriveFolderScan] does. Read
+     * only: nothing on Drive is changed. A failed page is retried twice, then the count ends as
+     * incomplete with what was read.
+     */
+    fun startDriveFolderScan() {
+        if (driveFolderScan.value is DriveFolderScan.Running) return
+        val account = prefs.accountEmail?.takeIf { it.isNotBlank() }
+        if (driveConn.value != DriveConn.CONNECTED || account == null) return
+        val stillPinned = { account.equals(prefs.accountEmail, ignoreCase = true) }
+        val run = synchronized(driveScanLock) {
+            driveScanRun++
+            driveStopRequested = false
+            driveFolderScan.value = DriveFolderScan.Running(account, 0, 0)
+            driveScanRun
+        }
+        driveFolderOpen.value = null
+        driveFoldersShown.value = DRIVE_FOLDERS_FIRST
+        val stopRequested = { driveStopRequested }
+        driveScanJob = viewModelScope.launch {
+            val source = driveFolders
+            val rootId = try {
+                withDriveRetries(stopRequested) { source.myDriveRootId() }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (stopRequested()) {
+                    publishDriveScan(run, DriveFolderScan.Idle)
+                    return@launch
+                }
+                val stop = describeDriveScanError(e)
+                publishDriveScan(run, DriveFolderScan.Failed(account, stop.message, stop.needsSignIn))
+                return@launch
+            }
+            val scan = com.drivelift.app.data.scanDriveEntries(
+                fetch = { token -> withDriveRetries(stopRequested) { source.listEntriesPage(token) } },
+                accountStillPinned = stillPinned,
+                describe = ::describeDriveScanError,
+                stopRequested = stopRequested,
+                onPage = { items, pages ->
+                    publishDriveScan(run, DriveFolderScan.Running(account, items, pages, stopping = stopRequested()))
+                },
+            )
+            finishDriveScan(run, account, rootId, scan)
+        }
+    }
+
+    private suspend fun finishDriveScan(run: Int, account: String, rootId: String, scan: com.drivelift.app.data.DriveScan) {
+        val stop = scan.stop
+        if (stop == com.drivelift.app.data.ScanStop.AccountChanged) {
+            publishDriveScan(run, DriveFolderScan.Idle)
+            return
+        }
+        if (scan.entries.isEmpty() && stop == com.drivelift.app.data.ScanStop.ByUser) {
+            publishDriveScan(run, DriveFolderScan.Idle)
+            messages.tryEmit("Drive folder count stopped before anything was read. Nothing was changed.")
+            return
+        }
+        if (scan.entries.isEmpty() && stop is com.drivelift.app.data.ScanStop.Error) {
+            publishDriveScan(run, DriveFolderScan.Failed(account, stop.message, stop.needsSignIn))
+            return
+        }
+        val tree = kotlinx.coroutines.withContext(Dispatchers.Default) {
+            com.drivelift.app.data.driveFolderTotals(rootId, MY_DRIVE, scan.entries)
+        }
+        publishDriveScan(run, DriveFolderScan.Done(account, tree, scan.entries.size, graph.clock(), stop))
+    }
+
+    /**
+     * Asks a running count to stop after the page it is reading. What was read so far is kept and
+     * shown as incomplete.
+     */
+    fun stopDriveFolderScan() {
+        val running = driveFolderScan.value as? DriveFolderScan.Running ?: return
+        if (running.stopping) return
+        driveStopRequested = true
+        synchronized(driveScanLock) {
+            if (driveFolderScan.value === running) driveFolderScan.value = running.copy(stopping = true)
+        }
+    }
+
+    @Volatile
+    private var driveStopRequested = false
+
+    fun openDriveFolder(folderId: String?) {
+        driveFolderOpen.value = folderId
+        driveFoldersShown.value = DRIVE_FOLDERS_FIRST
+    }
+
+    fun showMoreDriveFolders() {
+        driveFoldersShown.value += DRIVE_FOLDERS_MORE
+    }
+
+    /** Runs [block], retrying twice after a connection or temporary Drive error. */
+    private suspend fun <T> withDriveRetries(stopRequested: () -> Boolean, block: suspend () -> T): T {
+        var attempt = 0
+        while (true) {
+            try {
+                return block()
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (stopRequested()) throw e
+                val temporary = e is com.drivelift.app.drive.DriveHttpException && (e.code == 429 || e.code >= 500) ||
+                    (e is java.io.IOException && e !is com.drivelift.app.drive.DriveHttpException &&
+                        e !is com.drivelift.app.drive.AccountChangedException)
+                if (!temporary || attempt >= DRIVE_SCAN_RETRIES) throw e
+                attempt++
+                kotlinx.coroutines.delay(driveScanRetryDelayMs * attempt)
+            }
+        }
+    }
+
+    private fun describeDriveScanError(e: Exception): com.drivelift.app.data.ScanStop.Error = when (e) {
+        is com.drivelift.app.drive.AuthRequiredException ->
+            com.drivelift.app.data.ScanStop.Error("Google Drive needs you to sign in again.", needsSignIn = true)
+        is com.drivelift.app.drive.DriveHttpException -> com.drivelift.app.data.ScanStop.Error(
+            when {
+                e.code == 429 || e.reason?.contains("RateLimit", ignoreCase = true) == true ->
+                    "Drive asked to slow down. Try again in a few minutes."
+                e.code >= 500 -> "Drive is temporarily unavailable. Try again later."
+                e.code == 401 || e.code == 403 -> "Drive refused the request (error ${e.code}). Reconnect and try again."
+                else -> "Drive error ${e.code}: ${e.message}"
+            },
+            needsSignIn = e.code == 401,
+        )
+        is java.io.IOException -> com.drivelift.app.data.ScanStop.Error(
+            "Connection problem: ${e.message ?: "network unavailable"}. Check the connection and try again.",
+            needsSignIn = false,
+        )
+        else -> com.drivelift.app.data.ScanStop.Error(e.message ?: e.javaClass.simpleName, needsSignIn = false)
+    }
+
     /** The duplicate check: not started, reading files, or finished with its result. */
     sealed interface DuplicateScan {
         data object Idle : DuplicateScan
@@ -1259,5 +1474,11 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         const val ACCOUNT_CHANGED =
             "the connected Google account changed. Reconnect the account you confirmed with and try again."
         const val NOT_CONNECTED = "Google Drive is not connected. Connect and try again."
+
+        /** Drive folders listed at first on the Storage screen, and how many more each tap adds. */
+        const val DRIVE_FOLDERS_FIRST = 8
+        const val DRIVE_FOLDERS_MORE = 25
+        private const val DRIVE_SCAN_RETRIES = 2
+        const val MY_DRIVE = "My Drive"
     }
 }
