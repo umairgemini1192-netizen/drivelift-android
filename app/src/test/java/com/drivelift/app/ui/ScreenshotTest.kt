@@ -3335,18 +3335,36 @@ class ScreenshotTest {
      * left the bar unchecked, so the next tap raced the screen.
      */
     private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
+        fun snapshot(frame: Int) =
+            "f=$frame groups=${vm.duplicateGroups.value.map { g -> g.items.map { i -> i.id } }} " +
+                "scan=${vm.duplicateScan.value.javaClass.simpleName} " +
+                "selected=${vm.duplicateSelection.value} media=${vm.media.value.size}"
+        val timeline = ArrayList<String>()
         vm.duplicateSelection.value = emptySet()
+        timeline += "before ${snapshot(-1)}"
         vm.toggleDuplicate(id)
-        pump(4)
-        val seen = (0 until 240).any {
+        timeline += "after-toggle ${snapshot(0)}"
+        // Selection must hold the copy right after the toggle; a later drop is recorded below.
+        assertTrue("The toggle did not select $id. ${timeline.joinToString(" | ")}", id in vm.duplicateSelection.value)
+        var firstSeen = -1
+        var droppedAt = -1
+        for (frame in 1..240) {
             pump(1)
-            compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
+            val bar = compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
+            val holds = id in vm.duplicateSelection.value
+            if (bar && firstSeen < 0) firstSeen = frame
+            if (!holds && droppedAt < 0) {
+                droppedAt = frame
+                timeline += snapshot(frame)
+            }
+            if (bar) break
         }
-        val state = "groups=${vm.duplicateGroups.value.map { it.items.map { i -> i.id } }} " +
-            "scan=${vm.duplicateScan.value.javaClass.simpleName} " +
-            "scanGroups=${(vm.duplicateScan.value as? AppViewModel.DuplicateScan.Done)?.result?.groups?.map { g -> g.items.map { i -> i.id } }} " +
-            "selected=${vm.duplicateSelection.value} media=${vm.media.value.map { it.id }} wa12=$id"
-        assertTrue("The cleanup bar never showed 1 copy selected. $state", seen)
+        timeline += "end ${snapshot(-2)}"
+        assertTrue(
+            "The cleanup bar never showed 1 copy selected (firstSeen=$firstSeen droppedAt=$droppedAt). " +
+                timeline.joinToString(" | "),
+            firstSeen >= 0,
+        )
     }
 
     private fun pump(times: Int) = repeat(times) {
