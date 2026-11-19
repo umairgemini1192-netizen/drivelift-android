@@ -64,6 +64,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
@@ -1900,23 +1901,32 @@ class ScreenshotTest {
         waitFor("Photos and videos")
     }
 
+    private fun scrollStorageTo(text: String) = scrollStorageTo(hasText(text, substring = true))
+
     /**
-     * Scrolls the Storage list until a node with [text] is fully inside it. performScrollToNode
-     * animates the lazy list, and that animation never ends while the test clock is paused, so
-     * this jumps one item at a time instead (scrollToItem, no animation).
+     * Scrolls the Storage list until a node matching [target] sits in its upper part, so a panel
+     * is captured whole and above the cleanup bar. performScrollToNode animates the lazy list, and
+     * that animation never ends while the test clock is paused, so this jumps one item at a time
+     * instead (scrollToItem, no animation). At the end of the list it stops where it can.
      */
-    private fun scrollStorageTo(text: String) {
+    private fun scrollStorageTo(target: SemanticsMatcher) {
         val list = compose.onNodeWithTag("storage-list")
-        fun inView(): Boolean {
+        fun targetTop(): Float? {
             val bounds = list.fetchSemanticsNode().boundsInRoot
-            return compose.onAllNodesWithText(text, substring = true).fetchSemanticsNodes().any {
-                it.boundsInRoot.top >= bounds.top && it.boundsInRoot.bottom <= bounds.bottom
-            }
+            return compose.onAllNodes(target).fetchSemanticsNodes()
+                .map { it.boundsInRoot.top }
+                .filter { it >= bounds.top && it < bounds.bottom }
+                .minOrNull()
         }
-        var index = 0
-        while (!inView()) {
+        var index = 1
+        var previous: Float? = null
+        while (true) {
+            val bounds = list.fetchSemanticsNode().boundsInRoot
+            val top = targetTop()
+            if (top != null && (top <= bounds.top + bounds.height * 0.4f || top == previous)) break
+            previous = top
             // The screen has a few dozen items at most; past the last one the scroll itself fails.
-            assertTrue("\"$text\" is not in the Storage list", index < 100)
+            assertTrue("$target is not in the Storage list", index < 100)
             list.performScrollToIndex(index++)
             pump(2)
         }
@@ -1928,7 +1938,7 @@ class ScreenshotTest {
         scrollStorageTo("Check for duplicates")
         tap("Check for duplicates")
         waitFor("1 group of files with matching content.")
-        scrollStorageTo("IMG-WA13.jpg")
+        scrollStorageTo(hasTestTag("duplicate-group"))
     }
 
     /** Taps Move to trash inside the cleanup dialog, not the one in the bar behind it. */
@@ -1946,10 +1956,11 @@ class ScreenshotTest {
     fun storageBreakdown() {
         grantMedia()
         eachVariant(
-            "storage-breakdown", expect = "Phone photos and videos DriveLift can see", connected = true,
+            "storage-breakdown", expect = "Photos and videos", connected = true,
             act = {
                 currentVm!!.accountReadAt.value = FIXED_NOW
                 openStorage()
+                compose.onNodeWithText("Phone photos and videos DriveLift can see", substring = true).assertExists()
                 compose.onNodeWithText("Photos").assertExists()
                 compose.onNodeWithText("Videos").assertExists()
                 compose.onNodeWithText("Listed at", substring = true).assertExists()
@@ -1968,7 +1979,8 @@ class ScreenshotTest {
                 scrollStorageTo("used of")
                 compose.onNodeWithText("used of", substring = true).assertExists()
                 compose.onNodeWithText("Read at", substring = true).assertExists()
-                scrollStorageTo("VID_0003.mp4")
+                // Quota at the top, the largest files below it.
+                scrollStorageTo(hasText("Google Drive quota"))
             },
         ) { vm -> AppRoot(vm) }
     }

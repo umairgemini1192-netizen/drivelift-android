@@ -197,7 +197,7 @@ private fun StorageEntryRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
             Column(Modifier.weight(1f).padding(start = Tokens.Medium)) {
                 Text("Storage", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    "Photos and videos by size, largest files and duplicate candidates",
+                    "Sizes, largest files, duplicates",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
