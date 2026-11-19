@@ -23,10 +23,9 @@ import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import com.drivelift.app.data.DriveMoveClip
 
 /**
- * The move pill, pinned above the tab bar while Drive files wait to be moved: how many and from
+ * The move pill, pinned at the bottom while Drive or phone files wait to be moved: how many and from
  * where, "Move here" for the folder shown now, and a way to let them go. In the folder the files
  * came from it says to open another folder instead. "Move here" opens the usual move confirmation;
  * nothing on Drive changes before that. Stacks its text above the buttons at large text sizes and
@@ -34,7 +33,9 @@ import com.drivelift.app.data.DriveMoveClip
  */
 @Composable
 internal fun MovePill(
-    clip: DriveMoveClip,
+    /** How many files wait, and the name of the folder they came from. */
+    count: Int,
+    fromName: String,
     sizeLabel: String,
     canMoveHere: Boolean,
     hereName: String,
@@ -45,9 +46,8 @@ internal fun MovePill(
 ) {
     val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
-    val count = clip.files.size
     val title = if (count == 1) "1 file to move" else "$count files to move"
-    val detail = if (canMoveHere) "From ${clip.fromName}  ·  $sizeLabel"
+    val detail = if (canMoveHere) "From $fromName  ·  $sizeLabel"
     else "Open the folder to move them to"
     val shape = if (stacked) Tokens.PanelShape else Tokens.PillShape
 

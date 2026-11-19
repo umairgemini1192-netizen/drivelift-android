@@ -95,6 +95,7 @@ class MainActivity : FragmentActivity() {
                     // Android's write consent for a rename (issue #42).
                     PhoneTrashHost(vm)
                     PhoneRenameHost(vm)
+                    PhoneMoveHost(vm)
                     LockGate(graph.lock, graph.authenticator) { AppRoot(vm) }
                 }
             }

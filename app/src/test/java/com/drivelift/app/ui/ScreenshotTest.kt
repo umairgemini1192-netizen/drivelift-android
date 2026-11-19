@@ -51,6 +51,7 @@ import androidx.compose.ui.test.hasContentDescription
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
+import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.isRoot
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
@@ -769,6 +770,173 @@ class ScreenshotTest {
             },
         ) { vm -> AppRoot(vm) }
     }
+
+    // ------------------------------------------------------------------ phone move (19 Nov 2026)
+
+    /** Records phone moves sent to MediaStore: (file, folder). Each file reads back where it went. */
+    private fun recordPhoneMoves(): MutableList<Pair<String, String>> {
+        val sent = java.util.Collections.synchronizedList(mutableListOf<Pair<String, String>>())
+        val folders = java.util.concurrent.ConcurrentHashMap<String, String>()
+        Graph.get(app).moveMedia = { _, uri, path ->
+            sent += uri.toString() to path
+            folders[uri.toString()] = path
+        }
+        Graph.get(app).mediaFolder = { _, uri -> folders[uri.toString()] }
+        return sent
+    }
+
+    /** Opens Camera, selects IMG_0001 and IMG_0002 and puts them in the move pill. */
+    private fun holdPhoneFilesForMove() {
+        selectTwoForDelete()
+        compose.onNodeWithContentDescription("Move selected to another folder on this phone").press()
+        waitFor("2 files to move")
+    }
+
+    /** Opens the Screenshots folder from the folder list. */
+    private fun openScreenshotsFolder() {
+        currentActivity!!.onBackPressedDispatcher.onBackPressed()
+        waitFor("Folders")
+        // The folder list is taller than the screen once the pill takes its place at the bottom.
+        compose.onAllNodes(hasScrollToKeyAction()).onFirst().performScrollToKey(200L)
+        pump(4)
+        compose.onNodeWithText("Screenshots").performClick()
+        waitForPart("From Camera")
+    }
+
+    /** The phone move pill in the folder the files will go to. */
+    @Test
+    fun phoneMovePill() {
+        grantMedia()
+        eachVariant(
+            "phone-move-pill", expect = "2 files to move", connected = true,
+            act = {
+                holdPhoneFilesForMove()
+                // In the folder the files are in, the pill asks for another folder.
+                waitFor("Open the folder to move them to")
+                moveHereButton().assertIsNotEnabled()
+                openScreenshotsFolder()
+                moveHereButton().assertIsEnabled()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /** The phone move confirmation, with a file a transfer still depends on left in place. */
+    @Test
+    fun phoneMoveConfirmation() {
+        grantMedia()
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        eachVariant(
+            "phone-move-confirm", expect = "Move 1 file to Screenshots?", connected = true, overlay = true,
+            act = {
+                holdPhoneFilesForMove()
+                openScreenshotsFolder()
+                moveHereButton().press()
+                waitFor("Move 1 file to Screenshots?")
+                compose.onNodeWithText("Left in place because a transfer", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Holding phone files changes nothing; Cancel moves nothing and keeps the pill; confirming
+     * moves exactly the eligible file into the folder shown and reads it back; closing the pill
+     * moves nothing.
+     */
+    @Test
+    fun phoneMoveMovesExactlyTheConfirmedFiles() {
+        grantMedia()
+        seedTransfers(row(2, "IMG_0002.jpg", TransferStatus.QUEUED))
+        val sent = recordPhoneMoves()
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }.uri.toString()
+        eachVariant(
+            "phone-move-flow", expect = null, connected = true, capture = false,
+            act = {
+                sent.clear()
+                currentVm!!.cancelPhoneMoveClip()
+                holdPhoneFilesForMove()
+                assertTrue(sent.isEmpty())
+                moveHereButton().assertIsNotEnabled()
+
+                openScreenshotsFolder()
+                moveHereButton().press()
+                waitFor("Move 1 file to Screenshots?")
+                tap("Cancel")
+                pump(DIALOG_FRAMES)
+                assertTrue("Cancel must not move anything", sent.isEmpty())
+                waitFor("2 files to move")
+
+                moveHereButton().press()
+                waitFor("Move 1 file to Screenshots?")
+                tap("Move to Screenshots")
+                compose.waitUntil(5_000) { pump(1); currentVm!!.lastPhoneMove != null }
+                assertEquals(listOf(img1 to "Pictures/Screenshots/"), sent.toList())
+                assertEquals("1 file moved to Screenshots", currentVm!!.lastPhoneMove)
+                compose.waitUntil(5_000) { pump(1); !movePillShown() }
+
+                // Closing the pill lets the files go without moving anything.
+                sent.clear()
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                holdPhoneFilesForMove()
+                compose.onNodeWithContentDescription("Stop moving these files").press()
+                compose.waitUntil(5_000) { pump(1); !movePillShown() }
+                assertTrue(sent.isEmpty())
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    /**
+     * Files DriveLift does not own need Android's write consent: the request names exactly them;
+     * a refusal moves nothing; consent moves them once more and reads them back.
+     */
+    @Test
+    fun phoneMoveAsksAndroidForConsentWhenNeeded() {
+        grantMedia()
+        val vm = AppViewModel(app)
+        pump(12)
+        val img1 = FakeMediaStore.files.first { it.name == "IMG_0001.jpg" }
+        compose.waitUntil(5_000) { pump(1); vm.media.value.any { it.id == img1.id } }
+        var owned = false
+        val sent = mutableListOf<String>()
+        Graph.get(app).moveMedia = { _, uri, _ ->
+            if (!owned) throw SecurityException("not the owner")
+            sent += uri.toString()
+        }
+        Graph.get(app).mediaFolder = { _, _ -> if (sent.isEmpty()) null else "Pictures/Screenshots/" }
+        val asked = mutableListOf<List<String>>()
+        Graph.get(app).writeRequest = { _, uris ->
+            asked += uris.map { it.toString() }
+            throw IllegalStateException("No Android consent dialog in tests")
+        }
+        val screenshots = vm.media.value.first { it.bucketName == "Screenshots" }.bucketId
+
+        // Refused by Android: nothing moved, the file stays in the pill.
+        vm.holdPhoneForMove(listOf(img1.id), img1Bucket(vm, img1.id), "Camera")
+        val plan = checkNotNull(runBlocking { vm.planPhoneMove(screenshots) })
+        vm.startPhoneMove(plan)
+        compose.waitUntil(5_000) { pump(1); vm.pendingPhoneMove.value != null }
+        runCatching { vm.startPendingPhoneMove() }
+        assertEquals(listOf(listOf(img1.uri.toString())), asked)
+        assertEquals(null, vm.startPendingPhoneMove())
+        vm.pendingPhoneMoveFinished(confirmed = false)
+        compose.waitUntil(5_000) { pump(1); vm.phoneMoveRun.value?.working == false }
+        assertTrue(sent.isEmpty())
+        assertEquals("Could not move IMG_0001.jpg: You did not allow the move", vm.lastPhoneMove)
+        assertEquals(1, vm.phoneMoveClip.value?.items?.size)
+        vm.phoneMoveApplied()
+
+        // Consent given: the file is moved and read back.
+        vm.startPhoneMove(plan)
+        compose.waitUntil(5_000) { pump(1); vm.pendingPhoneMove.value != null }
+        runCatching { vm.startPendingPhoneMove() }
+        owned = true
+        vm.pendingPhoneMoveFinished(confirmed = true)
+        compose.waitUntil(5_000) { pump(1); vm.phoneMoveRun.value?.working == false }
+        assertEquals(listOf(img1.uri.toString()), sent)
+        assertEquals("1 file moved to Screenshots", vm.lastPhoneMove)
+        assertEquals(null, vm.phoneMoveClip.value)
+    }
+
+    private fun img1Bucket(vm: AppViewModel, id: Long) = vm.media.value.first { it.id == id }.bucketId
 
     /** Issue #36: a move runs for the account it was confirmed for; on a change the rest are not tried. */
     @Test

@@ -72,6 +72,14 @@ These protect the user's files. A change that touches them is high risk and need
    with Media management, otherwise Android's). It needs no Drive copy or `VERIFIED` status and
    never implies one exists. Files in a `QUEUED`, `UPLOADING`, `UPLOADED` or `VERIFIED` transfer
    are left out and named, so no transfer or removal step acts on a trashed source.
+   **Phone folder move (owner request, 19 November 2026):** the user may move phone files to
+   another phone folder through the move pill. Only the folder (`RELATIVE_PATH`) changes; the
+   MediaStore URI, name and bytes stay, nothing is copied or deleted, and no Drive copy is
+   involved or implied. DriveLift names the files, count, size and destination and asks first;
+   files a transfer depends on (`QUEUED`, `UPLOADING`, `UPLOADED`, `VERIFIED`), files whose name
+   is taken in the destination (any letter case) and files already there are left out and named.
+   Transfer rows are read again right before each file, Android's write consent is asked for
+   files DriveLift does not own, and each moved file's folder is read back before it counts.
    Duplicate cleanup on the Storage screen (issue #42) is this same user-directed delete: the
    user picks copies inside a group of files with equal size and SHA-256, at least one copy of
    each group always stays, and the picked and kept copies are read again right before the
@@ -125,12 +133,16 @@ on 17 November 2026: futuristic dark glass.
    decision, issue #32).
 4. **Tokens.** Spacing, sizes, shapes and durations come from `ui/Tokens.kt`. No raw `dp` or
    millisecond values in screens. A new token needs a reason stated in the pull request.
-5. **Motion.** Only state feedback (selection, progress). It uses `AppMotion.spec`, so it snaps
-   when the phone has animations turned off. Nothing decorative moves.
+5. **Motion.** State feedback (selection, progress) and navigation: a new level slides and fades
+   in, bottom bars (selection bar, move pill) rise and sink, thumbnails fade and grow in as their
+   picture arrives, and the predictive back gesture previews a step up (owner decision, 19
+   November 2026: full motion). Durations come from `Tokens.Motion` through `AppMotion.spec` and
+   `ui/Motion.kt`, so everything snaps when the phone has animations turned off. Nothing loops or
+   moves on its own: no animated backdrop, nothing that runs without a change of state.
 6. **One thing leads** on each screen: the display-size figure, title or the dot gauge on
    Transfers, or the Play/Pause control on the video player. Glow and gradient are reserved
-   for the backdrop and that lead element. Ordinary panels, wells and pills use plain token
-   borders and no glow.
+   for the backdrop, that lead element, and a selected thumbnail's coral glow (owner decision,
+   19 November 2026). Ordinary panels, wells and pills use plain token borders and no glow.
 7. Every interactive element has a touch target of at least `Tokens.TouchTarget` (48 dp) and a
    content description or visible label. A secondary circular well or compact pill may draw a
    smaller visual container (40 to 44 dp) only when its touch target is still at least 48 dp

@@ -696,7 +696,8 @@ fun DriveBrowser(
             val held = pillClip
             RisingBar(visible = !pickMode && !selecting && moveClip != null && conn == DriveConn.CONNECTED) {
                 if (held != null) MovePill(
-                    clip = held,
+                    count = held.files.size,
+                    fromName = held.fromName,
                     sizeLabel = formatBytes(context, held.totalBytes),
                     canMoveHere = held.canMoveInto(here.id),
                     hereName = here.name,

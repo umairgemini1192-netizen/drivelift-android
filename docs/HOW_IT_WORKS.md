@@ -288,12 +288,27 @@ headers only in date order; Drive folders start by name, as before, and keep fol
 Files with the same date keep the listing's own order, and name and size ties fall back to name,
 so the order is the same every time.
 
+## Moving phone files to another phone folder
+
+In a Phone folder, select files and tap the move-to-folder button beside the trash. The files go
+into the move pill at the bottom of the Phone screens. Open the destination folder and tap **Move
+here**; DriveLift names the files, their size and the destination and asks first. Only the folder
+changes (MediaStore `RELATIVE_PATH`): each file keeps its address, name, content and date, and
+nothing in Google Drive changes. Left in place and named: files a transfer still depends on,
+files whose name is already in the destination (DriveLift never lets Android rename them), and
+files already there. Transfers are read again right before each file. For files DriveLift does
+not own, Android asks once for all of them; a refusal moves none of them. Each moved file's folder
+is read back, and a file Android put anywhere else is reported as not moved. Files that failed
+stay in the pill for another try.
+
 ## Back gesture and touch feedback
 
 DriveLift opts in to Android's predictive back. A step up one level (a Drive folder to its parent,
 a Phone folder, Settings or Storage back to where they opened from) follows the back swipe: the
 current level shrinks a little and slides toward the edge the swipe started from, and letting go
-completes the step while cancelling leaves it as it was. With animations turned off nothing moves.
+completes the step while cancelling leaves it as it was. Each new level slides and fades in from
+the side it comes from, bottom bars rise and sink, thumbnails fade and grow in as their picture
+arrives, and a selected thumbnail gets a coral glow. With animations turned off nothing moves.
 Back that clears a selection is not a step up, so it has no preview. A long press that starts a
 selection gives a short vibration, and dragging a Phone selection across photos gives a light tick
 for each new photo reached.
@@ -462,6 +477,8 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/MovePill.kt`, `data/DriveMove.kt` | Move pill for Drive files, move plan and outcome |
 | `ui/BackPreview.kt` | Predictive back preview for a step up one level |
+| `ui/Motion.kt` | Level transitions, rising bars, thumbnail reveal, selection glow |
+| `ui/PhoneMove.kt`, `data/PhoneMove.kt` | Phone folder move: confirmation, consent, plan and outcome |
 | `ui/Favorites.kt` | Favorites list, star button, way in from Phone and Drive |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |
 | `ui/TransfersScreen.kt` | Progress, controls, removal |
