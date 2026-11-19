@@ -87,7 +87,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun immediateCompletionReturnsTheUriWithoutPollingOrWaiting() = runBlocking {
+    fun immediateCompletionReturnsTheUriWithoutPollingOrWaiting() = runBlocking<Unit> {
         val h = Harness()
         val uri = render(h, start = { op(done = true, uri = trustedUri) })
         assertEquals(trustedUri, uri.toString())
@@ -96,7 +96,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun delayedCompletionPollsTheOperationIdWithBackoffUntilDone() = runBlocking {
+    fun delayedCompletionPollsTheOperationIdWithBackoffUntilDone() = runBlocking<Unit> {
         val h = Harness()
         val pending = listOf(op(done = false), op(done = false), op(done = true, uri = trustedUri))
         var next = 0
@@ -107,7 +107,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun operationErrorDuringPollingIsSurfacedWithoutRetry() = runBlocking {
+    fun operationErrorDuringPollingIsSurfacedWithoutRetry() = runBlocking<Unit> {
         val h = Harness()
         val e = assertThrows(IOException::class.java) {
             runBlocking { render(h, start = { op() }, poll = { op(done = true, error = "render failed") }) }
@@ -117,7 +117,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun errorOnStartStopsBeforeAnyPoll() = runBlocking {
+    fun errorOnStartStopsBeforeAnyPoll() = runBlocking<Unit> {
         val h = Harness()
         val e = assertThrows(IOException::class.java) {
             runBlocking { render(h, start = { op(error = "not allowed") }) }
@@ -127,7 +127,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun malformedStartWithoutAnOperationNameIsRejected() = runBlocking {
+    fun malformedStartWithoutAnOperationNameIsRejected() = runBlocking<Unit> {
         val h = Harness()
         assertThrows(IOException::class.java) {
             runBlocking { render(h, start = { op(name = null) }) }
@@ -136,7 +136,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun completionWithoutAnyDownloadLinkIsRejected() = runBlocking {
+    fun completionWithoutAnyDownloadLinkIsRejected() = runBlocking<Unit> {
         val h = Harness()
         assertThrows(IOException::class.java) {
             runBlocking { render(h, start = { op(done = true, uri = null) }) }
@@ -144,7 +144,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun untrustedOrPlainHttpLinkIsBlockedBeforePlayback() = runBlocking {
+    fun untrustedOrPlainHttpLinkIsBlockedBeforePlayback() = runBlocking<Unit> {
         for (bad in listOf("https://evil.example.com/v.mp4", "http://www.googleapis.com/drive/v3/x")) {
             val h = Harness()
             val e = assertThrows(IOException::class.java) {
@@ -155,7 +155,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun neverCompletingRenderStopsAtTheTimeoutWithBoundedPolls() = runBlocking {
+    fun neverCompletingRenderStopsAtTheTimeoutWithBoundedPolls() = runBlocking<Unit> {
         val h = Harness()
         assertThrows(IOException::class.java) {
             runBlocking { render(h, start = { op() }, poll = { op(done = false) }, timeoutMillis = 10_000L) }
@@ -166,7 +166,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun cancellationDuringBackoffStopsTheRenderWithoutAnotherPoll() = runBlocking {
+    fun cancellationDuringBackoffStopsTheRenderWithoutAnotherPoll() = runBlocking<Unit> {
         val h = Harness()
         val job = launch {
             awaitVidsRender(
@@ -185,7 +185,7 @@ class DriveVideoSourceTest {
     }
 
     @Test
-    fun accountChangeDuringRenderIsRaisedAndNothingIsPlayed() = runBlocking {
+    fun accountChangeDuringRenderIsRaisedAndNothingIsPlayed() = runBlocking<Unit> {
         val h = Harness()
         assertThrows(AccountChangedException::class.java) {
             runBlocking {
