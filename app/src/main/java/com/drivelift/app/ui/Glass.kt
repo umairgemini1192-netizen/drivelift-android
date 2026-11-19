@@ -26,6 +26,8 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.progressBarRangeInfo
@@ -98,6 +100,7 @@ fun GlassPanel(
     onLongClickLabel: String? = null,
     content: @Composable () -> Unit,
 ) {
+    val haptics = LocalHapticFeedback.current
     Box(
         modifier
             .clip(shape)
@@ -107,7 +110,11 @@ fun GlassPanel(
                     onClick != null && onLongClick != null -> Modifier.combinedClickable(
                         onClickLabel = onClickLabel,
                         onLongClickLabel = onLongClickLabel,
-                        onLongClick = onLongClick,
+                        // A long press starts or extends a selection: a short buzz confirms it.
+                        onLongClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                            onLongClick()
+                        },
                         onClick = onClick,
                     )
                     onClick != null -> Modifier.clickable(onClickLabel = onClickLabel, onClick = onClick)

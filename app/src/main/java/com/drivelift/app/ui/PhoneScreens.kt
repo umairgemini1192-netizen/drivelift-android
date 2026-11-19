@@ -71,6 +71,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -703,6 +705,7 @@ private fun Modifier.dragSelect(
     val pinchGuard by rememberUpdatedState(isPinching)
     val edge = with(LocalDensity.current) { Tokens.AutoScrollEdge.toPx() }
     val cellId by rememberUpdatedState(idAt)
+    val haptics = LocalHapticFeedback.current
     // Every new touch starts with no long press recorded. The Initial pass runs before the cells
     // see the touch, so a tap that follows an earlier long press is never ignored by mistake.
     return pointerInput(guard) {
@@ -712,6 +715,7 @@ private fun Modifier.dragSelect(
         }
     }.pointerInput(Unit) {
         var anchor: Int? = null
+        var last: Int? = null
         var base: Set<Long> = emptySet()
         fun indexAt(point: Offset): Int? = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
             point.x >= info.offset.x && point.x < info.offset.x + info.size.width &&
@@ -723,8 +727,11 @@ private fun Modifier.dragSelect(
                 if (pinchGuard()) return@detectDragGesturesAfterLongPress
                 indexAt(point)?.let {
                     anchor = it
+                    last = it
                     base = current()
                     guard.id = cellId(it)
+                    // The hold that starts a selection is confirmed with a short buzz.
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     range(base, it, it)
                 }
             },
@@ -753,7 +760,14 @@ private fun Modifier.dragSelect(
                             else -> 0f
                         }
                     )
-                    indexAt(change.position)?.let { range(base, start, it) }
+                    indexAt(change.position)?.let {
+                        // A light tick each time the drag reaches another photo.
+                        if (it != last) {
+                            last = it
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        range(base, start, it)
+                    }
                 }
             },
         )

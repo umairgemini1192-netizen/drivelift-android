@@ -1108,6 +1108,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveTrashRun.value = DriveTrashRun(working = true)
         viewModelScope.launch {
             val outcome = trashDriveFiles(plan.eligible, plan.account)
+            // A trashed file can no longer be moved: it leaves the move pill too.
+            driveMoveClip.value = driveMoveClip.value?.without(outcome.trashed.map { it.id }.toSet())
             driveTrashRun.value = DriveTrashRun(working = false, outcome = outcome)
             messages.emit(outcome.message())
         }
@@ -1189,6 +1191,24 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ): com.drivelift.app.data.DriveMovePlan =
         com.drivelift.app.data.planDriveMove(files, transferRowsFor(files), fromFolderId, toFolderId, toLabel, prefs.accountEmail)
 
+    /**
+     * Drive files held in the move pill: chosen with Move in one folder, waiting for "Move here"
+     * in another (two taps instead of a separate folder picker). Kept in the view model, so it
+     * stays while the user browses, opens Favorites or switches tabs; nothing changes on Drive
+     * until a move is confirmed in DriveMoveDialog.
+     */
+    val driveMoveClip = MutableStateFlow<com.drivelift.app.data.DriveMoveClip?>(null)
+
+    /** Puts [files] (folders are left out) from folder [fromFolderId] in the move pill. */
+    fun holdForMove(files: List<com.drivelift.app.drive.DriveFile>, fromFolderId: String, fromName: String) {
+        driveMoveClip.value = com.drivelift.app.data.holdForMove(files, fromFolderId, fromName, prefs.accountEmail)
+    }
+
+    /** Empties the move pill. Nothing on Drive changes. */
+    fun cancelMoveClip() {
+        driveMoveClip.value = null
+    }
+
     /** A confirmed Drive move batch: running, then its outcome until the screen applies it. */
     data class DriveMoveRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveMoveOutcome? = null)
 
@@ -1200,6 +1220,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveMoveRun.value = DriveMoveRun(working = true)
         viewModelScope.launch {
             val outcome = moveDriveFiles(plan)
+            driveMoveClip.value = driveMoveClip.value?.afterMove(plan, outcome)
             driveMoveRun.value = DriveMoveRun(working = false, outcome = outcome)
             messages.emit(outcome.message())
         }
@@ -1422,6 +1443,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveRenameRun.value = DriveRenameRun(working = true)
         viewModelScope.launch {
             val outcome = renameDriveFile(plan, newName)
+            outcome.renamed?.let { renamed -> driveMoveClip.value = driveMoveClip.value?.renamed(renamed) }
             driveRenameRun.value = DriveRenameRun(working = false, outcome = outcome)
             // A taken name is shown in the dialog, which stays open for another name.
             if (!outcome.nameTaken) messages.emit(outcome.message())

@@ -62,6 +62,8 @@ import androidx.work.WorkManager
 import androidx.work.NetworkType
 import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertIsEnabled
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.onAllNodesWithTag
@@ -647,28 +649,40 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
-    /** Selects Sunset and Scan in the Drive tab and opens the folder picker with Move. */
-    private fun openDriveMovePicker() {
+    /** Selects Sunset and Scan in the Drive tab and puts them in the move pill with Move. */
+    private fun holdDriveFilesForMove() {
         waitFor("Scan_0042.jpg")
         // Sunset first: once the selection bar shows, the shorter grid can scroll it out of view.
         selectDriveFile("Sunset_0019.jpg")
         compose.onAllNodesWithContentDescription("Scan_0042.jpg").onFirst().performClick()
         waitFor("2 selected")
         compose.onNodeWithText("Move").press()
-        waitFor("Move here: My Drive")
+        waitFor("2 files to move")
     }
 
-    /** Issue #36: the Drive folder picker opened from a selection; no preset option. */
+    /** The pill's "Move here" button; it names the folder only when the pill is stacked. */
+    private fun moveHereButton() =
+        compose.onNode(hasText("Move here", substring = true) and hasClickAction())
+
+    private fun movePillShown() = compose.onAllNodesWithTag("move-pill").fetchSemanticsNodes().isNotEmpty()
+
+    /** The move pill in the folder the files will go to, above the tab bar. */
     @Test
-    fun driveMovePicker() {
+    fun driveMovePill() {
         grantMedia()
         eachVariant(
-            "drive-move-picker", expect = "Move here: My Drive", connected = true, tab = AppViewModel.TAB_DRIVE,
+            "drive-move-pill", expect = "2 files to move", connected = true, tab = AppViewModel.TAB_DRIVE,
             act = {
-                openDriveMovePicker()
+                holdDriveFilesForMove()
+                // In the folder the files are in, the pill asks for another folder.
+                waitFor("Open the folder to move them to")
+                moveHereButton().assertIsNotEnabled()
+                tap("Archive 2024")
+                waitForPart("From My Drive")
+                moveHereButton().assertIsEnabled()
                 assertTrue(
-                    "Moving Drive files offers no transfer preset",
-                    compose.onAllNodesWithText("Keep this folder as a preset").fetchSemanticsNodes().isEmpty(),
+                    "The tab bar stays while files wait in the pill",
+                    compose.onAllNodesWithText("Transfers").fetchSemanticsNodes().isNotEmpty(),
                 )
             },
         ) { vm -> AppRoot(vm) }
@@ -683,9 +697,10 @@ class ScreenshotTest {
             "drive-move-confirm", expect = "Move 1 file to Archive 2024?", connected = true,
             tab = AppViewModel.TAB_DRIVE, overlay = true,
             act = {
-                openDriveMovePicker()
+                holdDriveFilesForMove()
                 tap("Archive 2024")
-                tap("Move here: Archive 2024")
+                waitForPart("From My Drive")
+                moveHereButton().press()
                 waitFor("Move 1 file to Archive 2024?")
                 compose.onNodeWithText("Access can change", substring = true).assertExists()
             },
@@ -693,9 +708,10 @@ class ScreenshotTest {
     }
 
     /**
-     * Issue #36: Back from the picker keeps the selection; Cancel moves nothing; confirming moves
-     * exactly the eligible file from this folder to the chosen one and it leaves the folder;
-     * choosing the folder the files are already in moves nothing.
+     * The move pill: holding files changes nothing; the pill stays while browsing and after Back;
+     * "Move here" is off in the source folder; Cancel in the confirmation moves nothing and keeps
+     * the pill; confirming moves exactly the eligible file into the folder shown and empties the
+     * pill (the file a transfer depends on leaves it too); closing the pill moves nothing.
      */
     @Test
     fun driveMoveMovesExactlyTheConfirmedFiles() {
@@ -707,44 +723,49 @@ class ScreenshotTest {
             capture = false, drive = drive,
             act = {
                 drive.moves.clear()
-                openDriveMovePicker()
-
-                // Back from the picker: still selecting, nothing moved.
-                currentActivity!!.onBackPressedDispatcher.onBackPressed()
-                waitFor("2 selected")
+                holdDriveFilesForMove()
                 assertTrue(drive.moves.isEmpty())
 
                 // The folder the files are in: nothing to do.
-                compose.onNodeWithText("Move").press()
-                tap("Move here: My Drive")
-                waitFor("Already in My Drive")
-                tap("OK")
-                pump(DIALOG_FRAMES)
+                moveHereButton().assertIsNotEnabled()
+
+                // Into Archive 2024 and Back out again: the pill stays, nothing moved.
+                tap("Archive 2024")
+                waitForPart("From My Drive")
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                waitFor("Open the folder to move them to")
                 assertTrue(drive.moves.isEmpty())
 
-                // Cancel, then confirm: only Scan (d2); Sunset (d4) is held by a verified transfer.
-                compose.onNodeWithText("Move").press()
+                // Cancel in the confirmation: nothing moved, the pill keeps both files.
                 tap("Archive 2024")
-                tap("Move here: Archive 2024")
+                waitForPart("From My Drive")
+                moveHereButton().press()
                 waitFor("Move 1 file to Archive 2024?")
                 tap("Cancel")
                 pump(DIALOG_FRAMES)
                 assertTrue(drive.moves.isEmpty())
-                waitFor("2 selected")
+                waitFor("2 files to move")
 
-                compose.onNodeWithText("Move").press()
-                tap("Archive 2024")
-                tap("Move here: Archive 2024")
+                // Confirm: only Scan (d2); Sunset (d4) is held by a verified transfer.
+                moveHereButton().press()
                 waitFor("Move 1 file to Archive 2024?")
                 compose.onNodeWithText("Left in place because a transfer", substring = true).assertExists()
                 tap("Move to Archive 2024")
                 compose.waitUntil(5_000) { pump(1); compose.onAllNodesWithTag("drive-move").fetchSemanticsNodes().isEmpty() }
                 assertEquals(listOf(Triple("d2", DriveClient.ROOT, "f1")), drive.moves.toList())
-                assertTrue(
-                    "A moved file leaves the folder",
-                    compose.onAllNodesWithContentDescription("Scan_0042.jpg").fetchSemanticsNodes().isEmpty(),
-                )
+                compose.waitUntil(5_000) { pump(1); !movePillShown() }
+
+                // Closing the pill lets the files go without moving anything.
+                currentActivity!!.onBackPressedDispatcher.onBackPressed()
+                waitFor("Scan_0042.jpg")
+                drive.moves.clear()
+                selectDriveFile("Scan_0042.jpg")
                 waitFor("1 selected")
+                compose.onNodeWithText("Move").press()
+                waitFor("1 file to move")
+                compose.onNodeWithContentDescription("Stop moving these files").press()
+                compose.waitUntil(5_000) { pump(1); !movePillShown() }
+                assertTrue(drive.moves.isEmpty())
             },
         ) { vm -> AppRoot(vm) }
     }

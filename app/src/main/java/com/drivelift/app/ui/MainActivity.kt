@@ -197,13 +197,19 @@ fun AppRoot(vm: AppViewModel) {
     // notification) closes it.
     LaunchedEffect(tab) { if (tab == AppViewModel.TAB_TRANSFERS) showFavorites = false }
 
-    // Settings opens over Transfers; Back returns there.
-    BackHandler(enabled = inSettings && !pickingDestination) { showSettings = false }
-    BackHandler(enabled = inStorage && !pickingDestination) { showStorage = false }
-
-    BackHandler(enabled = inFolder && !pickingDestination) {
-        if (selection.isNotEmpty()) vm.clearSelection() else openBucket = NO_BUCKET
+    // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
+    // list. The predictive back gesture previews it (BackPreview.kt).
+    val upBack = rememberUpBack(
+        enabled = !pickingDestination && (inSettings || inStorage || (inFolder && selection.isEmpty())),
+    ) {
+        when {
+            inSettings -> showSettings = false
+            inStorage -> showStorage = false
+            inFolder -> openBucket = NO_BUCKET
+        }
     }
+    // Back while selecting in a folder clears the selection; it is not a step up, so no preview.
+    BackHandler(enabled = inFolder && !pickingDestination && selection.isNotEmpty()) { vm.clearSelection() }
 
     val inFlight = (counts[TransferStatus.QUEUED.name]?.count ?: 0) +
         (counts[TransferStatus.UPLOADING.name]?.count ?: 0)
@@ -249,7 +255,7 @@ fun AppRoot(vm: AppViewModel) {
                     }
                 },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding)) {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).backPreview(upBack)) {
                     when {
                         // Render the folder picker directly inside the root Activity window instead of a
                         // nested Dialog above the bottom sheet, so edge-to-edge system bars and display

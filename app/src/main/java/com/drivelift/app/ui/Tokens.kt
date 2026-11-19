@@ -57,6 +57,9 @@ object Tokens {
     val ScrubberThumb = 20.dp
     val AutoScrollEdge = 72.dp
 
+    /** How far a folder slides toward the swipe edge at the end of a predictive back gesture. */
+    val BackPreviewShift = 24.dp
+
     // Strokes
     val Hairline = 1.dp
     val Stroke = 2.dp
