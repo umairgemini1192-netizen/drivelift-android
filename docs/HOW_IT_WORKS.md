@@ -170,6 +170,35 @@ scope and the time it was read:
 Not covered: documents, audio, downloads, APK files, and other apps' files and caches. Measuring
 them needs a scoped-storage design of its own, planned for later. No permission was added.
 
+### Google Drive folders (`ui/DriveFolderInsights.kt`, `data/DriveFolderSizes.kt`)
+
+Tap Count Drive folders. DriveLift reads every item the connected account can see that is not in
+the trash, 1,000 per page (`files.list`, fields `id,name,mimeType,size,parents,ownedByMe`), and
+builds the folder tree from the parents in memory, so a large Drive costs one request per 1,000
+items, not one per folder. Read only: nothing on Drive is changed. The count shows items and pages
+read, has a Stop button that ends it after the current page, and keeps going if you leave the
+screen.
+
+- Each folder shows its name, file count and size. Totals include every file in subfolders, and
+  each file is counted once in a folder however many of its paths lead there (older Drive data
+  can give a file several parents). The eight largest folders are listed first; Show more adds 25
+  at a time. Tap a folder to list the folders inside it and the files directly in it.
+- Only items inside My Drive count. Shared drives and items shared with you but not added to My
+  Drive are not counted; the screen names how many such items there are.
+- Shortcuts are counted as links and never followed, so the file a shortcut points to is not
+  counted twice.
+- Google Docs, Sheets, Slides and similar files report no size. They are counted, and the screen
+  says how many have no size; they add nothing to the sizes.
+- Bytes in files other people own are included in the folder sizes and named separately, since
+  they do not use this account's quota.
+- These are file sizes in folders, not the quota above, which Drive, Gmail and Google Photos share.
+
+A page that fails is tried again twice. If it still fails, or you press Stop, or the count reaches
+500,000 items, the figures read so far are shown marked Incomplete with the reason, and Count
+again starts over. If nothing could be read the screen says why and offers Try again, or
+Reconnect for a sign-in problem. A count belongs to the account it started for: if the saved
+account changes it is stopped and discarded.
+
 ### Duplicate candidates
 
 Tap Check for duplicates. Files are first grouped by exact byte size; only files that share a
@@ -408,6 +437,8 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `ui/PhoneScreens.kt` | Folder list, photo grid, drag selection |
 | `ui/StorageScreen.kt` | Storage insights: breakdown, Drive quota, largest files, duplicate cleanup |
 | `data/StorageInsights.kt` | Breakdown, size-then-SHA-256 duplicate grouping, cleanup plan |
+| `ui/DriveFolderInsights.kt` | Storage: Google Drive folder counts, more folders, open a folder |
+| `data/DriveFolderSizes.kt` | Drive folder totals from one flat listing, paged listing with stop reasons |
 | `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/Favorites.kt` | Favorites list, star button, way in from Phone and Drive |
