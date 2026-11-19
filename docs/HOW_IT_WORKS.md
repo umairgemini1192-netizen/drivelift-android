@@ -27,6 +27,9 @@ QUEUED -> UPLOADING -> UPLOADED -> VERIFIED -> REMOVED
 - **Phone**: `data/Media.kt` reads Android's MediaStore for every image and video and groups them
   by folder (Camera, Screenshots, WhatsApp Images and so on). A content observer refreshes the
   list when files change.
+- **Thumbnails** come from Android's own thumbnail store (`data/MediaThumbnails.kt`), which
+  makes each one once and keeps it. Only when Android has none for a file is the original
+  decoded, as before.
 - **Drive**: `ui/DriveBrowser.kt` lists folders and files through the Drive v3 REST API
   (`drive/DriveClient.kt`). A folder is listed to its end, however many entries it has. The same
   browser is the folder picker.
