@@ -432,7 +432,8 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                 .addPathSegment(file.id)
                 .addQueryParameter("alt", "media")
                 .build()
-            DrivePlaybackSource.VIDS_DOWNLOAD_OPERATION -> vidsDownloadUri(file.id)
+            DrivePlaybackSource.VIDS_DOWNLOAD_OPERATION ->
+                vidsDownloadUri(file.id, requirePinnedAccount(prefs.accountEmail))
         }
         val client = http.newBuilder()
             .readTimeout(30, TimeUnit.SECONDS)
@@ -464,38 +465,39 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
      * with backoff until it is done. Returns the trusted download URI from the response. Gives up
      * after [VIDS_RENDER_TIMEOUT_MS], so the player shows an error instead of spinning forever.
      */
-    private suspend fun vidsDownloadUri(fileId: String): HttpUrl {
+    private suspend fun vidsDownloadUri(fileId: String, account: String): HttpUrl {
         val startUrl = "$API/files".toHttpUrl().newBuilder()
             .addPathSegment(fileId)
             .addPathSegment("download")
             .build()
-        var operation = execute({ Request.Builder().url(startUrl).post(ByteArray(0).toRequestBody(null)) }) { r ->
-            if (!r.isSuccessful) fail(r)
-            JSONObject(r.body!!.string())
-        }
-        val name = operation.optString("name")
-        if (name.isEmpty()) throw IOException("Drive did not start the video render")
-        val pollUrl = "$API/operations".toHttpUrl().newBuilder()
-            .addPathSegments(driveOperationName(name))
-            .build()
-        val deadline = System.currentTimeMillis() + VIDS_RENDER_TIMEOUT_MS
-        var attempt = 0
-        while (!operation.optBoolean("done", false)) {
-            if (System.currentTimeMillis() > deadline) {
-                throw IOException("Drive is still preparing this video. Try again later.")
-            }
-            delay(drivePollDelayMillis(attempt++))
-            operation = getJson(pollUrl)
-        }
-        operation.optJSONObject("error")?.let {
-            throw IOException(it.optString("message", "Drive could not prepare this video"))
-        }
-        val downloadUri = operation.optJSONObject("response")?.optString("downloadUri").orEmpty()
-        val uri = downloadUri.toHttpUrlOrNull()
-            ?: throw IOException("Drive returned no video link")
-        if (!isTrustedDriveMediaUrl(uri)) throw IOException("Blocked media request to untrusted host")
-        return uri
+        return awaitVidsRender(
+            start = {
+                renderOperation(execute({ Request.Builder().url(startUrl).post(ByteArray(0).toRequestBody(null)) }, account = account) { r ->
+                    if (!r.isSuccessful) fail(r)
+                    JSONObject(r.body!!.string())
+                })
+            },
+            poll = { operationId ->
+                val pollUrl = "$API/operations".toHttpUrl().newBuilder().addPathSegments(operationId).build()
+                renderOperation(execute({ Request.Builder().url(pollUrl) }, account = account) { r ->
+                    if (!r.isSuccessful) fail(r)
+                    JSONObject(r.body!!.string())
+                })
+            },
+            wait = { delay(it) },
+            now = { System.currentTimeMillis() },
+            timeoutMillis = VIDS_RENDER_TIMEOUT_MS,
+            isTrusted = ::isTrustedDriveMediaUrl,
+        )
     }
+
+    /** Reads an operation resource. Missing or wrong-typed fields become null or false, never a crash. */
+    private fun renderOperation(o: JSONObject) = DriveRenderOperation(
+        name = o.optString("name").ifEmpty { null },
+        done = o.optBoolean("done", false),
+        errorMessage = o.optJSONObject("error")?.optString("message", "Drive could not prepare this video"),
+        downloadUri = o.optJSONObject("response")?.optString("downloadUri")?.ifEmpty { null },
+    )
 
     private suspend fun <T> executeTrustedMedia(initialUrl: HttpUrl, handle: suspend (Response) -> T): T {
         var current = initialUrl
