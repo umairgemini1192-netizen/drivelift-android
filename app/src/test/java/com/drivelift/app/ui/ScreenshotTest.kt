@@ -3338,7 +3338,15 @@ class ScreenshotTest {
         vm.duplicateSelection.value = emptySet()
         vm.toggleDuplicate(id)
         pump(4)
-        waitFor("1 copy selected")
+        val seen = (0 until 240).any {
+            pump(1)
+            compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
+        }
+        val state = "groups=${vm.duplicateGroups.value.map { it.items.map { i -> i.id } }} " +
+            "scan=${vm.duplicateScan.value.javaClass.simpleName} " +
+            "scanGroups=${(vm.duplicateScan.value as? AppViewModel.DuplicateScan.Done)?.result?.groups?.map { g -> g.items.map { i -> i.id } }} " +
+            "selected=${vm.duplicateSelection.value} media=${vm.media.value.map { it.id }} wa12=$id"
+        assertTrue("The cleanup bar never showed 1 copy selected. $state", seen)
     }
 
     private fun pump(times: Int) = repeat(times) {
