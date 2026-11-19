@@ -115,6 +115,7 @@ import org.junit.Before
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -3190,9 +3191,19 @@ class ScreenshotTest {
 
                 // P2: the copy that stays leaves the phone (outside DriveLift).
                 confirmWhile { FakeMediaStore.hidden = setOf(wa13.id) }
+                // The refused cleanup listed the phone again without IMG-WA13, so its group is gone.
+                // The groups follow the listing off the main thread, so wait until they show that
+                // before IMG-WA13 comes back. Otherwise the old groups (from before it left) pass the
+                // wait below, the late "group gone" update lands after the next case has picked
+                // IMG-WA12, the selection is rightly dropped, and the cleanup bar never shows.
+                settle { vm.duplicateGroups.value.none { g -> g.items.any { it.id == wa13.id } } }
                 FakeMediaStore.hidden = emptySet()
                 runBlocking { graph.media.refresh() }
-                settle { vm.duplicateGroups.value.isNotEmpty() }
+                settle {
+                    vm.duplicateGroups.value.any { g ->
+                        g.items.map { it.id }.containsAll(listOf(wa12.id, wa13.id))
+                    }
+                }
 
                 // P2: the copy that stays is in an open removal request (verified on Drive).
                 seedTransfers(row(wa13.id, wa13.name, TransferStatus.VERIFIED, size = wa13.size))
@@ -3634,10 +3645,15 @@ class ScreenshotTest {
      * left the bar unchecked, so the next tap raced the screen.
      */
     private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
+        fun state() = "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
+            "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value}"
         vm.duplicateSelection.value = emptySet()
         vm.toggleDuplicate(id)
+        assertTrue("The toggle did not select $id. ${state()}", id in vm.duplicateSelection.value)
         pump(4)
-        waitFor("1 copy selected")
+        settle({ "The cleanup bar never showed 1 copy selected. ${state()}" }) {
+            compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
+        }
     }
 
     private fun pump(times: Int) = repeat(times) {
@@ -3647,12 +3663,15 @@ class ScreenshotTest {
     }
 
     /** Runs the UI until [done], so data arriving from the database has reached the screen. */
-    private fun settle(done: () -> Boolean) {
+    private fun settle(
+        describe: () -> String = { "The screen never reached the expected state" },
+        done: () -> Boolean,
+    ) {
         val deadline = System.currentTimeMillis() + 15_000
         while (true) {
             pump(1)
             if (done()) break
-            assertTrue("The screen never reached the expected state", System.currentTimeMillis() < deadline)
+            if (System.currentTimeMillis() >= deadline) fail(describe())
         }
         pump(4)
     }
