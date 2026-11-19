@@ -46,11 +46,19 @@ data class DriveRenderOperation(
     val downloadUri: String?,
 )
 
+/** Poll failures in a row that [awaitVidsRender] asks again after, before it gives up. */
+const val VIDS_POLL_RETRIES = 3
+
 /**
  * Starts a Vids render and waits for its download URI. The HTTP calls, the clock and the delay are
  * passed in, so the whole flow is tested with fakes. [poll] receives the operation id, not the
  * full name. Any error, a missing name or link, a timeout, or an untrusted URI stops it. A
  * cancelled coroutine stops it too, because [wait] is suspending.
+ *
+ * A poll that throws an error [retryable] accepts (a dropped connection or a temporary Drive
+ * error) is asked again at the next interval, up to [VIDS_POLL_RETRIES] times in a row and never
+ * past the deadline, so one bad response does not throw away a render that is nearly done.
+ * Every other error, and any error from [start], stops it at once.
  */
 suspend fun awaitVidsRender(
     start: suspend () -> DriveRenderOperation,
@@ -59,6 +67,7 @@ suspend fun awaitVidsRender(
     now: () -> Long,
     timeoutMillis: Long,
     isTrusted: (HttpUrl) -> Boolean,
+    retryable: (Exception) -> Boolean = { false },
 ): HttpUrl {
     var operation = start()
     operation.errorMessage?.let { throw java.io.IOException(it) }
@@ -66,12 +75,21 @@ suspend fun awaitVidsRender(
         ?: throw java.io.IOException("Drive did not start the video render")
     val deadline = now() + timeoutMillis
     var attempt = 0
+    var failuresInARow = 0
     while (!operation.done) {
         if (now() > deadline) {
             throw java.io.IOException("Drive is still preparing this video. Try again later.")
         }
         wait(drivePollDelayMillis(attempt++))
-        operation = poll(driveOperationName(name))
+        operation = try {
+            poll(driveOperationName(name))
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            throw e
+        } catch (e: Exception) {
+            if (!retryable(e) || ++failuresInARow > VIDS_POLL_RETRIES) throw e
+            continue
+        }
+        failuresInARow = 0
         operation.errorMessage?.let { throw java.io.IOException(it) }
     }
     val uri = operation.downloadUri?.toHttpUrlOrNull()

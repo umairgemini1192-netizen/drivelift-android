@@ -162,9 +162,38 @@ interface DriveFolders {
         throw IOException("Drive folder details are not available")
 }
 
+/**
+ * Where access tokens come from. Production uses Google Identity Services ([DriveAuth]); tests
+ * pass a fake so the real request, account-binding and retry code runs without Google services.
+ */
+internal interface DriveTokenSource {
+    suspend fun tokenOrNull(account: String): String?
+    suspend fun invalidate(token: String)
+}
+
+private class GoogleTokenSource(private val context: Context) : DriveTokenSource {
+    override suspend fun tokenOrNull(account: String): String? = DriveAuth.tokenOrNull(context, account)
+    override suspend fun invalidate(token: String) = DriveAuth.invalidate(context, token)
+}
+
 /** Thin Drive v3 REST client. Every call is suspendable and cancellable. */
-class DriveClient(private val context: Context, private val prefs: Prefs) : DriveFolders {
-    private val http = OkHttpClient.Builder()
+class DriveClient internal constructor(
+    private val context: Context,
+    private val prefs: Prefs,
+    private val tokens: DriveTokenSource,
+    baseHttp: OkHttpClient,
+    /** Wait between polls of a Google Vids render. A real delay in the app; instant in tests. */
+    private val vidsPollWait: suspend (Long) -> Unit,
+) : DriveFolders {
+    constructor(context: Context, prefs: Prefs) : this(
+        context,
+        prefs,
+        GoogleTokenSource(context),
+        OkHttpClient(),
+        { delay(it) },
+    )
+
+    private val http = baseHttp.newBuilder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(2, TimeUnit.MINUTES)
         .writeTimeout(2, TimeUnit.MINUTES)
@@ -187,7 +216,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
 
     /** Background and browsing calls are always pinned to the saved account. See [requirePinnedAccount]. */
     private suspend fun token(): String = try {
-        DriveAuth.tokenOrNull(context, requirePinnedAccount(prefs.accountEmail)) ?: throw AuthRequiredException()
+        tokens.tokenOrNull(requirePinnedAccount(prefs.accountEmail)) ?: throw AuthRequiredException()
     } catch (e: ApiException) {
         throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
     }
@@ -204,7 +233,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         // the replacement is proven the same way before anything is sent.
         for (attempt in 0..1) {
             val token = try {
-                DriveAuth.tokenOrNull(context, account) ?: throw AuthRequiredException()
+                tokens.tokenOrNull(account) ?: throw AuthRequiredException()
             } catch (e: ApiException) {
                 throw IOException("Google sign-in service error ${e.statusCode}. Check the OAuth setup.", e)
             }
@@ -212,7 +241,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                 about(token).email.also { provenTokens[token] = it }
             } catch (e: DriveHttpException) {
                 if (e.code != 401) throw e
-                DriveAuth.invalidate(context, token)
+                tokens.invalidate(token)
                 continue
             }
             if (!owner.equals(account, ignoreCase = true)) throw AccountChangedException()
@@ -235,7 +264,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         var response = send(request, token)
         if (response.code == 401) {
             response.close()
-            DriveAuth.invalidate(context, token)
+            tokens.invalidate(token)
             provenTokens.remove(token)
             token = nextToken()
             response = send(request, token)
@@ -492,7 +521,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                 response.close()
                 val rejected = current.get()
                 val fresh = runBlocking {
-                    DriveAuth.invalidate(context, rejected)
+                    tokens.invalidate(rejected)
                     runCatching { token() }.getOrNull()
                 }
                 if (fresh != null) current.set(fresh)
@@ -514,6 +543,9 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
         val startUrl = "$API/files".toHttpUrl().newBuilder()
             .addPathSegment(fileId)
             .addPathSegment("download")
+            // Drive's default type for Vids is MP4 today, but the reference says the default may
+            // change, and the player needs MP4. Google's own Vids example sets it too.
+            .addQueryParameter("mimeType", "video/mp4")
             .build()
         return awaitVidsRender(
             start = {
@@ -529,11 +561,23 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
                     JSONObject(r.body!!.string())
                 })
             },
-            wait = { delay(it) },
+            wait = vidsPollWait,
             now = { System.currentTimeMillis() },
             timeoutMillis = VIDS_RENDER_TIMEOUT_MS,
             isTrusted = ::isTrustedDriveMediaUrl,
+            retryable = ::isTemporaryDriveError,
         )
+    }
+
+    /**
+     * A poll failure worth asking again: rate limit, a Drive server error or a dropped connection.
+     * An account change, a sign-in problem or a refusal (4xx) is not.
+     */
+    private fun isTemporaryDriveError(e: Exception): Boolean = when (e) {
+        is AccountChangedException -> false
+        is DriveHttpException -> e.code == 429 || e.code >= 500
+        is IOException -> true
+        else -> false
     }
 
     /** Reads an operation resource. Missing or wrong-typed fields become null or false, never a crash. */
@@ -556,7 +600,7 @@ class DriveClient(private val context: Context, private val prefs: Prefs) : Driv
             ).await()
             if (response.code == 401) {
                 response.close()
-                DriveAuth.invalidate(context, token)
+                tokens.invalidate(token)
                 token = token()
                 response = mediaHttp.newCall(
                     Request.Builder().url(current).header("Authorization", "Bearer $token").build()
