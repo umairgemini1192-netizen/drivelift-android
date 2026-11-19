@@ -71,6 +71,7 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.performScrollToIndex
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
@@ -2291,7 +2292,10 @@ class ScreenshotTest {
         scrollStorageTo("Check for duplicates")
         tap("Check for duplicates")
         waitFor("1 group of files with matching content.")
-        scrollStorageTo(hasTestTag("duplicate-group"))
+        // The group goes to the top of the list (scrollToItem by its key, no animation).
+        val key = currentVm!!.duplicateGroups.value.first().key
+        compose.onNodeWithTag("storage-list").performScrollToKey("group-$key")
+        pump(4)
     }
 
     /** Taps Move to trash inside the cleanup dialog, not the one in the bar behind it. */

@@ -632,7 +632,8 @@ private fun DuplicateRow(
             Checkbox(checked = checked, onCheckedChange = null, enabled = enabled, modifier = Modifier.size(Tokens.TouchTarget))
             Thumb(item)
             Column(Modifier.weight(1f).padding(start = Tokens.Medium)) {
-                Text(item.name, style = MaterialTheme.typography.bodyLarge, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                // Two lines, so copies with similar names stay distinguishable at large text sizes.
+                Text(item.name, style = MaterialTheme.typography.bodyLarge, maxLines = 2, overflow = TextOverflow.Ellipsis)
                 Text(
                     "${item.relativePath.trimEnd('/').ifEmpty { item.bucketName }}  ·  ${formatDay(item.dateTakenMs)}",
                     style = MaterialTheme.typography.bodySmall,
