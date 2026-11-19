@@ -1593,6 +1593,12 @@ class ScreenshotTest {
      * finishes while the test clock is frozen.
      */
     private fun scrollFavoritesTo(text: String) {
+        // Rows grow once a Drive lookup ends (a spinner becomes a reason), which would push the
+        // item back down after scrolling: wait until every favorite is resolved.
+        settle {
+            currentVm!!.favoriteRows.value?.none { it.state is com.drivelift.app.data.FavoriteState.Checking } == true
+        }
+        pump(4)
         val list = compose.onNodeWithTag("favorites-list")
         val half = list.fetchSemanticsNode().boundsInRoot.let { it.top + it.height / 2 }
         for (i in 0 until 40) {
