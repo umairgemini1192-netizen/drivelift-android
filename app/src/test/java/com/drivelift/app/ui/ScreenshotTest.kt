@@ -45,6 +45,9 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasClickAction
+import androidx.compose.ui.test.hasContentDescription
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.isRoot
 import androidx.compose.foundation.layout.fillMaxSize
@@ -1637,17 +1640,20 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
-    /** The Drive part of Favorites, scrolled into view: trashed, missing and other-account items. */
+    /**
+     * The Drive part of Favorites, scrolled into view: trashed and missing items, and the favorite
+     * of another account shown only as a count, with nothing saved for it on screen.
+     */
     @Test
     fun favoritesDriveSection() {
         grantMedia()
         eachVariant(
-            "favorites-drive", expect = com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT, connected = true,
+            "favorites-drive", expect = "1 favorite hidden", connected = true,
             act = {
                 seedMixedFavorites()
                 openFavoritesFromPhone()
-                scrollFavoritesTo("Their holiday.jpg")
-                waitFor(com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT)
+                scrollFavoritesTo("1 favorite hidden")
+                assertNothingMentions("Their holiday")
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -1749,6 +1755,87 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /** Fails when any text or label on screen (messages included) contains [text], ignoring case. */
+    private fun assertNothingMentions(text: String) {
+        val found = compose.onAllNodes(
+            hasText(text, substring = true, ignoreCase = true) or
+                hasContentDescription(text, substring = true, ignoreCase = true),
+            useUnmergedTree = true,
+        ).fetchSemanticsNodes()
+        assertTrue("\"$text\" must not be on screen", found.isEmpty())
+    }
+
+    /**
+     * Issue #42 account isolation (ChatGPT review of 891f1e7): a Drive favorite saved with account
+     * A shows nothing saved for it (name, type, place) while B is connected or after signing out,
+     * is never looked up as B, and returns usable once A is connected again. Removing hidden
+     * favorites names none of them.
+     */
+    @Test
+    fun favoritesOfAnotherAccountRevealNothingUntilItIsConnected() {
+        grantMedia()
+        val drive = FakeDrive()
+        val accountA = "first.account@example.com"
+        eachVariant(
+            "favorites-isolation", expect = null, connected = true, capture = false, drive = drive,
+            act = {
+                drive.lookupAccount = TEST_EMAIL
+                drive.lookedUp.clear()
+                setFavorites(
+                    com.drivelift.app.data.favoriteOf(
+                        DriveFile("d1", "Packing list.pdf", "application/pdf", 84_000, null, false),
+                        com.drivelift.app.data.accountHash(accountA), "My Drive / Private",
+                    ).copy(addedAt = 2),
+                    driveFavorite("d2", "Scan_0042.jpg", folder = false, added = 1),
+                )
+                val vm = currentVm!!
+
+                // B (the test account) is connected: B's favorite opens, A's is only counted.
+                currentVm!!.tab.value = AppViewModel.TAB_DRIVE
+                waitFor("1 folder or file")
+                compose.onNodeWithText("1 folder or file").performClick()
+                waitFor("1 favorite hidden")
+                settle {
+                    compose.onAllNodes(hasText("Scan_0042.jpg") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
+                }
+                assertNothingMentions("Packing")
+                assertNothingMentions("Private")
+                assertNothingMentions("PDF")
+                assertTrue("A's favorite is never looked up as B", "d1" !in drive.lookedUp)
+
+                // Signed out: no Drive favorite is named, both are counted.
+                vm.driveConn.value = DriveConn.DISCONNECTED
+                waitFor("2 favorites hidden")
+                assertNothingMentions("Packing")
+                assertNothingMentions("Scan_0042")
+                assertNothingMentions("Private")
+
+                // A connected again: A's favorite is back and usable, B's is now the hidden one.
+                drive.lookupAccount = accountA
+                Graph.get(app).prefs.accountEmail = accountA
+                vm.driveConn.value = DriveConn.CONNECTED
+                waitFor("1 favorite hidden")
+                settle {
+                    compose.onAllNodes(hasText("Packing list.pdf") and hasClickAction()).fetchSemanticsNodes().isNotEmpty()
+                }
+                assertTrue("A's favorite is looked up as A once A is connected", "d1" in drive.lookedUp)
+                assertNothingMentions("Scan_0042")
+
+                // Removing the hidden one (B's) is confirmed and names nothing.
+                compose.onAllNodesWithText("Remove").onFirst().press()
+                waitFor("Remove 1 hidden favorite?")
+                compose.onNode(hasText("Remove") and hasClickAction() and hasAnyAncestor(hasTestTag("remove-hidden-favorites"))).press()
+                waitFor("Removed 1 hidden favorite")
+                assertNothingMentions("Scan_0042")
+                assertEquals(
+                    setOf(com.drivelift.app.data.driveKey(com.drivelift.app.data.accountHash(accountA), "d1")),
+                    savedFavoriteIds(),
+                )
+                Graph.get(app).prefs.accountEmail = TEST_EMAIL
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     /**
      * With photo access off and Drive not connected the Phone tab shows only the access gate, so
      * the Favorites row stays in the Drive tab: each favorite shows why it cannot open and can be
@@ -1764,10 +1851,11 @@ class ScreenshotTest {
                     phoneFolderFavorite(100, "Camera", "DCIM/Camera", added = 2),
                     driveFavorite("d2", "Scan_0042.jpg", folder = false, added = 1),
                 )
-                waitFor("2 folders and files")
-                compose.onNodeWithText("2 folders and files").performClick()
+                waitFor("1 folder or file")
+                compose.onNodeWithText("1 folder or file").performClick()
                 waitFor(com.drivelift.app.data.FavoriteReasons.PHOTO_ACCESS_OFF)
-                waitFor(com.drivelift.app.data.FavoriteReasons.DRIVE_NOT_CONNECTED)
+                waitFor("1 favorite hidden")
+                assertNothingMentions("Scan_0042")
                 assertTrue("Nothing is looked up without a connected account", drive.lookedUp.isEmpty())
                 compose.onAllNodesWithText("Remove").onFirst().press()
                 settle { savedFavoriteIds().size == 1 }
@@ -1792,7 +1880,7 @@ class ScreenshotTest {
                     com.drivelift.app.data.FavoriteReasons.MEDIA_GONE,
                     com.drivelift.app.data.FavoriteReasons.DRIVE_TRASHED,
                     com.drivelift.app.data.FavoriteReasons.DRIVE_MISSING,
-                    com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT,
+                    "1 favorite hidden",
                 )) {
                     scrollFavoritesTo(reason)
                     waitFor(reason)
@@ -2856,8 +2944,11 @@ class ScreenshotTest {
 
         /** Drive ids the app looked up for favorites, in order. */
         val lookedUp = java.util.Collections.synchronizedList(mutableListOf<String>())
+
+        /** The account lookups must be made as: the connected one. */
+        @Volatile var lookupAccount = TEST_EMAIL
         override suspend fun fileInfo(fileId: String, account: String): DriveFile? {
-            assertEquals("Favorites are looked up only as the connected account", TEST_EMAIL, account)
+            assertEquals("Favorites are looked up only as the connected account", lookupAccount, account)
             lookedUp += fileId
             return when (fileId) {
                 "gone" -> null

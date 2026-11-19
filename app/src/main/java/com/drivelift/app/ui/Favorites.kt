@@ -21,8 +21,11 @@ import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Folder
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
@@ -56,6 +59,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.drivelift.app.data.FavoriteCounts
 import com.drivelift.app.data.FavoriteKind
 import com.drivelift.app.data.FavoriteRow
 import com.drivelift.app.data.FavoriteState
@@ -78,9 +82,12 @@ fun FavoriteStar(favorite: Boolean, name: String, onToggle: () -> Unit, modifier
     }
 }
 
-/** The way into Favorites from the Phone and Drive tabs. Shown only once something is starred. */
+/**
+ * The way into Favorites from the Phone and Drive tabs. Shown only once something is starred. It
+ * counts the favorites shown for the account in use; hidden ones are never counted as visible.
+ */
 @Composable
-fun FavoritesEntryRow(count: Int, onClick: () -> Unit, modifier: Modifier = Modifier) {
+fun FavoritesEntryRow(counts: FavoriteCounts, onClick: () -> Unit, modifier: Modifier = Modifier) {
     GlassPanel(modifier = modifier.fillMaxWidth(), onClick = onClick, onClickLabel = "Open favorites") {
         Row(
             Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
@@ -90,7 +97,11 @@ fun FavoritesEntryRow(count: Int, onClick: () -> Unit, modifier: Modifier = Modi
             Column(Modifier.weight(1f).padding(horizontal = Tokens.Medium)) {
                 Text("Favorites", style = MaterialTheme.typography.titleSmall)
                 Text(
-                    if (count == 1) "1 folder or file" else "$count folders and files",
+                    when {
+                        counts.shown == 1 -> "1 folder or file"
+                        counts.shown > 1 -> "${counts.shown} folders and files"
+                        else -> "Hidden until their Google account is connected"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -118,10 +129,17 @@ fun FavoritesScreen(
     val rows = loadedRows.orEmpty()
     val favorites by vm.favorites.collectAsStateWithLifecycle()
     val connectedAccount by vm.connectedAccountHash.collectAsStateWithLifecycle()
+    val counts by vm.favoriteCounts.collectAsStateWithLifecycle()
+    var confirmRemoveHidden by rememberSaveable { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     // The phone file or Drive file open in the viewer, kept across rotation.
     var viewingMediaId by rememberSaveable { mutableLongStateOf(NONE) }
     var viewingDrive by rememberSaveable(stateSaver = OpenDriveFileSaver) { mutableStateOf<DriveFile?>(null) }
+    // The account a Drive file was opened with; the viewer closes if another account takes over.
+    var viewingDriveAccount by rememberSaveable { mutableStateOf<String?>(null) }
+    LaunchedEffect(connectedAccount) {
+        if (viewingDrive != null && viewingDriveAccount != connectedAccount) viewingDrive = null
+    }
     // Read from the phone listing, not from the favorites, so taking the star off in the viewer
     // does not close it.
     val media by vm.media.collectAsStateWithLifecycle()
@@ -168,7 +186,7 @@ fun FavoritesScreen(
                 Box(Modifier.fillMaxWidth().padding(Tokens.EmptyState), contentAlignment = Alignment.Center) {
                     CircularProgressIndicator()
                 }
-            } else if (rows.isEmpty()) {
+            } else if (rows.isEmpty() && counts.hidden == 0) {
                 Text(
                     "No favorites yet. Tap the star on a folder, or in the viewer of a photo, video or " +
                         "Drive file, to keep it here.",
@@ -197,7 +215,7 @@ fun FavoritesScreen(
                             )
                         }
                     }
-                    if (drive.isNotEmpty()) {
+                    if (drive.isNotEmpty() || counts.hidden > 0) {
                         item(key = "drive-heading") { SectionHeading("Google Drive") }
                         items(drive, key = { it.favorite.id }) { row ->
                             FavoriteRowItem(
@@ -207,16 +225,38 @@ fun FavoritesScreen(
                                     when {
                                         file == null -> Unit
                                         file.isFolder -> onOpenDriveFolder(file)
-                                        else -> viewingDrive = file
+                                        else -> {
+                                            viewingDriveAccount = connectedAccount
+                                            viewingDrive = file
+                                        }
                                     }
                                 },
                                 onRemove = { vm.removeFavorite(row.favorite.id) },
                                 onRetry = vm::checkDriveFavorites,
                             )
                         }
+                        if (counts.hidden > 0) {
+                            item(key = "hidden") {
+                                HiddenFavoritesRow(
+                                    count = counts.hidden,
+                                    driveConnected = connectedAccount != null,
+                                    onRemove = { confirmRemoveHidden = true },
+                                )
+                            }
+                        }
                     }
                 }
             }
+        }
+        if (confirmRemoveHidden && counts.hidden > 0) {
+            RemoveHiddenFavoritesDialog(
+                count = counts.hidden,
+                onConfirm = {
+                    confirmRemoveHidden = false
+                    vm.removeHiddenFavorites()
+                },
+                onDismiss = { confirmRemoveHidden = false },
+            )
         }
         viewingMedia?.let { item ->
             FullScreenOverlay {
@@ -361,4 +401,65 @@ private fun FavoriteRowItem(row: FavoriteRow, onOpen: () -> Unit, onRemove: () -
             }
         }
     }
+}
+
+/**
+ * Stands in for Drive favorites that are not shown for the account in use: saved with another
+ * Google account, or any while Drive is not connected. It says how many there are and nothing
+ * else (no name, type, place or icon of their own), and lets them be removed together.
+ */
+@Composable
+private fun HiddenFavoritesRow(count: Int, driveConnected: Boolean, onRemove: () -> Unit) {
+    GlassPanel(modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny)) {
+        Column(Modifier.fillMaxWidth().padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Box(
+                    Modifier.size(Tokens.FolderThumb).clip(Tokens.ThumbShape).background(GlassPalette.Thumb),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(Icons.Outlined.Lock, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                Column(Modifier.weight(1f).padding(horizontal = Tokens.Gutter)) {
+                    Text(
+                        if (count == 1) "1 favorite hidden" else "$count favorites hidden",
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        if (driveConnected) {
+                            "Saved with another Google account. Connect that account to see and open them."
+                        } else {
+                            "Google Drive is not connected. Connect the account they were saved with to see and open them."
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Row(
+                Modifier.fillMaxWidth().padding(top = Tokens.Small, end = Tokens.Small),
+                horizontalArrangement = Arrangement.End,
+            ) {
+                OutlinedButton(onClick = onRemove) { Text("Remove") }
+            }
+        }
+    }
+}
+
+/** Confirms removing every hidden favorite. Names nothing: they belong to an account not in use. Solid dialog (rule 3). */
+@Composable
+private fun RemoveHiddenFavoritesDialog(count: Int, onConfirm: () -> Unit, onDismiss: () -> Unit) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        modifier = Modifier.testTag("remove-hidden-favorites"),
+        title = { Text(if (count == 1) "Remove 1 hidden favorite?" else "Remove $count hidden favorites?") },
+        text = {
+            Text(
+                "They were saved with a Google account that is not connected now, so they are not named " +
+                    "here. Removing them only takes them out of Favorites; the files themselves are not changed.",
+                style = MaterialTheme.typography.bodyMedium,
+            )
+        },
+        confirmButton = { Button(onClick = onConfirm) { Text("Remove") } },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
 }

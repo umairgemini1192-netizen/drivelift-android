@@ -109,8 +109,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val driveChecks = MutableStateFlow<Map<String, com.drivelift.app.data.DriveCheck>>(emptyMap())
 
     /**
-     * Every favorite with where it is now, or null until first worked out. Recomputed when the
-     * listing, account or a lookup changes.
+     * Favorites shown for the account in use and those kept out of sight (Drive favorites of any
+     * other account, or every Drive favorite while Drive is not connected).
+     */
+    val favoriteCounts: StateFlow<com.drivelift.app.data.FavoriteCounts> =
+        kotlinx.coroutines.flow.combine(favorites, connectedAccountHash) { favs, connected ->
+            com.drivelift.app.data.favoriteCounts(favs, connected)
+        }
+            .stateIn(viewModelScope, SharingStarted.Eagerly, com.drivelift.app.data.FavoriteCounts(0, 0))
+
+    /**
+     * Every favorite that may be shown, with where it is now, or null until first worked out.
+     * Drive favorites of another account (or all of them while Drive is not connected) are left
+     * out entirely: nothing saved for them reaches the screen. Recomputed when the listing,
+     * account or a lookup changes.
      */
     val favoriteRows: StateFlow<List<com.drivelift.app.data.FavoriteRow>?> = kotlinx.coroutines.flow.combine(
         favorites, media, mediaLoaded, folders, kotlinx.coroutines.flow.combine(connectedAccountHash, driveChecks, ::Pair),
@@ -123,7 +135,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             connectedAccount = connected,
             driveChecks = checks,
         )
-        favs.map { com.drivelift.app.data.FavoriteRow(it, com.drivelift.app.data.resolveFavorite(it, ctx)) }
+        favs.filter { com.drivelift.app.data.isFavoriteShown(it, connected) }
+            .map { com.drivelift.app.data.FavoriteRow(it, com.drivelift.app.data.resolveFavorite(it, ctx)) }
     }.flowOn(Dispatchers.Default).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
 
     private fun toggleFavorite(favorite: com.drivelift.app.data.FavoriteEntity) {
@@ -155,9 +168,25 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     /** Removes one favorite (for example one that can no longer be found). The item itself is not touched. */
     fun removeFavorite(id: String) {
         viewModelScope.launch {
-            val name = favoriteDao.get(id)?.name
-            if (favoriteDao.delete(id) > 0) messages.emit("Removed ${name ?: "it"} from favorites")
+            // Named only when it may be shown for the account in use.
+            val name = favoriteDao.get(id)
+                ?.takeIf { com.drivelift.app.data.isFavoriteShown(it, connectedAccountHash.value) }?.name
+            if (favoriteDao.delete(id) > 0) messages.emit(if (name != null) "Removed $name from favorites" else "Removed 1 hidden favorite")
             driveChecks.value = driveChecks.value - id
+        }
+    }
+
+    /**
+     * Removes every favorite kept out of sight for the account in use, without naming any of them.
+     * The files themselves are not touched.
+     */
+    fun removeHiddenFavorites() {
+        viewModelScope.launch {
+            val connected = connectedAccountHash.value
+            val hidden = favorites.value.filterNot { com.drivelift.app.data.isFavoriteShown(it, connected) }
+            val removed = hidden.sumOf { favoriteDao.delete(it.id) }
+            driveChecks.value = driveChecks.value - hidden.map { it.id }.toSet()
+            if (removed > 0) messages.emit(if (removed == 1) "Removed 1 hidden favorite" else "Removed $removed hidden favorites")
         }
     }
 

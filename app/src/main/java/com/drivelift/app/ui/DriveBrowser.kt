@@ -188,7 +188,7 @@ fun DriveBrowser(
     val conn by vm.driveConn.collectAsStateWithLifecycle()
     val account by vm.account.collectAsStateWithLifecycle()
     val gridDensity by vm.gridDensity.collectAsStateWithLifecycle()
-    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
     val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val favoriteAccount by vm.connectedAccountHash.collectAsStateWithLifecycle()
     val scope = rememberCoroutineScope()
@@ -525,9 +525,9 @@ fun DriveBrowser(
 
             // Shown also while Drive is not connected: the Phone tab is behind the photo access
             // gate, so this may be the only way to see why favorites cannot open and remove them.
-            if (!pickMode && !selecting && stack.size == 1 && favorites.isNotEmpty() && onOpenFavorites != null) {
+            if (!pickMode && !selecting && stack.size == 1 && favoriteCounts.any && onOpenFavorites != null) {
                 FavoritesEntryRow(
-                    count = favorites.size,
+                    counts = favoriteCounts,
                     onClick = onOpenFavorites,
                     modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
                 )

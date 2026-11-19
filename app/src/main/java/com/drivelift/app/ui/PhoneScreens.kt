@@ -107,7 +107,7 @@ fun PhoneScreen(
     onOpenFavorites: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    val favorites by vm.favorites.collectAsStateWithLifecycle()
+    val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
     val favoriteIds by vm.favoriteIds.collectAsStateWithLifecycle()
     val folders by vm.folders.collectAsStateWithLifecycle()
     val media by vm.media.collectAsStateWithLifecycle()
@@ -143,10 +143,10 @@ fun PhoneScreen(
                 modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
             )
         }
-        if (favorites.isNotEmpty()) {
+        if (favoriteCounts.any) {
             item(key = "favorites") {
                 FavoritesEntryRow(
-                    count = favorites.size,
+                    counts = favoriteCounts,
                     onClick = onOpenFavorites,
                     modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
                 )

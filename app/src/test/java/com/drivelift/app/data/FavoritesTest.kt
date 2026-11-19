@@ -124,4 +124,20 @@ class FavoritesTest {
         assertTrue(!isDriveAccessRefused(429, null))
         assertTrue(!isDriveAccessRefused(500, null))
     }
+
+    @Test
+    fun onlyTheAccountInUseSeesItsDriveFavorites() {
+        val ours = favoriteOf(driveFile("d1"), mine, "My Drive")
+        val theirs = favoriteOf(driveFile("d9"), other, "My Drive")
+        val phone = favoriteOf(item(1))
+        assertTrue(isFavoriteShown(ours, mine))
+        assertTrue(!isFavoriteShown(theirs, mine))
+        assertTrue(isFavoriteShown(phone, mine))
+        // Signed out: phone favorites stay, no Drive favorite is shown.
+        assertTrue(isFavoriteShown(phone, null))
+        assertTrue(!isFavoriteShown(ours, null))
+        assertEquals(FavoriteCounts(shown = 2, hidden = 1), favoriteCounts(listOf(ours, theirs, phone), mine))
+        assertEquals(FavoriteCounts(shown = 2, hidden = 1), favoriteCounts(listOf(ours, theirs, phone), other))
+        assertEquals(FavoriteCounts(shown = 1, hidden = 2), favoriteCounts(listOf(ours, theirs, phone), null))
+    }
 }

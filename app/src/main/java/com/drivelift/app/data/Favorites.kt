@@ -258,3 +258,23 @@ fun driveFavoritesToCheck(favorites: List<FavoriteEntity>, connectedAccount: Str
  */
 fun isDriveAccessRefused(code: Int, reason: String?): Boolean =
     code == 403 && reason?.let { it.contains("limit", ignoreCase = true) || it == "quotaExceeded" } != true
+
+/**
+ * Whether [favorite] may be shown with what was saved for it (name, type, place) while
+ * [connected] is the Drive account in use. Phone favorites always; a Drive favorite only for the
+ * account it was saved with. The account key is a hash for matching, not encryption: the saved
+ * name stays readable in the database, so the screen is what keeps another account's items out of
+ * sight. Hidden favorites are only counted, and can be removed together without being named.
+ */
+fun isFavoriteShown(favorite: FavoriteEntity, connected: String?): Boolean =
+    favorite.onPhone || (connected != null && favorite.accountHash == connected)
+
+/** How many favorites are shown for the account in use, and how many are kept out of sight. */
+data class FavoriteCounts(val shown: Int, val hidden: Int) {
+    val any: Boolean get() = shown + hidden > 0
+}
+
+fun favoriteCounts(favorites: List<FavoriteEntity>, connected: String?): FavoriteCounts {
+    val shown = favorites.count { isFavoriteShown(it, connected) }
+    return FavoriteCounts(shown, favorites.size - shown)
+}

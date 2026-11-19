@@ -246,11 +246,19 @@ Each time the list is shown DriveLift works out where every favorite is now:
 | Partial photo access and not visible | Unavailable: not visible with the current access (not called deleted) |
 | Phone file gone from a full listing (deleted, trashed, recopied by another app) | Unavailable |
 | Phone folder with no photos or videos (emptied, renamed or deleted) | Unavailable |
-| Drive not connected | Unavailable: connect |
-| Starred with another Google account | Unavailable: connect that account. Never looked up |
+| Drive not connected (or signed out) | Not listed: counted in "N favorites hidden" |
+| Starred with another Google account | Not listed: counted in "N favorites hidden". Never looked up |
 | Drive item found (also after a move to another Drive folder) | Opens |
 | In Drive's trash / not found / access refused | Unavailable, with that reason |
 | The lookup failed (offline, authorization expired, Drive asked to slow down) | Unavailable, with Try again |
+
+Account isolation: a Drive favorite is shown (name, type, place, icon) only while the account it
+was starred with is connected. Favorites of another account, and every Drive favorite while Drive
+is not connected, stay out of the list, its counts, labels and messages; one **N favorites
+hidden** row says how many there are and offers **Remove**, which asks first and removes them all
+without naming any. The account key is a SHA-256 for matching, not encryption: the saved name is
+still in the app-private database, which is why the screen keeps it out of sight. Connecting that
+account again brings its favorites back.
 
 Drive favorites of the connected account are looked up one by one with `files.get` and a token
 proven to belong to that account; nothing is sent for favorites of any other account. An
