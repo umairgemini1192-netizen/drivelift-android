@@ -2846,6 +2846,29 @@ class ScreenshotTest {
     }
 
     @Test
+    fun aSignInFailureCanBeRecoveredAfterReconnectingTheSameAccount() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-recover", expect = null, connected = true, capture = false,
+            drive = CountedDrive(failRoot = AuthRequiredException()),
+            act = {
+                val vm = currentVm!!
+                openDriveFolders(count = true)
+                waitFor("Reconnect")
+                compose.onNodeWithText("Try again").assertExists()
+                // Reconnecting the same account clears the failure; the count can start again.
+                vm.driveConn.value = DriveConn.CONNECTING
+                pump(2)
+                vm.driveConn.value = DriveConn.CONNECTED
+                settle { vm.driveFolderScan.value == AppViewModel.DriveFolderScan.Idle }
+                vm.driveFolders = CountedDrive()
+                tap("Count Drive folders")
+                waitForPart("Counted at")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
     fun driveFolderCountIsDroppedWhenTheAccountChangesAndStopKeepsWhatWasRead() {
         grantMedia()
         val drive = CountedDrive(hangAtPage = 2)

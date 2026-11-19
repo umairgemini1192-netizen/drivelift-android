@@ -121,6 +121,8 @@ internal fun DriveFoldersSummary(
                     )
                     if (scan.needsSignIn) {
                         Button(onClick = onConnect, modifier = Modifier.padding(top = Tokens.Medium)) { Text("Reconnect") }
+                        // Signed in again some other way: counting can still be started from here.
+                        TextButton(onClick = onStart, modifier = Modifier.padding(top = Tokens.Tiny)) { Text("Try again") }
                     } else {
                         Button(onClick = onStart, modifier = Modifier.padding(top = Tokens.Medium)) { Text("Try again") }
                     }

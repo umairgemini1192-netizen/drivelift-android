@@ -728,6 +728,17 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 if (owner != null && !owner.equals(pin, ignoreCase = true)) resetDriveFolderScan()
             }
         }
+        // A count that failed (for example on a sign-in error) is cleared once Drive connects
+        // again, so Count Drive folders is offered instead of a stale Reconnect.
+        viewModelScope.launch {
+            driveConn.collect { conn ->
+                if (conn == DriveConn.CONNECTED && driveFolderScan.value is DriveFolderScan.Failed) {
+                    synchronized(driveScanLock) {
+                        if (driveFolderScan.value is DriveFolderScan.Failed) driveFolderScan.value = DriveFolderScan.Idle
+                    }
+                }
+            }
+        }
     }
 
     private fun resetDriveFolderScan() {
