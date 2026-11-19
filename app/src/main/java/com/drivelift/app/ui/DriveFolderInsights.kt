@@ -163,7 +163,9 @@ internal fun DriveFoldersSummary(
                         )
                     }
                     Text(
-                        "Counted at ${formatClock(scan.at)} for ${scan.account}. $DRIVE_FOLDERS_SCOPE",
+                        // An incomplete count is not called counted: it read only part of the Drive.
+                        "${if (scan.complete) "Counted" else "Partly counted"} at ${formatClock(scan.at)} " +
+                            "for ${scan.account}. $DRIVE_FOLDERS_SCOPE",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Small),
