@@ -60,6 +60,12 @@ object Tokens {
     /** How far a folder slides toward the swipe edge at the end of a predictive back gesture. */
     val BackPreviewShift = 24.dp
 
+    /** How far a new folder or screen slides in from the side as it arrives. */
+    val NavigateShift = 48.dp
+
+    /** Height of the coral glow around a selected thumbnail. */
+    val SelectGlow = 10.dp
+
     // Strokes
     val Hairline = 1.dp
     val Stroke = 2.dp
@@ -88,6 +94,12 @@ object Tokens {
     object Motion {
         const val SELECTION = 160
         const val PROGRESS = 300
+
+        /** A new level (folder, Settings, another tab) sliding in, and a bottom bar rising. */
+        const val NAVIGATE = 260
+
+        /** A thumbnail fading and growing in once its picture has loaded. */
+        const val THUMB_IN = 220
 
         /** Video player controls step aside after this long of playback without a touch. */
         const val VIDEO_CONTROLS_HIDE = 3_500

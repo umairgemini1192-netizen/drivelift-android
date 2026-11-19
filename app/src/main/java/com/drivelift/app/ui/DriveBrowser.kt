@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -231,6 +232,10 @@ fun DriveBrowser(
     val accountKey = account?.email.orEmpty()
     val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
     val here = stack.last()
+    // Which way the folder shown now arrived: deeper, or back up to a parent.
+    var lastDepth by remember { mutableIntStateOf(stack.size) }
+    val navStep = if (stack.size >= lastDepth) NavStep.DEEPER else NavStep.UP
+    SideEffect { lastDepth = stack.size }
     val path = stack.joinToString(" / ") { it.name }
     // Search within this folder and the Drive sort choice (issue #36). The picker lists folders
     // only and keeps Drive's order.
@@ -519,7 +524,7 @@ fun DriveBrowser(
                 )
             }
 
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxWidth().arriveOnChange(here.id, navStep)) {
                 val list = shown
                 when {
                     conn != DriveConn.CONNECTED -> DriveStatusRow(
@@ -637,8 +642,11 @@ fun DriveBrowser(
                 }
             }
 
-            if (selecting) {
-                val chosen = entries.orEmpty().filter { it.id in selectedIds }
+            // The last selection stays drawn while the bar sinks away.
+            var barIds by remember { mutableStateOf(selectedIds) }
+            if (selecting) barIds = selectedIds
+            RisingBar(visible = selecting) {
+                val chosen = entries.orEmpty().filter { it.id in barIds }
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -682,14 +690,18 @@ fun DriveBrowser(
                 }
             }
 
-            val held = moveClip
-            if (!pickMode && !selecting && held != null && conn == DriveConn.CONNECTED) {
-                MovePill(
+            // The pill keeps showing its last files while it sinks away after a move.
+            var pillClip by remember { mutableStateOf(moveClip) }
+            moveClip?.let { pillClip = it }
+            val held = pillClip
+            RisingBar(visible = !pickMode && !selecting && moveClip != null && conn == DriveConn.CONNECTED) {
+                if (held != null) MovePill(
                     clip = held,
                     sizeLabel = formatBytes(context, held.totalBytes),
                     canMoveHere = held.canMoveInto(here.id),
                     hereName = here.name,
-                    enabled = !moving && movePlan == null,
+                    // Off while the pill sinks away, so a tap then never plans a move.
+                    enabled = moveClip != null && !moving && movePlan == null,
                     onMoveHere = {
                         val to = here.id
                         val label = path
@@ -925,8 +937,12 @@ private fun DriveMediaGridCard(
 ) {
     val kind = classifyDriveFile(file.mimeType)
     val icon = fileTypeIcon(kind)
+    // A picture fetched while the card was on screen fades in; one already cached just shows.
+    val fetched = remember(file.id) { thumb !is ThumbState.Ready }
     GlassPanel(
-        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+        modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+            .selectedShrink(selected == true)
+            .selectionGlow(selected == true, Tokens.ThumbShape),
         shape = Tokens.ThumbShape,
         onClick = onClick,
         onClickLabel = when (selected) {
@@ -957,7 +973,7 @@ private fun DriveMediaGridCard(
                     bitmap = thumb.bitmap,
                     contentDescription = file.name,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().revealWhen(loaded = true, animate = fetched),
                 )
                 ThumbState.Error -> Icon(
                     Icons.Outlined.BrokenImage,

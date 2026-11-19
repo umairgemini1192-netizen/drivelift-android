@@ -41,6 +41,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -211,6 +212,18 @@ fun AppRoot(vm: AppViewModel) {
     // Back while selecting in a folder clears the selection; it is not a step up, so no preview.
     BackHandler(enabled = inFolder && !pickingDestination && selection.isNotEmpty()) { vm.clearSelection() }
 
+    // The level shown now and how it arrived: a step down into a folder or a screen opened over
+    // a tab, a step back up, or a move across to another tab (Motion.kt).
+    val level = listOf(tab, openBucket, inSettings, inStorage, inFavorites, pickingDestination, hasPermission)
+    val depth = listOf(inFolder, inSettings, inStorage, inFavorites, pickingDestination).count { it }
+    var lastLevel by remember { mutableStateOf(Pair(tab, depth)) }
+    val levelStep = when {
+        tab != lastLevel.first -> NavStep.ACROSS
+        depth >= lastLevel.second -> NavStep.DEEPER
+        else -> NavStep.UP
+    }
+    SideEffect { lastLevel = Pair(tab, depth) }
+
     val inFlight = (counts[TransferStatus.QUEUED.name]?.count ?: 0) +
         (counts[TransferStatus.UPLOADING.name]?.count ?: 0)
 
@@ -255,7 +268,7 @@ fun AppRoot(vm: AppViewModel) {
                     }
                 },
             ) { padding ->
-                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).backPreview(upBack)) {
+                Box(Modifier.fillMaxSize().padding(padding).consumeWindowInsets(padding).backPreview(upBack).arriveOnChange(level, levelStep)) {
                     when {
                         // Render the folder picker directly inside the root Activity window instead of a
                         // nested Dialog above the bottom sheet, so edge-to-edge system bars and display

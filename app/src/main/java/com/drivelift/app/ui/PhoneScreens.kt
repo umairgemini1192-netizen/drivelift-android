@@ -630,6 +630,10 @@ private fun MediaCell(
     val inset by animateDpAsState(
         if (selected) Tokens.SelectedInset else Tokens.NoInset, AppMotion.spec(Tokens.Motion.SELECTION), label = "inset",
     )
+    // The picture fades and grows in when it arrives from disk; from the memory cache it just shows.
+    var loaded by remember(item.id) { mutableStateOf(false) }
+    var animateIn by remember(item.id) { mutableStateOf(true) }
+    val pictureShape = RoundedCornerShape(if (selected) Tokens.SelectedCorner else Tokens.NoInset)
     Box(
         Modifier
             .aspectRatio(1f)
@@ -650,7 +654,14 @@ private fun MediaCell(
             model = ImageRequest.Builder(LocalContext.current).data(item.uri).size(256).build(),
             contentDescription = item.name,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) Tokens.SelectedCorner else Tokens.NoInset)),
+            onSuccess = { state ->
+                animateIn = state.result.dataSource != coil.decode.DataSource.MEMORY_CACHE
+                loaded = true
+            },
+            modifier = Modifier.fillMaxSize().padding(inset)
+                .selectionGlow(selected, pictureShape)
+                .clip(pictureShape)
+                .revealWhen(loaded, animateIn),
         )
         if (item.isVideo) {
             Text(
