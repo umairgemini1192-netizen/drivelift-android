@@ -163,6 +163,28 @@ class ZipBrowseTest {
     }
 
     @Test
+    fun swappedDirectoryRecordsReadEachEntrysOwnData() {
+        // Two same-size entries; swap their central directory records (equal length, no extra).
+        val bytes = zip("a.txt" to "AAAA".toByteArray(), "b.txt" to "BBBB".toByteArray())
+        fun le16(at: Int): Int = (bytes[at].toInt() and 0xFF) or ((bytes[at + 1].toInt() and 0xFF) shl 8)
+        val first = find(bytes, centralSig)
+        val recordLength = 46 + le16(first + 28) + le16(first + 30) + le16(first + 32)
+        val second = first + recordLength
+        val a = bytes.copyOfRange(first, first + recordLength)
+        val b = bytes.copyOfRange(second, second + recordLength)
+        System.arraycopy(b, 0, bytes, first, recordLength)
+        System.arraycopy(a, 0, bytes, second, recordLength)
+
+        // The directory now lists b.txt first, but each record still points at its own data.
+        val listed = listOf(bytes) as ZipListResult.Listed
+        assertEquals(listOf("b.txt", "a.txt"), listed.entries.map { it.path })
+        val b1 = ZipBrowse.open(ZipSource.of(bytes), "b.txt", maxBytes = 100) as ZipOpenResult.Opened
+        assertArrayEquals("BBBB".toByteArray(), b1.bytes)
+        val a1 = ZipBrowse.open(ZipSource.of(bytes), "a.txt", maxBytes = 100) as ZipOpenResult.Opened
+        assertArrayEquals("AAAA".toByteArray(), a1.bytes)
+    }
+
+    @Test
     fun ibm437NameListsAsItsDecodedText() {
         val bytes = ibm437Zip("café.txt")
         val result = listOf(bytes) as ZipListResult.Listed
@@ -217,7 +239,7 @@ class ZipBrowseTest {
         }
         val result = ZipBrowse.list(source)
         assertTrue(result is ZipListResult.Refused)
-        assertEquals("This file is not a ZIP archive.", (result as ZipListResult.Refused).reason)
+        assertEquals("The archive contents do not match its directory.", (result as ZipListResult.Refused).reason)
         assertEquals(opened, closed)
     }
 

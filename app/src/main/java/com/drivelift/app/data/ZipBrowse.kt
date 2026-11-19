@@ -1,20 +1,21 @@
 package com.drivelift.app.data
 
-import java.io.BufferedInputStream
+import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.io.InputStream
+import java.io.SequenceInputStream
 import java.nio.ByteBuffer
-import java.nio.charset.Charset
 import java.nio.charset.CharacterCodingException
+import java.nio.charset.Charset
 import java.nio.charset.CodingErrorAction
 import java.util.zip.ZipException
 import java.util.zip.ZipInputStream
 
 /**
- * Where the archive bytes come from. The archive is read in two places: its end (the central
- * directory, which is the authority for what the archive contains) and from the start (the entry
- * data). Both need a stream at a known offset, so a plain one-pass stream is not enough.
+ * Where the archive bytes come from. The archive is read at known offsets: the end (the central
+ * directory, which is the authority for what the archive contains) and each entry's local header
+ * (the entry data). A plain one-pass stream is not enough.
  */
 interface ZipSource {
     /** Total size of the archive, in bytes. */
@@ -28,7 +29,7 @@ interface ZipSource {
         fun of(bytes: ByteArray): ZipSource = object : ZipSource {
             override val length: Long = bytes.size.toLong()
             override fun open(offset: Long): InputStream =
-                java.io.ByteArrayInputStream(bytes, offset.toInt(), bytes.size - offset.toInt())
+                ByteArrayInputStream(bytes, offset.toInt(), bytes.size - offset.toInt())
         }
     }
 }
@@ -62,14 +63,13 @@ sealed interface ZipOpenResult {
  * Integrity, in order:
  * 1. The end record (end of central directory) must be complete, and its directory position must
  *    fit exactly before it. A truncated or four-byte end signature is refused.
- * 2. The central directory is parsed in full and is the authority for names. A name with the
- *    UTF-8 flag (bit 11) is decoded strictly as UTF-8; without it, as IBM437 (the DOS default
- *    Windows archivers use). An invalid UTF-8 name is refused. Each name goes through
- *    [ArchiveEntryPath]. Entry count and sizes are checked. Encrypted entries, unsupported
- *    compression, and ZIP64 are refused.
- * 3. The entry data is read from the start. Each entry's data and size must match its directory
- *    record, in the same order, and nothing may follow the last one. Names in the data are not
- *    trusted: the directory names are used.
+ * 2. The central directory is parsed in full and is the authority. Each record's name is kept as
+ *    raw bytes. Its text is decoded strictly as UTF-8 when bit 11 is set, otherwise as IBM437,
+ *    and must pass [ArchiveEntryPath]. Entry count, sizes and local-header offsets are checked.
+ *    Encrypted entries, unsupported compression, and ZIP64 are refused.
+ * 3. Each entry is read at its own local-header offset from the directory record. The local
+ *    header's raw name must equal the directory's raw name, and the measured data size must equal
+ *    the directory's size. A swapped or reordered record therefore reads its own entry's data.
  * [ArchiveLimits] are checked on the entry count and folder depth from the directory, and on the
  * bytes read while streaming.
  *
@@ -80,13 +80,20 @@ object ZipBrowse {
     private const val EOCD_MIN_BYTES = 22
     private const val EOCD_MAX_TAIL = EOCD_MIN_BYTES + 65_535
     private const val CEN_HEADER_BYTES = 46
+    private const val LOCAL_HEADER_BYTES = 30
     private const val MAX_DIRECTORY_BYTES = 16 * 1024 * 1024
     private const val FLAG_ENCRYPTED = 0x0001
     private const val FLAG_UTF8 = 0x0800
     private val IBM437: Charset = Charset.forName("IBM437")
 
-    /** One record from the central directory. */
-    private class DirEntry(val path: String, val isDirectory: Boolean, val size: Long)
+    /** One record from the central directory. [rawName] is the name exactly as stored. */
+    private class DirEntry(
+        val path: String,
+        val isDirectory: Boolean,
+        val size: Long,
+        val rawName: ByteArray,
+        val localOffset: Long,
+    )
 
     private class Directory(val entries: List<DirEntry>)
 
@@ -204,25 +211,34 @@ object ZipBrowse {
             val nameLen = u16(cen, pos + 28)
             val extraLen = u16(cen, pos + 30)
             val commentLen = u16(cen, pos + 32)
+            val localOffset = u32(cen, pos + 42)
             val recordEnd = pos + CEN_HEADER_BYTES + nameLen + extraLen + commentLen
             if (recordEnd > cen.size) return DirectoryResult.Refused("The ZIP directory is damaged.")
+            if (localOffset >= cenOffset) return DirectoryResult.Refused("The ZIP directory is damaged.")
             if ((flags and FLAG_ENCRYPTED) != 0) return DirectoryResult.Refused("Encrypted ZIP entries are not supported.")
             if (method != 0 && method != 8) {
                 return DirectoryResult.Refused("An entry uses a compression method this app cannot read.")
             }
-            val rawName = decodeName(cen, pos + CEN_HEADER_BYTES, nameLen, (flags and FLAG_UTF8) != 0)
+            val rawName = cen.copyOfRange(pos + CEN_HEADER_BYTES, pos + CEN_HEADER_BYTES + nameLen)
+            val text = decodeName(rawName, (flags and FLAG_UTF8) != 0)
                 ?: return DirectoryResult.Refused("An entry name is not valid UTF-8.")
-            val check = ArchiveEntryPath.check(rawName)
+            val check = ArchiveEntryPath.check(text)
             if (check is ArchiveEntryPath.Result.Refused) {
-                return DirectoryResult.Refused("Entry \"$rawName\" refused: ${check.reason}")
+                return DirectoryResult.Refused("Entry \"$text\" refused: ${check.reason}")
             }
             val components = (check as ArchiveEntryPath.Result.Accepted).components
-            val isDirectory = rawName.endsWith("/")
+            val isDirectory = text.endsWith("/")
             val depth = if (isDirectory) components.size else components.size - 1
             limits.violation(entries = k + 1, depth = depth, totalBytes = 0)?.let {
                 return DirectoryResult.Refused(it)
             }
-            entries += DirEntry(components.joinToString("/"), isDirectory, if (isDirectory) 0L else uncompressed)
+            entries += DirEntry(
+                path = components.joinToString("/"),
+                isDirectory = isDirectory,
+                size = if (isDirectory) 0L else uncompressed,
+                rawName = rawName,
+                localOffset = localOffset,
+            )
             pos = recordEnd
         }
         if (pos != cen.size) return DirectoryResult.Refused("The ZIP directory is damaged.")
@@ -230,16 +246,16 @@ object ZipBrowse {
     }
 
     /**
-     * Decodes one directory name. With the UTF-8 flag it must be valid UTF-8, or null is returned.
-     * Without the flag it is IBM437, which maps every byte, so it never fails.
+     * Decodes one name. With the UTF-8 flag it must be valid UTF-8, or null is returned. Without
+     * the flag it is IBM437, which maps every byte, so it never fails.
      */
-    private fun decodeName(b: ByteArray, at: Int, count: Int, utf8: Boolean): String? {
-        if (!utf8) return String(b, at, count, IBM437)
+    private fun decodeName(raw: ByteArray, utf8: Boolean): String? {
+        if (!utf8) return String(raw, IBM437)
         val decoder = Charsets.UTF_8.newDecoder()
             .onMalformedInput(CodingErrorAction.REPORT)
             .onUnmappableCharacter(CodingErrorAction.REPORT)
         return try {
-            decoder.decode(ByteBuffer.wrap(b, at, count)).toString()
+            decoder.decode(ByteBuffer.wrap(raw)).toString()
         } catch (e: CharacterCodingException) {
             null
         }
@@ -248,10 +264,10 @@ object ZipBrowse {
     private class Walk(val totalBytes: Long, val refusal: ZipListResult.Refused?)
 
     /**
-     * Reads the archive from the start, one entry at a time, and checks each entry against the
-     * central directory. The path, folder flag and size come from the directory; the names inside
-     * the entry data are not used. [onEntry] receives the info and, for [target], its bytes (null
-     * when they exceed [captureCap]); it returns a reason to stop the job, or null to continue.
+     * Reads each directory entry at its own local-header offset. The local header's raw name must
+     * equal the directory's, and the data must measure the directory's size. [onEntry] receives the
+     * info and, for [target], its bytes (null when they exceed [captureCap]); it returns a reason
+     * to stop the job, or null to continue.
      */
     private fun walk(
         source: ZipSource,
@@ -261,41 +277,43 @@ object ZipBrowse {
         captureCap: Int,
         onEntry: (ZipEntryInfo, ByteArray?) -> String?,
     ): Walk {
-        var count = 0
         var total = 0L
         val buffer = ByteArray(COPY_BUFFER_BYTES)
-        source.open(0).use { raw ->
-            val buffered = BufferedInputStream(raw)
-            if (!hasZipStart(buffered)) {
-                return Walk(0L, ZipListResult.Refused(null, "This file is not a ZIP archive."))
+        for ((index, want) in expected.withIndex()) {
+            val path = want.path
+            val depth = if (want.isDirectory) pathSegments(path) else pathSegments(path) - 1
+            limits.violation(entries = index + 1, depth = depth, totalBytes = total)?.let {
+                return Walk(total, ZipListResult.Refused(path, it))
             }
+            val mismatch = ZipListResult.Refused(path, "The archive contents do not match its directory.")
+            val keep = target != null && path == target
+            val captured = if (keep) ByteArrayOutputStream() else null
+            var overCap = false
+            var size = 0L
             try {
-                // IBM437 decodes every byte, so ZipInputStream cannot fail on a name. Names read
-                // from the data are not used anyway: the central directory is the authority.
-                ZipInputStream(buffered, IBM437).use { zip ->
-                    while (true) {
-                        zip.nextEntry ?: break
-                        count += 1
-                        if (count > expected.size) {
-                            return Walk(total, ZipListResult.Refused(null, "The archive has more entries than its directory lists."))
-                        }
-                        val want = expected[count - 1]
-                        val path = want.path
-                        val depth = if (want.isDirectory) pathSegments(path) else pathSegments(path) - 1
-                        limits.violation(entries = count, depth = depth, totalBytes = total)?.let {
-                            return Walk(total, ZipListResult.Refused(path, it))
-                        }
+                source.open(want.localOffset).use { raw ->
+                    val head = ByteArray(LOCAL_HEADER_BYTES)
+                    if (readFully(raw, head, LOCAL_HEADER_BYTES) != LOCAL_HEADER_BYTES || !isSig(head, 0, 3, 4)) {
+                        return Walk(total, mismatch)
+                    }
+                    val nameLen = u16(head, 26)
+                    val extraLen = u16(head, 28)
+                    val rest = ByteArray(nameLen + extraLen)
+                    if (readFully(raw, rest, rest.size) != rest.size) return Walk(total, mismatch)
+                    if (!rest.copyOfRange(0, nameLen).contentEquals(want.rawName)) return Walk(total, mismatch)
 
-                        val keep = target != null && path == target
-                        val captured = if (keep) ByteArrayOutputStream() else null
-                        var overCap = false
-                        var size = 0L
+                    // Replay the local header to ZipInputStream, followed by the entry data.
+                    val replay = SequenceInputStream(ByteArrayInputStream(head + rest), raw)
+                    // IBM437 decodes every byte, so ZipInputStream cannot fail on a name. The names
+                    // it reports are not used: the directory record and its raw name are the authority.
+                    ZipInputStream(replay, IBM437).use { zip ->
+                        if (zip.nextEntry == null) return Walk(total, mismatch)
                         while (true) {
                             val n = zip.read(buffer)
                             if (n < 0) break
                             size += n
                             total += n
-                            limits.violation(entries = count, depth = depth, totalBytes = total)?.let {
+                            limits.violation(entries = index + 1, depth = depth, totalBytes = total)?.let {
                                 return Walk(total, ZipListResult.Refused(path, it))
                             }
                             if (captured != null && !overCap) {
@@ -303,44 +321,29 @@ object ZipBrowse {
                                 else captured.write(buffer, 0, n)
                             }
                         }
-                        if (size != want.size) {
-                            return Walk(total, ZipListResult.Refused(path, "The archive contents do not match its directory."))
-                        }
-                        val bytes = when {
-                            captured == null -> null
-                            overCap -> null
-                            else -> captured.toByteArray()
-                        }
-                        onEntry(ZipEntryInfo(path, want.isDirectory, size), bytes)?.let {
-                            return Walk(total, ZipListResult.Refused(path, it))
-                        }
                     }
                 }
             } catch (e: ZipException) {
                 return Walk(total, ZipListResult.Refused(null, "The archive is damaged or not a ZIP file."))
             } catch (e: IllegalArgumentException) {
-                // ZipInputStream rejects some name encodings it cannot decode. Refuse, do not throw.
                 return Walk(total, ZipListResult.Refused(null, "The archive uses names this app cannot read."))
             } catch (e: IOException) {
                 return Walk(total, ZipListResult.Refused(null, "The archive could not be read to the end."))
             }
-        }
-        if (count != expected.size) {
-            return Walk(total, ZipListResult.Refused(null, "The archive is incomplete: it has fewer entries than its directory lists."))
+            if (size != want.size) return Walk(total, mismatch)
+            val bytes = when {
+                captured == null -> null
+                overCap -> null
+                else -> captured.toByteArray()
+            }
+            onEntry(ZipEntryInfo(path, want.isDirectory, size), bytes)?.let {
+                return Walk(total, ZipListResult.Refused(path, it))
+            }
         }
         return Walk(total, null)
     }
 
     private fun pathSegments(path: String): Int = if (path.isEmpty()) 0 else path.count { it == '/' } + 1
-
-    /** True when the stream starts with a local-file header (PK 3 4) or an empty archive's end record. */
-    private fun hasZipStart(stream: BufferedInputStream): Boolean {
-        stream.mark(4)
-        val head = ByteArray(4)
-        val read = readFully(stream, head, 4)
-        stream.reset()
-        return read == 4 && (isSig(head, 0, 3, 4) || isSig(head, 0, 5, 6))
-    }
 
     /** Reads [count] bytes at [offset], or null if the source ends early. */
     private fun readAt(source: ZipSource, offset: Long, count: Int): ByteArray? = try {
