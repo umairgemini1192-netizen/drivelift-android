@@ -49,6 +49,21 @@ class Graph(app: Application) {
     /** Reads one file's trash state back from MediaStore after a trash request. Replaced in tests. */
     var trashState: (android.content.ContentResolver, android.net.Uri) -> com.drivelift.app.data.TrashState =
         { resolver, uri -> com.drivelift.app.data.queryTrashState(resolver, uri) }
+    /**
+     * Sets a phone file's name (rename, issue #42). Throws SecurityException when DriveLift does
+     * not own the file and Android's write consent is needed first. Replaced in tests.
+     */
+    var renameMedia: (android.content.ContentResolver, android.net.Uri, String) -> Unit =
+        { resolver, uri, name -> com.drivelift.app.data.updateDisplayName(resolver, uri, name) }
+    /** Reads a phone file's name back from MediaStore after a rename; null if it cannot. Replaced in tests. */
+    var mediaName: (android.content.ContentResolver, android.net.Uri) -> String? =
+        { resolver, uri -> com.drivelift.app.data.queryDisplayName(resolver, uri) }
+    /** Builds Android's write-consent request for files DriveLift does not own. Replaced in tests. */
+    var writeRequest: (android.content.ContentResolver, List<android.net.Uri>) -> android.app.PendingIntent =
+        { resolver, uris -> android.provider.MediaStore.createWriteRequest(resolver, uris) }
+    /** Names of the files MediaStore lists in a folder ([relativePath]), for the rename collision check. */
+    var folderNames: (android.content.ContentResolver, String) -> List<String> =
+        { resolver, path -> com.drivelift.app.data.queryFolderNames(resolver, path) }
 
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
