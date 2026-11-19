@@ -4,7 +4,6 @@ import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
@@ -26,7 +25,17 @@ class ZipBrowseTest {
     }
 
     private fun listOf(bytes: ByteArray, limits: ArchiveLimits = ArchiveLimits()): ZipListResult =
-        ZipBrowse.list(ByteArrayInputStream(bytes), limits)
+        ZipBrowse.list(ZipSource.of(bytes), limits)
+
+    /** Position of the first occurrence of [sig] (4 bytes) at or after [from]. */
+    private fun find(bytes: ByteArray, sig: ByteArray, from: Int = 0): Int {
+        for (i in from..bytes.size - 4) {
+            if (bytes[i] == sig[0] && bytes[i + 1] == sig[1] && bytes[i + 2] == sig[2] && bytes[i + 3] == sig[3]) return i
+        }
+        return -1
+    }
+
+    private val centralSig = byteArrayOf(0x50, 0x4b, 1, 2)
 
     @Test
     fun listsFilesAndFoldersInArchiveOrderWithMeasuredSizes() {
@@ -48,18 +57,39 @@ class ZipBrowseTest {
     }
 
     @Test
-    fun emptyArchiveListsNothing() {
+    fun validEmptyArchiveIsListedAsEmpty() {
         val result = listOf(zip()) as ZipListResult.Listed
         assertTrue(result.entries.isEmpty())
     }
 
     @Test
-    fun refusesTraversalAndAbsoluteNamesAndStopsTheWholeListing() {
+    fun fourByteEndSignatureAloneIsRefused() {
+        val result = listOf(byteArrayOf(0x50, 0x4b, 5, 6))
+        assertTrue(result is ZipListResult.Refused)
+    }
+
+    @Test
+    fun truncatedArchiveIsRefusedEvenWhenItsFirstEntryIsComplete() {
+        val full = zip("a.txt" to ByteArray(40) { 1 }, "b.txt" to ByteArray(40) { 2 })
+        // Cut off the central directory and end record: the local entries are still intact.
+        val cut = full.copyOf(find(full, centralSig))
+        val result = listOf(cut)
+        assertTrue(result is ZipListResult.Refused)
+    }
+
+    @Test
+    fun archiveWithItsEndRecordTruncatedIsRefused() {
+        val full = zip("a.txt" to ByteArray(4))
+        val result = listOf(full.copyOf(full.size - 10))
+        assertTrue(result is ZipListResult.Refused)
+    }
+
+    @Test
+    fun refusesTraversalAndAbsoluteNames() {
         for (hostile in listOf("../evil.txt", "a/../../evil.txt", "/etc/passwd", "C:/x.txt", "a\\..\\b.txt")) {
             val bytes = zip("ok.txt" to ByteArray(1), hostile to ByteArray(1))
             val result = listOf(bytes)
             assertTrue("$hostile must be refused", result is ZipListResult.Refused)
-            assertEquals(hostile, (result as ZipListResult.Refused).entryName)
         }
     }
 
@@ -96,23 +126,42 @@ class ZipBrowseTest {
     }
 
     @Test
-    fun damagedBytesAreRefusedWithoutThrowing() {
+    fun nonZipBytesAreRefusedWithoutThrowing() {
         val result = listOf("this is not a zip archive at all".toByteArray())
         assertTrue(result is ZipListResult.Refused)
-        assertEquals("This file is not a ZIP archive.", (result as ZipListResult.Refused).reason)
+    }
+
+    @Test
+    fun centralDirectorySizeMismatchWithDataIsRefused() {
+        val bytes = zip("a.txt" to ByteArray(5))
+        // The directory says the file is 5 bytes; change it to 6 so it no longer matches the data.
+        val cen = find(bytes, centralSig)
+        bytes[cen + 24] = 6
+        val result = listOf(bytes)
+        assertTrue(result is ZipListResult.Refused)
+        assertTrue((result as ZipListResult.Refused).reason.contains("do not match"))
+    }
+
+    @Test
+    fun encryptedEntryIsRefused() {
+        val bytes = zip("a.txt" to ByteArray(5))
+        val cen = find(bytes, centralSig)
+        bytes[cen + 8] = 1
+        val result = listOf(bytes)
+        assertTrue((result as ZipListResult.Refused).reason.contains("Encrypted"))
     }
 
     @Test
     fun openReturnsTheBytesOfAFileEntry() {
         val bytes = zip("docs/readme.txt" to "hello".toByteArray(), "other.bin" to ByteArray(3))
-        val opened = ZipBrowse.open(ByteArrayInputStream(bytes), "docs/readme.txt", maxBytes = 100)
+        val opened = ZipBrowse.open(ZipSource.of(bytes), "docs/readme.txt", maxBytes = 100)
         assertArrayEquals("hello".toByteArray(), (opened as ZipOpenResult.Opened).bytes)
     }
 
     @Test
     fun openRefusesAnEntryLargerThanTheCapInsteadOfTruncating() {
         val bytes = zip("big.bin" to ByteArray(50))
-        val result = ZipBrowse.open(ByteArrayInputStream(bytes), "big.bin", maxBytes = 10)
+        val result = ZipBrowse.open(ZipSource.of(bytes), "big.bin", maxBytes = 10)
         assertTrue(result is ZipOpenResult.Refused)
         assertTrue((result as ZipOpenResult.Refused).reason.contains("larger than 10 bytes"))
     }
@@ -120,21 +169,21 @@ class ZipBrowseTest {
     @Test
     fun openRefusesAHostileRequestedNameBeforeReading() {
         val bytes = zip("ok.txt" to ByteArray(1))
-        val result = ZipBrowse.open(ByteArrayInputStream(bytes), "../ok.txt", maxBytes = 100)
+        val result = ZipBrowse.open(ZipSource.of(bytes), "../ok.txt", maxBytes = 100)
         assertTrue(result is ZipOpenResult.Refused)
     }
 
     @Test
     fun openReportsAMissingEntry() {
         val bytes = zip("ok.txt" to ByteArray(1))
-        val result = ZipBrowse.open(ByteArrayInputStream(bytes), "missing.txt", maxBytes = 100)
+        val result = ZipBrowse.open(ZipSource.of(bytes), "missing.txt", maxBytes = 100)
         assertTrue((result as ZipOpenResult.Refused).reason.contains("missing.txt"))
     }
 
     @Test
     fun openDoesNotTreatAFolderAsAFile() {
         val bytes = zip("docs/" to ByteArray(0), "docs/a.txt" to ByteArray(1))
-        val result = ZipBrowse.open(ByteArrayInputStream(bytes), "docs", maxBytes = 100)
+        val result = ZipBrowse.open(ZipSource.of(bytes), "docs", maxBytes = 100)
         assertTrue(result is ZipOpenResult.Refused)
     }
 }

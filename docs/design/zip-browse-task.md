@@ -7,15 +7,20 @@
 
 ## Scope of this increment
 
-- `ZipBrowse.list` streams a ZIP from an `InputStream` the caller already holds a grant for, and
+- `ZipBrowse.list` reads a ZIP through a `ZipSource` (length plus a stream at any offset) and
   returns every entry (path, folder flag, bytes read). It writes nothing to storage.
+- Integrity (review of 1f12149, VERDICT: CHANGES): the end record must be complete and its
+  directory must sit exactly before it. The central directory is parsed in full and is the
+  authority: entry count, names (through `ArchiveEntryPath`), sizes, encryption, compression
+  method and ZIP64 are checked. The entry data is then read and must match the directory entry
+  by entry, with nothing extra and nothing missing.
 - `ZipBrowse.open` returns the bytes of one named file entry, refusing an entry larger than the
   caller's cap instead of truncating it.
 - Every entry name goes through `ArchiveEntryPath.check`. Any refused name stops the whole job.
 - Every limit in `ArchiveLimits` (entries, folder depth, bytes read) is checked while the entry
   data is read, not from header sizes.
 - A file that does not start with a ZIP signature is refused, because `ZipInputStream` would
-  otherwise report it as an empty archive.
+  otherwise report it as an empty archive. A four-byte end signature alone is refused.
 
 ## Not in this increment (kept for later slices)
 
@@ -33,6 +38,8 @@
 
 ## Validation
 
-- `./gradlew testDebugUnitTest --tests "*ZipBrowseTest*" --tests "*ArchiveEntryPathTest*" --tests "*ScreenshotTest.buildIdentifierIsVisibleInSettings"`
-  on this branch: 22 tests, all passed (13 ZipBrowse, 8 ArchiveEntryPath, 1 build-id).
-- Full `testDebugUnitTest` with screenshots and `assembleDebug`: left to CI, not run locally.
+- Tests for the revised ZIP code were written but NOT run: the PC had about 1.3 GB free and the
+  Kotlin and test JVMs crashed with native out-of-memory before compiling. Earlier revision
+  (1f12149): 22 of 22 passed locally, before the VERDICT fix.
+- CI is the test evidence for this head. Full `testDebugUnitTest` with screenshots and
+  `assembleDebug`: CI only.
