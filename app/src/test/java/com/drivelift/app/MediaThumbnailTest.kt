@@ -32,6 +32,9 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicInteger
 
 /**
@@ -107,6 +110,40 @@ class MediaThumbnailTest {
         assertEquals(1, tries.get())
         assertTrue("The fallback to the original failed: $result", result is SuccessResult)
         assertEquals(Color.BLUE, ((result as SuccessResult).drawable as BitmapDrawable).bitmap.getPixel(0, 0))
+    }
+
+    @Test
+    fun cancellingARequestStopsAndroidsWorkAtOnce() {
+        // Android's thumbnail call blocks until its signal is cancelled, or gives up after 10 s.
+        val started = CountDownLatch(1)
+        val returned = CountDownLatch(1)
+        val signalSeen = AtomicReference<android.os.CancellationSignal>()
+        val loader = loader { _, size, signal ->
+            signalSeen.set(signal)
+            started.countDown()
+            val deadline = System.currentTimeMillis() + 10_000
+            while (!signal.isCanceled && System.currentTimeMillis() < deadline) Thread.sleep(5)
+            returned.countDown()
+            if (signal.isCanceled) throw android.os.OperationCanceledException()
+            bitmap(size.width, Color.RED)
+        }
+        val request = loader.enqueue(request(video))
+        awaitWhilePumping(started, "Android's thumbnail call never started")
+        val cancelledAt = System.currentTimeMillis()
+        // What a cell scrolled out of view does with its request.
+        request.dispose()
+        awaitWhilePumping(returned, "Android's thumbnail call never returned")
+        assertTrue("The signal Android was given was not cancelled", signalSeen.get().isCanceled)
+        val took = System.currentTimeMillis() - cancelledAt
+        assertTrue("Android's call ran on for $took ms after the request was cancelled", took < 2_000)
+    }
+
+    private fun awaitWhilePumping(latch: CountDownLatch, failure: String) {
+        val deadline = System.currentTimeMillis() + 15_000
+        while (!latch.await(10, TimeUnit.MILLISECONDS)) {
+            shadowOf(Looper.getMainLooper()).idle()
+            assertTrue(failure, System.currentTimeMillis() < deadline)
+        }
     }
 
     @Test

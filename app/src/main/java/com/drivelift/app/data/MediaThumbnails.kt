@@ -15,6 +15,7 @@ import coil.fetch.Fetcher
 import coil.request.Options
 import coil.size.pxOrElse
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.InternalCoroutinesApi
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -42,8 +43,15 @@ class MediaThumbnailFetcher(
         val width = options.size.width.pxOrElse { DEFAULT_EDGE_PX }
         val height = options.size.height.pxOrElse { DEFAULT_EDGE_PX }
         val signal = CancellationSignal()
-        // A cell scrolled away cancels its request; that also stops Android's work on it.
-        val handle = currentCoroutineContext()[Job]?.invokeOnCompletion { signal.cancel() }
+        // A cell scrolled away cancels its request, and that must stop Android's work at once.
+        // The handler runs when cancelling starts (onCancelling) on the thread that cancels,
+        // not when the job completes: a cancelled job only completes after the blocking call
+        // below returns, which would be too late. invokeImmediately covers a request that was
+        // cancelled before this point.
+        @OptIn(InternalCoroutinesApi::class)
+        val handle = currentCoroutineContext()[Job]?.invokeOnCompletion(onCancelling = true, invokeImmediately = true) {
+            signal.cancel()
+        }
         val bitmap = try {
             load(uri, Size(width, height), signal)
         } catch (e: CancellationException) {
