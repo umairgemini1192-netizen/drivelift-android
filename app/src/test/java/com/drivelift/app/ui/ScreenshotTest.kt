@@ -2797,10 +2797,19 @@ class ScreenshotTest {
                 scrollStorageTo(hasTestTag("drive-folder-list"))
                 compose.onNodeWithText("Camera uploads").press()
                 waitFor("Back to My Drive")
-                compose.onNodeWithText("My Drive / Camera uploads").assertExists()
+                compose.onNodeWithText("Inside Camera uploads").assertExists()
                 compose.onNodeWithText("Files directly in Camera uploads").assertExists()
                 compose.onNodeWithText("2026").assertExists()
+                // The summary above names the open folder and its totals.
                 scrollStorageTo(hasText("Google Drive folders"))
+                compose.onNodeWithText("My Drive / Camera uploads").assertExists()
+                // Back on the list returns to My Drive.
+                scrollStorageTo(hasTestTag("drive-folder-list"))
+                compose.onNodeWithText("Back to My Drive").press()
+                settle { currentVm!!.driveFolderOpen.value == null }
+                compose.onNodeWithText("Camera uploads").press()
+                waitFor("Back to My Drive")
+                scrollStorageTo(hasTestTag("drive-folder-list"))
             },
         ) { vm -> AppRoot(vm) }
     }

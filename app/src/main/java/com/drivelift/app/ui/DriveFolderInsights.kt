@@ -71,7 +71,6 @@ internal fun DriveFoldersSummary(
     onStart: () -> Unit,
     onStop: () -> Unit,
     onConnect: () -> Unit,
-    onUp: (String?) -> Unit,
 ) {
     val context = LocalContext.current
     GlassPanel(Modifier.fillMaxWidth().testTag("drive-folders")) {
@@ -130,17 +129,6 @@ internal fun DriveFoldersSummary(
                     val tree = scan.tree
                     val current = openId?.let { tree.folders[it] } ?: tree.root
                     val path = tree.pathTo(current.id)
-                    if (path.size > 1) {
-                        val parent = path[path.size - 2]
-                        TextButton(
-                            onClick = { onUp(if (parent.id == tree.rootId) null else parent.id) },
-                            modifier = Modifier.padding(bottom = Tokens.Tiny),
-                        ) {
-                            Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
-                            Spacer(Modifier.width(Tokens.Small))
-                            Text("Back to ${parent.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        }
-                    }
                     Text(
                         path.joinToString(" / ") { it.name },
                         style = MaterialTheme.typography.titleSmall,
@@ -213,12 +201,13 @@ internal fun DriveFolderList(
     tree: DriveFolderTree,
     openId: String?,
     shown: Int,
-    onOpen: (String) -> Unit,
+    onOpen: (String?) -> Unit,
     onMore: () -> Unit,
 ) {
     val context = LocalContext.current
     val current = openId?.let { tree.folders[it] } ?: tree.root
     val children = tree.childrenOf(current.id)
+    val path = tree.pathTo(current.id)
     GlassPanel(
         Modifier
             .fillMaxWidth()
@@ -226,6 +215,25 @@ internal fun DriveFolderList(
             .testTag("drive-folder-list"),
     ) {
         Column(Modifier.padding(vertical = Tokens.Small)) {
+            // Back sits on the list itself, so it stays in reach while the list is on screen.
+            if (path.size > 1) {
+                val parent = path[path.size - 2]
+                TextButton(
+                    onClick = { onOpen(if (parent.id == tree.rootId) null else parent.id) },
+                    modifier = Modifier.padding(horizontal = Tokens.Small),
+                ) {
+                    Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = null)
+                    Spacer(Modifier.width(Tokens.Small))
+                    Text("Back to ${parent.name}", maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+                Text(
+                    "Inside ${current.name}",
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Tiny),
+                )
+            }
             if (children.isEmpty()) {
                 EmptyLine("No folders inside ${current.name}.")
             }

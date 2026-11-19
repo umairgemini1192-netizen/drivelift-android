@@ -205,7 +205,6 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
                             onStart = vm::startDriveFolderScan,
                             onStop = vm::stopDriveFolderScan,
                             onConnect = { vm.connectDrive(interactive = true) },
-                            onUp = vm::openDriveFolder,
                         )
                     }
                 }
