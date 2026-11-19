@@ -65,7 +65,6 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
-import androidx.compose.ui.test.performScrollToNode
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
@@ -158,6 +157,9 @@ class ScreenshotTest {
 
     @Before
     fun fakeWorkManager() {
+        // The database outlives each test (Graph is one per process): start with no favorites,
+        // so the Favorites entry row never shows in a test that did not ask for it.
+        runBlocking { Graph.get(app).db.favorites().let { dao -> dao.observe().first().forEach { dao.delete(it.id) } } }
         // The app restarts unfinished transfers on launch. Here that must only queue a job in a
         // test WorkManager, which never runs it: nothing may try to upload during a test.
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
@@ -1232,6 +1234,27 @@ class ScreenshotTest {
         ),
     )
 
+    /**
+     * Scrolls the Favorites list until [text] is in its upper half, one item at a time with the
+     * list's own ScrollToIndex action. performScrollToNode ends in an animated scroll, which never
+     * finishes while the test clock is frozen.
+     */
+    private fun scrollFavoritesTo(text: String) {
+        val list = compose.onNodeWithTag("favorites-list")
+        val half = list.fetchSemanticsNode().boundsInRoot.let { it.top + it.height / 2 }
+        for (i in 0 until 40) {
+            val found = compose.onAllNodesWithText(text).fetchSemanticsNodes()
+            if (found.any { it.boundsInRoot.top < half }) return
+            // Past the last item the action refuses the index: the end of the list is reached.
+            val scrolled = runCatching {
+                list.performSemanticsAction(SemanticsActions.ScrollToIndex) { it(i) }
+            }.isSuccess
+            if (!scrolled) break
+            pump(3)
+        }
+        waitFor(text)
+    }
+
     private fun openFavoritesFromPhone() {
         waitFor("Favorites")
         compose.onNodeWithText("Favorites").performClick()
@@ -1261,7 +1284,7 @@ class ScreenshotTest {
             act = {
                 seedMixedFavorites()
                 openFavoritesFromPhone()
-                compose.onNodeWithTag("favorites-list").performScrollToNode(hasText("Their holiday.jpg"))
+                scrollFavoritesTo("Their holiday.jpg")
                 waitFor(com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT)
             },
         ) { vm -> AppRoot(vm) }
@@ -1377,21 +1400,20 @@ class ScreenshotTest {
             act = {
                 seedMixedFavorites()
                 openFavoritesFromPhone()
-                val list = compose.onNodeWithTag("favorites-list")
                 for (reason in listOf(
                     com.drivelift.app.data.FavoriteReasons.MEDIA_GONE,
                     com.drivelift.app.data.FavoriteReasons.DRIVE_TRASHED,
                     com.drivelift.app.data.FavoriteReasons.DRIVE_MISSING,
                     com.drivelift.app.data.FavoriteReasons.OTHER_ACCOUNT,
                 )) {
-                    list.performScrollToNode(hasText(reason))
+                    scrollFavoritesTo(reason)
                     waitFor(reason)
                 }
                 assertTrue("Only the connected account's favorites are looked up", "d9" !in drive.lookedUp)
                 assertTrue(drive.lookedUp.containsAll(listOf("f1", "d2", "binned", "gone")))
 
                 // Remove the missing phone photo: only its row goes; the phone listing is untouched.
-                list.performScrollToNode(hasText("IMG_0999.jpg"))
+                scrollFavoritesTo("IMG_0999.jpg")
                 compose.onAllNodesWithText("Remove").onFirst().press()
                 settle { com.drivelift.app.data.phoneMediaKey(999) !in savedFavoriteIds() }
                 assertEquals(7, savedFavoriteIds().size)
