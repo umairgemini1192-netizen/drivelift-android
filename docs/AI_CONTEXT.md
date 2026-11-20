@@ -77,7 +77,8 @@ These protect the user's files. A change that touches them is high risk and need
    MediaStore URI, name and bytes stay, nothing is copied or deleted, and no Drive copy is
    involved or implied. DriveLift names the files, count, size and destination and asks first;
    files a transfer depends on (`QUEUED`, `UPLOADING`, `UPLOADED`, `VERIFIED`), files whose name
-   is taken in the destination (any letter case) and files already there are left out and named.
+   is taken in the destination (any letter case), files already there and files on another
+   storage volume (`VOLUME_NAME`; a folder move never changes it) are left out and named.
    Transfer rows are read again right before each file, Android's write consent is asked for
    files DriveLift does not own, and each moved file's folder is read back before it counts.
    Duplicate cleanup on the Storage screen (issue #42) is this same user-directed delete: the

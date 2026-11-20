@@ -674,10 +674,10 @@ fun DriveBrowser(
                         OutlinedButton(onClick = { selectedIds = emptySet() }) { Text("Clear") }
                         OutlinedButton(
                             onClick = {
-                                vm.holdForMove(chosen, here.id, here.name)
-                                selectedIds = emptySet()
+                                if (vm.holdForMove(chosen, here.id, here.name)) selectedIds = emptySet()
                             },
-                            enabled = !moving,
+                            // Folders can't be moved yet; with only folders selected there is nothing to hold.
+                            enabled = !moving && chosen.any { !it.isFolder },
                         ) { Text("Move") }
                         IconButton(onClick = { askTrash(chosen) }, modifier = Modifier.size(Tokens.TouchTarget)) {
                             Icon(

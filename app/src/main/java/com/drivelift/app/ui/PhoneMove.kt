@@ -30,7 +30,7 @@ import com.drivelift.app.data.PhoneMovePlan
 internal fun PhoneMoveDialog(plan: PhoneMovePlan, working: Boolean, onConfirm: () -> Unit, onDismiss: () -> Unit) {
     val context = LocalContext.current
     val count = plan.eligible.size
-    val leftOut = plan.heldByTransfer.size + plan.nameTaken.size + plan.alreadyThere.size
+    val leftOut = plan.heldByTransfer.size + plan.nameTaken.size + plan.alreadyThere.size + plan.otherVolume.size
     AlertDialog(
         onDismissRequest = onDismiss,
         modifier = Modifier.testTag("phone-move"),
@@ -75,6 +75,15 @@ internal fun PhoneMoveDialog(plan: PhoneMovePlan, working: Boolean, onConfirm: (
                         modifier = Modifier.padding(top = Tokens.Medium),
                     )
                     FileNames(plan.nameTaken)
+                }
+                if (plan.otherVolume.isNotEmpty()) {
+                    Text(
+                        "Left in place because they are on other storage, such as an SD card, and ${plan.toName} " +
+                            "is not. Android moves files only between folders on the same storage:",
+                        style = MaterialTheme.typography.bodyMedium,
+                        modifier = Modifier.padding(top = Tokens.Medium),
+                    )
+                    FileNames(plan.otherVolume)
                 }
                 if (plan.alreadyThere.isNotEmpty()) {
                     Text(

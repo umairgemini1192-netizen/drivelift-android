@@ -290,13 +290,18 @@ so the order is the same every time.
 
 ## Moving phone files to another phone folder
 
+In Drive, Move holds only files: selected folders stay where they are and a message names how
+many; with only folders selected, Move is off, and a selection with no files never empties the pill.
+
 In a Phone folder, select files and tap the move-to-folder button beside the trash. The files go
 into the move pill at the bottom of the Phone screens. Open the destination folder and tap **Move
 here**; DriveLift names the files, their size and the destination and asks first. Only the folder
 changes (MediaStore `RELATIVE_PATH`): each file keeps its address, name, content and date, and
 nothing in Google Drive changes. Left in place and named: files a transfer still depends on,
-files whose name is already in the destination (DriveLift never lets Android rename them), and
-files already there. Transfers are read again right before each file. For files DriveLift does
+files whose name is already in the destination (DriveLift never lets Android rename them), files
+already there, and files on other storage (an SD card or USB drive when the destination is on the
+phone's own storage, or the other way round), because Android keeps a file on its own storage
+and would put it in a same-named folder there. Transfers are read again right before each file. For files DriveLift does
 not own, Android asks once for all of them; a refusal moves none of them. Each moved file's folder
 is read back, and a file Android put anywhere else is reported as not moved. Files that failed
 stay in the pill for another try.

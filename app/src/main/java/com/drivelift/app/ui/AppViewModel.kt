@@ -1200,8 +1200,15 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     val driveMoveClip = MutableStateFlow<com.drivelift.app.data.DriveMoveClip?>(null)
 
     /** Puts [files] (folders are left out) from folder [fromFolderId] in the move pill. */
-    fun holdForMove(files: List<com.drivelift.app.drive.DriveFile>, fromFolderId: String, fromName: String) {
-        driveMoveClip.value = com.drivelift.app.data.holdForMove(files, fromFolderId, fromName, prefs.accountEmail)
+    /**
+     * Puts the selected files in the move pill and names any folders left out. A selection with no
+     * files keeps whatever already waits in the pill. True when the pill now holds the selection.
+     */
+    fun holdForMove(files: List<com.drivelift.app.drive.DriveFile>, fromFolderId: String, fromName: String): Boolean {
+        com.drivelift.app.data.holdNotice(files)?.let { messages.tryEmit(it) }
+        val clip = com.drivelift.app.data.holdForMove(files, fromFolderId, fromName, prefs.accountEmail) ?: return false
+        driveMoveClip.value = clip
+        return true
     }
 
     /** Empties the move pill. Nothing on Drive changes. */
@@ -1303,14 +1310,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         phoneMoveClip.value = clip
         if (clip == null) return null
         val dest = media.value.firstOrNull { it.bucketId == toBucketId } ?: return null
-        val listed = media.value.filter { it.bucketId == toBucketId && it.relativePath == dest.relativePath }.map { it.name }
+        val listed = media.value.filter { it.bucketId == toBucketId && it.relativePath == dest.relativePath && it.volume == dest.volume }.map { it.name }
         val resolver = getApplication<android.app.Application>().contentResolver
         val others = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
             graph.folderNames(resolver, dest.relativePath)
         }
         val rows = graph.db.transfers().byMediaUris(clip.items.map { it.uri.toString() })
         return com.drivelift.app.data.planPhoneMove(
-            clip.items, rows, toBucketId, dest.relativePath, dest.bucketName, (listed + others).distinct(),
+            clip.items, rows, toBucketId, dest.relativePath, dest.bucketName, (listed + others).distinct(), dest.volume,
         )
     }
 

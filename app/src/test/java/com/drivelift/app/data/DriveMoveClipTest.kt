@@ -75,4 +75,15 @@ class DriveMoveClipTest {
         val renamed = file("b").copy(name = "Beach.jpg")
         assertEquals("Beach.jpg", held.renamed(renamed).files[1].name)
     }
+
+    @Test
+    fun foldersLeftOutOfMoveAreNamed() {
+        assertNull(holdNotice(listOf(file("a"), file("b"))))
+        assertEquals("Folders can't be moved yet. Select files to move.", holdNotice(listOf(folder("f"), folder("g"))))
+        assertEquals("1 folder stays where it is; folders can't be moved yet.", holdNotice(listOf(file("a"), folder("f"))))
+        assertEquals(
+            "2 folders stay where they are; folders can't be moved yet.",
+            holdNotice(listOf(folder("f"), file("a"), folder("g"), file("b"), file("c"))),
+        )
+    }
 }

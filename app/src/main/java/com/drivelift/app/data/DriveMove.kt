@@ -135,3 +135,18 @@ fun holdForMove(selected: List<DriveFile>, fromFolderId: String, fromName: Strin
     if (files.isEmpty()) return null
     return DriveMoveClip(files, fromFolderId, fromName, account?.takeIf { it.isNotBlank() })
 }
+
+/**
+ * What to tell the user when Move leaves folders of [selected] out of the pill, or null when the
+ * selection has no folders. Folders are never moved, so they are named rather than dropped silently.
+ */
+fun holdNotice(selected: List<DriveFile>): String? {
+    val folders = selected.count { it.isFolder }
+    if (folders == 0) return null
+    val files = selected.size - folders
+    return when {
+        files == 0 -> "Folders can't be moved yet. Select files to move."
+        folders == 1 -> "1 folder stays where it is; folders can't be moved yet."
+        else -> "$folders folders stay where they are; folders can't be moved yet."
+    }
+}

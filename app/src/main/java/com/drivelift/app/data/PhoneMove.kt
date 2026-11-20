@@ -10,7 +10,10 @@ package com.drivelift.app.data
  * - files a transfer still depends on (QUEUED, UPLOADING, UPLOADED, VERIFIED), as for trash and rename;
  * - files whose name is already taken in the destination folder (Android would otherwise rename them
  *   itself), including a second selected file with the same name as another;
- * - files already in the destination folder.
+ * - files already in the destination folder;
+ * - files on another storage volume (an SD card or USB drive versus the phone's own storage):
+ *   changing RELATIVE_PATH keeps a file on its own volume, so it would land in a same-named
+ *   folder there instead of the one the user chose.
  */
 data class PhoneMovePlan(
     /** Files that will be moved, in the order the user chose them. */
@@ -19,10 +22,14 @@ data class PhoneMovePlan(
     val nameTaken: List<MediaItem>,
     /** Files that are already in the destination folder. */
     val alreadyThere: List<MediaItem>,
+    /** Files on a different storage volume from the destination folder. */
+    val otherVolume: List<MediaItem> = emptyList(),
     val toBucketId: Long,
     /** The destination as MediaStore names it ("Pictures/Holiday/"), and its own name. */
     val toRelativePath: String,
     val toName: String,
+    /** The destination folder's storage volume. */
+    val toVolume: String = android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY,
 ) {
     val totalBytes: Long get() = eligible.sumOf { it.size }
 }
@@ -35,6 +42,7 @@ fun planPhoneMove(
     toName: String,
     /** Names already in the destination folder (any type MediaStore shows DriveLift there). */
     destinationNames: Collection<String>,
+    toVolume: String = android.provider.MediaStore.VOLUME_EXTERNAL_PRIMARY,
 ): PhoneMovePlan {
     val held = transfers.filter { it.status in TRANSFER_HOLDS_FILE }.map { it.mediaUri }.toSet()
     val taken = destinationNames.map { it.lowercase() }.toMutableSet()
@@ -42,8 +50,10 @@ fun planPhoneMove(
     val heldByTransfer = ArrayList<MediaItem>()
     val nameTaken = ArrayList<MediaItem>()
     val alreadyThere = ArrayList<MediaItem>()
+    val otherVolume = ArrayList<MediaItem>()
     for (item in items) {
         when {
+            item.volume != toVolume -> otherVolume += item
             item.relativePath == toRelativePath -> alreadyThere += item
             item.uri.toString() in held -> heldByTransfer += item
             // add() is false when the name is taken there, or by a file already in this batch.
@@ -51,7 +61,9 @@ fun planPhoneMove(
             else -> eligible += item
         }
     }
-    return PhoneMovePlan(eligible, heldByTransfer, nameTaken, alreadyThere, toBucketId, toRelativePath, toName)
+    return PhoneMovePlan(
+        eligible, heldByTransfer, nameTaken, alreadyThere, otherVolume, toBucketId, toRelativePath, toName, toVolume,
+    )
 }
 
 /** What happened to each file of a confirmed phone move. */
@@ -98,10 +110,10 @@ data class PhoneMoveClip(
 
     /**
      * The pill after a confirmed move of [plan]: moved files leave it, and so do files no move can
-     * take (held by a transfer, a name taken, already there). Files that failed stay for a retry.
+     * take (held by a transfer, a name taken, already there, on another storage volume). Files that failed stay for a retry.
      */
     fun afterMove(plan: PhoneMovePlan, outcome: PhoneMoveOutcome): PhoneMoveClip? {
-        val done = (outcome.moved + outcome.skipped + plan.heldByTransfer + plan.nameTaken + plan.alreadyThere)
+        val done = (outcome.moved + outcome.skipped + plan.heldByTransfer + plan.nameTaken + plan.alreadyThere + plan.otherVolume)
             .map { it.id }.toSet()
         return without(done)
     }

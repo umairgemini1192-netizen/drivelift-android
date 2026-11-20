@@ -12,10 +12,13 @@ import org.robolectric.RobolectricTestRunner
 /** Moving phone files between phone folders: what the plan, the pill and the outcome hold. */
 @RunWith(RobolectricTestRunner::class)
 class PhoneMoveTest {
-    private fun item(id: Long, name: String = "IMG_$id.jpg", path: String = "DCIM/Camera/", size: Long = 100) = MediaItem(
+    private fun item(
+        id: Long, name: String = "IMG_$id.jpg", path: String = "DCIM/Camera/", size: Long = 100,
+        volume: String = "external_primary",
+    ) = MediaItem(
         id = id, uri = Uri.parse("content://media/external/images/media/$id"), name = name, size = size,
         mime = "image/jpeg", dateTakenMs = 0, dateModifiedMs = 0, bucketId = 1, bucketName = "Camera",
-        relativePath = path, isVideo = false, durationMs = 0,
+        relativePath = path, isVideo = false, durationMs = 0, volume = volume,
     )
 
     private fun row(id: Long, status: TransferStatus) = TransferEntity(
@@ -88,5 +91,22 @@ class PhoneMoveTest {
             PhoneMoveOutcome("Holiday", listOf(item(1)), listOf(item(2) to "busy"), listOf(item(3))).message(),
         )
         assertEquals("Nothing was moved.", PhoneMoveOutcome("Holiday", emptyList(), emptyList()).message())
+    }
+
+    @Test
+    fun filesOnOtherStorageStayAndAreNamed() {
+        // RELATIVE_PATH keeps a file on its own volume, so an SD-card file would land in the SD card's
+        // own Pictures/Holiday/, not the folder the user chose; same path elsewhere is not "already there".
+        val p = plan(
+            listOf(item(1), item(2, volume = "1234-abcd"), item(3, path = "Pictures/Holiday/", volume = "1234-abcd")),
+        )
+        assertEquals(listOf(1L), p.eligible.map { it.id })
+        assertEquals(listOf(2L, 3L), p.otherVolume.map { it.id })
+        assertTrue(p.alreadyThere.isEmpty())
+        val sd = planPhoneMove(listOf(item(1), item(2, volume = "1234-abcd")), emptyList(), 2, "Pictures/Holiday/", "Holiday", emptyList(), "1234-abcd")
+        assertEquals(listOf(2L), sd.eligible.map { it.id })
+        assertEquals(listOf(1L), sd.otherVolume.map { it.id })
+        val clip = holdPhoneForMove(listOf(item(1), item(2, volume = "1234-abcd")), 1, "Camera")!!
+        assertNull(clip.afterMove(p.copy(eligible = emptyList()), PhoneMoveOutcome("Holiday", listOf(item(1)), emptyList())))
     }
 }
