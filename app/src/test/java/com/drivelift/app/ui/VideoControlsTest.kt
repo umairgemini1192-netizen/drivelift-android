@@ -119,13 +119,15 @@ class VideoControlsTest {
             compose.onNodeWithContentDescription("Pause").performClick()
             compose.onNodeWithContentDescription("Speed 0.5x").performClick()
             compose.onNodeWithContentDescription("Speed 1x").performClick()
-            compose.onNodeWithContentDescription("Speed 2x").performClick()
+            // 0.75x rather than 2x: on this 320 dp screen 2x sits past the edge of the scrolling
+            // Speed line (reachability is checked in the compact test), and a click there misses.
+            compose.onNodeWithContentDescription("Speed 0.75x").performClick()
             compose.onNodeWithContentDescription("Rotate the video").performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
             assertEquals(1, toggles)
-            assertEquals(listOf(0.5f, 1f, 2f), speeds)
+            assertEquals(listOf(0.5f, 1f, 0.75f), speeds)
             assertEquals(1, rotations)
             assertEquals(1, captures)
         }
