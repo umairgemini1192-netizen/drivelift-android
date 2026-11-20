@@ -517,6 +517,7 @@ private fun ControlGroup(
  * A tool group whose buttons wrap onto a second line when a large text size leaves no room for
  * them all side by side. Each button keeps its full touch target (rule 7, issue #32).
  */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
 private fun WrappingControlGroup(
     label: String,
