@@ -17,6 +17,7 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import com.drivelift.app.data.frameFileName
 import org.junit.Assert.assertEquals
@@ -154,6 +155,11 @@ class VideoControlsTest {
                     "Step back about one frame", "Step forward about one frame",
                 ) + VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }) {
                     val node = compose.onNodeWithContentDescription(label)
+                    // The speed choices scroll sideways on a narrow screen: each must be reachable.
+                    if (label.startsWith("Speed ")) {
+                        node.performScrollTo()
+                        pump()
+                    }
                     node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
                     val bounds = node.fetchSemanticsNode().boundsInRoot
                     org.junit.Assert.assertTrue("$label is cut off ($bounds, screen $rootWidth)", bounds.right <= rootWidth + 1f)

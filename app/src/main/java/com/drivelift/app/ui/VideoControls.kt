@@ -16,6 +16,8 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -26,6 +28,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.outlined.Forward10
+import androidx.compose.material.icons.outlined.FitScreen
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
@@ -311,43 +314,51 @@ internal fun VideoControls(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
             )
-            // Tool groups. Each group keeps its own label and stays together; a group that does not
-            // fit beside the others moves to the next line, and its own buttons wrap if needed.
+            // Tool groups, each with its name beside it. Speed has a line of its own and scrolls
+            // sideways if its choices do not fit; Step and Picture share the next line and wrap
+            // onto two on a narrow phone or with large text. Kept compact so the panel does not
+            // cover more of the picture than it must.
+            ControlGroup("Speed", "video-speed", Modifier.fillMaxWidth().padding(top = Tokens.Small)) {
+                Row(
+                    Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    for (speed in VIDEO_SPEEDS) {
+                        SpeedChoice(speed, selected = speed == state.speed, onClick = { onSpeed(speed) })
+                    }
+                }
+            }
             FlowRow(
                 Modifier.fillMaxWidth().padding(top = Tokens.Small),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Section),
                 verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
-                ControlGroup("Speed", "video-speed") {
-                    for (speed in VIDEO_SPEEDS) {
-                        SpeedChoice(speed, selected = speed == state.speed, onClick = { onSpeed(speed) })
-                    }
-                }
                 // Small steps of about one frame. Shown while playing too: a step pauses the video
                 // first (issue #29). Exact for constant frame rate; variable-rate or unknown-rate
                 // files can occasionally repeat or skip a frame, so the group says "step", not
                 // "frame" (docs/HOW_IT_WORKS.md).
                 ControlGroup("Step", "frame-step") {
-                    PlayerPill(onClick = { onStepFrame(false) }, description = "Step back about one frame") {
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                        Text("Back")
-                    }
-                    PlayerPill(onClick = { onStepFrame(true) }, description = "Step forward about one frame") {
-                        Text("Forward")
-                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
-                    }
+                    PlayerWell(
+                        onClick = { onStepFrame(false) },
+                        icon = Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                        description = "Step back about one frame",
+                    )
+                    PlayerWell(
+                        onClick = { onStepFrame(true) },
+                        icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                        description = "Step forward about one frame",
+                    )
                 }
                 ControlGroup("Picture", "video-picture") {
-                    PlayerPill(onClick = onRotate, description = "Rotate the video") {
-                        Icon(Icons.Outlined.ScreenRotation, contentDescription = null)
-                        Text("Rotate", modifier = Modifier.padding(start = Tokens.Tiny))
-                    }
-                    PlayerPill(onClick = onCapture, description = "Save this frame as a photo", enabled = !state.capturing) {
-                        Icon(Icons.Outlined.PhotoCamera, contentDescription = null)
-                        Text("Save frame", modifier = Modifier.padding(start = Tokens.Tiny))
-                    }
+                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the video")
+                    PlayerWell(
+                        onClick = onCapture,
+                        icon = Icons.Outlined.PhotoCamera,
+                        description = "Save this frame as a photo",
+                        enabled = !state.capturing,
+                    )
                     if (state.zoomed) {
-                        PlayerPill(onClick = onFit, description = "Fit the whole picture") { Text("Fit") }
+                        PlayerWell(onClick = onFit, icon = Icons.Outlined.FitScreen, description = "Fit the whole picture")
                     }
                 }
             }
@@ -440,21 +451,25 @@ internal fun VideoControls(
     }
 }
 
-/** A named group of controls: a small label above its buttons, which wrap if the line is full. */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+/** A named group of controls: its name, then its buttons on the same line. */
 @Composable
-private fun ControlGroup(label: String, tag: String, content: @Composable () -> Unit) {
-    Column(Modifier.testTag(tag)) {
+private fun ControlGroup(
+    label: String,
+    tag: String,
+    modifier: Modifier = Modifier,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Row(
+        modifier.testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
         Text(
             label,
-            style = MaterialTheme.typography.labelSmall,
+            style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(bottom = Tokens.Tiny),
         )
-        FlowRow(
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-        ) { content() }
+        content()
     }
 }
 
@@ -485,29 +500,6 @@ private fun SpeedChoice(speed: Float, selected: Boolean, onClick: () -> Unit) {
     ) {
         Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
     }
-}
-
-/** A capsule pill: flat well fill, thin edge, coral content, at least 48 dp tall. */
-@Composable
-private fun PlayerPill(
-    onClick: () -> Unit,
-    description: String,
-    enabled: Boolean = true,
-    content: @Composable RowScope.() -> Unit,
-) {
-    Button(
-        onClick = onClick,
-        enabled = enabled,
-        shape = Tokens.PillShape,
-        colors = ButtonDefaults.buttonColors(
-            containerColor = GlassPalette.Well,
-            contentColor = MaterialTheme.colorScheme.primary,
-        ),
-        border = BorderStroke(Tokens.Hairline, GlassPalette.WellEdge),
-        contentPadding = PaddingValues(horizontal = Tokens.Gutter),
-        modifier = Modifier.heightIn(min = Tokens.TouchTarget).semantics { contentDescription = description },
-        content = content,
-    )
 }
 
 /** A secondary transport action: a 44 dp flat well inside a 48 dp touch target (rule 7). */
