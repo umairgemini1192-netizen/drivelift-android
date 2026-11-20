@@ -13,8 +13,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 29
-        versionName = "1.0.0-preview.30"
+        versionCode = 30
+        versionName = "1.0.0-preview.31"
     }
 
     signingConfigs {
