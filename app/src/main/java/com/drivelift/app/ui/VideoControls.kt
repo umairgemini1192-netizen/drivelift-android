@@ -16,8 +16,6 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.horizontalScroll
-import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -54,8 +52,11 @@ import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 
-/** Playback speeds offered in the Speed group, slowest first, each one tap away (issue #14). */
-internal val VIDEO_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
+/**
+ * Playback speeds offered in the Speed group, slowest first, each one tap away (issue #14). Four
+ * choices so they all show at once beside the label on a phone, with 0.5x next to 1x.
+ */
+internal val VIDEO_SPEEDS = listOf(0.5f, 1f, 1.5f, 2f)
 
 internal const val SKIP_MS = 10_000L
 
@@ -314,14 +315,15 @@ internal fun VideoControls(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
             )
-            // Tool groups, each with its name beside it. Speed has a line of its own and scrolls
-            // sideways if its choices do not fit; Step and Picture share the next line and wrap
-            // onto two on a narrow phone or with large text. Kept compact so the panel does not
-            // cover more of the picture than it must.
+            // Tool groups, each with its name beside it. Speed has a line of its own; every choice
+            // is always visible, wrapping onto a second line only on a narrow phone with large
+            // text. Step and Picture share the next line where they fit. Kept compact so the
+            // panel does not cover more of the picture than it must.
             ControlGroup("Speed", "video-speed", Modifier.fillMaxWidth().padding(top = Tokens.Small)) {
-                Row(
-                    Modifier.horizontalScroll(rememberScrollState()),
+                FlowRow(
+                    Modifier.weight(1f),
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
                 ) {
                     for (speed in VIDEO_SPEEDS) {
                         SpeedChoice(speed, selected = speed == state.speed, onClick = { onSpeed(speed) })

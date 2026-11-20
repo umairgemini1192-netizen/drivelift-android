@@ -2342,7 +2342,7 @@ class ScreenshotTest {
                 VideoControls(
                     state = VideoUiState(
                         playing = true, position = 83_000, duration = 754_000,
-                        speed = 1.25f, quality = qualityLabel(3840, 2160, 60f),
+                        speed = 1.5f, quality = qualityLabel(3840, 2160, 60f),
                     ),
                     onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {},
                     modifier = androidx.compose.ui.Modifier

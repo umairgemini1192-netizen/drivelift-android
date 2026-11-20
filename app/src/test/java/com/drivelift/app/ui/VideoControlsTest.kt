@@ -45,7 +45,7 @@ class VideoControlsTest {
         assertEquals("0:00", formatPlaybackTime(-5))
 
         // Every speed is one tap away, slowest first, with 0.5x beside 1x (issue #14).
-        assertEquals(listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f), VIDEO_SPEEDS)
+        assertEquals(listOf(0.5f, 1f, 1.5f, 2f), VIDEO_SPEEDS)
         // Rotate turns portrait into landscape and back.
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, rotatedOrientation(landscapeNow = false))
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT, rotatedOrientation(landscapeNow = true))
@@ -119,15 +119,13 @@ class VideoControlsTest {
             compose.onNodeWithContentDescription("Pause").performClick()
             compose.onNodeWithContentDescription("Speed 0.5x").performClick()
             compose.onNodeWithContentDescription("Speed 1x").performClick()
-            // 0.75x rather than 2x: on this 320 dp screen 2x sits past the edge of the scrolling
-            // Speed line (reachability is checked in the compact test), and a click there misses.
-            compose.onNodeWithContentDescription("Speed 0.75x").performClick()
+            compose.onNodeWithContentDescription("Speed 2x").performClick()
             compose.onNodeWithContentDescription("Rotate the video").performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
             assertEquals(1, toggles)
-            assertEquals(listOf(0.5f, 1f, 0.75f), speeds)
+            assertEquals(listOf(0.5f, 1f, 2f), speeds)
             assertEquals(1, rotations)
             assertEquals(1, captures)
         }
@@ -146,7 +144,7 @@ class VideoControlsTest {
                             VideoControls(
                                 state = VideoUiState(
                                     playing = true, position = 3_729_000, duration = 7_200_000,
-                                    speed = 1.25f, quality = qualityLabel(3840, 2160, 60f), zoomed = true,
+                                    speed = 1.5f, quality = qualityLabel(3840, 2160, 60f), zoomed = true,
                                 ),
                                 onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {}, onFit = {},
                                 modifier = androidx.compose.ui.Modifier.padding(Tokens.Edge),
@@ -163,21 +161,9 @@ class VideoControlsTest {
                 ) + VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }) {
                     val node = compose.onNodeWithContentDescription(label)
                     node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
-                    // The later speed choices may sit past the edge of the scrolling Speed line,
-                    // checked below; every other control, and the slowest speed, is fully on screen.
-                    if (label.startsWith("Speed ") && label != "Speed 0.5x") continue
                     val bounds = node.fetchSemanticsNode().boundsInRoot
                     org.junit.Assert.assertTrue("$label is cut off ($bounds, screen $rootWidth)", bounds.right <= rootWidth + 1f)
                 }
-                // The Speed line itself fits and scrolls sideways, so every choice can be reached.
-                // (Scrolling is not performed here: the paused test clock would never finish it.)
-                val speedGroup = compose.onNodeWithTag("video-speed").fetchSemanticsNode().boundsInRoot
-                org.junit.Assert.assertTrue("The Speed line is cut off ($speedGroup)", speedGroup.right <= rootWidth + 1f)
-                compose.onNode(
-                    androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(
-                        androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange,
-                    ) and androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag("video-speed")),
-                ).assertExists()
                 // Owner decision #32: the quality line wraps but is never cut short.
                 val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
                 compose.onNodeWithTag("video-quality").fetchSemanticsNode()
