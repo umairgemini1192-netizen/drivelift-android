@@ -114,6 +114,12 @@ interface DriveFolders {
         throw IOException("Video playback is not available")
 
     /**
+     * The player could not use the stream [openVideoStream] gave for [file]. Anything kept to open
+     * it again quickly (a Google Vids link) is dropped, so Try again asks Drive afresh.
+     */
+    fun forgetVideoStream(file: DriveFile) {}
+
+    /**
      * Moves one file to Google Drive's trash as [account], the account that listed the file and
      * whose confirmation the user gave (user-directed, issue #36). Recoverable from Drive's trash;
      * never a permanent delete. Throws [AccountChangedException], without sending anything, when
@@ -184,6 +190,8 @@ class DriveClient internal constructor(
     baseHttp: OkHttpClient,
     /** Wait between polls of a Google Vids render. A real delay in the app; instant in tests. */
     private val vidsPollWait: suspend (Long) -> Unit,
+    /** Wall clock for the Vids render deadline and how long a kept render may be reused. */
+    private val clock: () -> Long = System::currentTimeMillis,
 ) : DriveFolders {
     constructor(context: Context, prefs: Prefs) : this(
         context,
@@ -507,7 +515,7 @@ class DriveClient internal constructor(
                 .addQueryParameter("alt", "media")
                 .build()
             DrivePlaybackSource.VIDS_DOWNLOAD_OPERATION ->
-                vidsDownloadUri(file.id, requirePinnedAccount(prefs.accountEmail))
+                vidsDownloadUri(file, requirePinnedAccount(prefs.accountEmail))
         }
         val client = http.newBuilder()
             .readTimeout(30, TimeUnit.SECONDS)
@@ -535,11 +543,47 @@ class DriveClient internal constructor(
     }
 
     /**
-     * Starts Drive's MP4 render of a Google Vids file (`files.download`) and polls its operation
-     * with backoff until it is done. Returns the trusted download URI from the response. Gives up
-     * after [VIDS_RENDER_TIMEOUT_MS], so the player shows an error instead of spinning forever.
+     * Renders kept per account, file and version; see [VidsRenderMemo]. This client lives as long
+     * as the app, so turning the phone (which rebuilds the screen) or a reconnect finds the render
+     * here instead of starting a new one, and reopening the video within the hour plays at once.
      */
-    private suspend fun vidsDownloadUri(fileId: String, account: String): HttpUrl {
+    private val vidsRenders = java.util.concurrent.ConcurrentHashMap<VidsRenderKey, VidsRenderMemo>()
+
+    override fun forgetVideoStream(file: DriveFile) {
+        vidsRenders.keys.removeIf { it.fileId == file.id }
+    }
+
+    /**
+     * The trusted MP4 link for a Google Vids file. A kept link is reused; a render still running
+     * is polled again; otherwise Drive is asked to start one (`files.download`). Drive may refuse
+     * a poll of an operation that has finished or expired; then a new render is started once.
+     */
+    private suspend fun vidsDownloadUri(file: DriveFile, account: String): HttpUrl {
+        val key = vidsRenderKey(account, file)
+        when (val memo = reusableVidsRender(vidsRenders[key], clock())) {
+            is VidsRenderMemo.Ready -> return memo.uri
+            is VidsRenderMemo.Running -> try {
+                return runVidsRender(key, file.id, account, resume = memo)
+            } catch (e: DriveHttpException) {
+                if (e.code !in VIDS_OPERATION_GONE) throw e
+                vidsRenders.remove(key, memo)
+            }
+            null -> vidsRenders.remove(key)
+        }
+        return runVidsRender(key, file.id, account, resume = null)
+    }
+
+    /**
+     * Polls [resume], or starts Drive's MP4 render (`files.download`), until the link is ready.
+     * Gives up after [VIDS_RENDER_TIMEOUT_MS], so the player shows an error instead of spinning
+     * forever. The running render is kept for the next try; a failed render is dropped.
+     */
+    private suspend fun runVidsRender(
+        key: VidsRenderKey,
+        fileId: String,
+        account: String,
+        resume: VidsRenderMemo.Running?,
+    ): HttpUrl {
         val startUrl = "$API/files".toHttpUrl().newBuilder()
             .addPathSegment(fileId)
             .addPathSegment("download")
@@ -547,26 +591,45 @@ class DriveClient internal constructor(
             // change, and the player needs MP4. Google's own Vids example sets it too.
             .addQueryParameter("mimeType", "video/mp4")
             .build()
-        return awaitVidsRender(
-            start = {
-                renderOperation(execute({ Request.Builder().url(startUrl).post(ByteArray(0).toRequestBody(null)) }, account = account) { r ->
-                    if (!r.isSuccessful) fail(r)
-                    JSONObject(r.body!!.string())
-                })
-            },
-            poll = { operationId ->
-                val pollUrl = "$API/operations".toHttpUrl().newBuilder().addPathSegments(operationId).build()
-                renderOperation(execute({ Request.Builder().url(pollUrl) }, account = account) { r ->
-                    if (!r.isSuccessful) fail(r)
-                    JSONObject(r.body!!.string())
-                })
-            },
-            wait = vidsPollWait,
-            now = { System.currentTimeMillis() },
-            timeoutMillis = VIDS_RENDER_TIMEOUT_MS,
-            isTrusted = ::isTrustedDriveMediaUrl,
-            retryable = ::isTemporaryDriveError,
-        )
+        val poll: suspend (String) -> DriveRenderOperation = { operationId ->
+            val pollUrl = "$API/operations".toHttpUrl().newBuilder().addPathSegments(operationId).build()
+            renderOperation(execute({ Request.Builder().url(pollUrl) }, account = account) { r ->
+                if (!r.isSuccessful) fail(r)
+                JSONObject(r.body!!.string())
+            })
+        }
+        val uri = try {
+            awaitVidsRender(
+                start = {
+                    if (resume != null) {
+                        val op = poll(driveOperationName(resume.operationName))
+                        if (op.name.isNullOrBlank()) op.copy(name = resume.operationName) else op
+                    } else {
+                        val op = renderOperation(
+                            execute({ Request.Builder().url(startUrl).post(ByteArray(0).toRequestBody(null)) }, account = account) { r ->
+                                if (!r.isSuccessful) fail(r)
+                                JSONObject(r.body!!.string())
+                            },
+                        )
+                        val name = op.name
+                        if (name != null && op.errorMessage == null) vidsRenders[key] = VidsRenderMemo.Running(name, clock())
+                        op
+                    }
+                },
+                poll = poll,
+                wait = vidsPollWait,
+                now = clock,
+                timeoutMillis = VIDS_RENDER_TIMEOUT_MS,
+                isTrusted = ::isTrustedDriveMediaUrl,
+                retryable = ::isTemporaryDriveError,
+            )
+        } catch (e: VidsRenderException) {
+            // Kept only while Drive may still be rendering; a failed or unusable render is dropped.
+            if (!e.operationStillValid) vidsRenders.remove(key)
+            throw e
+        }
+        vidsRenders[key] = VidsRenderMemo.Ready(uri, clock())
+        return uri
     }
 
     /**
@@ -584,7 +647,7 @@ class DriveClient internal constructor(
     private fun renderOperation(o: JSONObject) = DriveRenderOperation(
         name = o.optString("name").ifEmpty { null },
         done = o.optBoolean("done", false),
-        errorMessage = o.optJSONObject("error")?.optString("message", "Drive could not prepare this video"),
+        errorMessage = o.optJSONObject("error")?.let { e -> e.optString("message").ifBlank { VIDS_RENDER_FAILED } },
         downloadUri = o.optJSONObject("response")?.optString("downloadUri")?.ifEmpty { null },
     )
 
@@ -897,6 +960,9 @@ class DriveClient internal constructor(
         private const val MAX_CONCURRENT_THUMBNAILS = 4
         private const val MAX_REDIRECTS = 5
         private const val VIDS_RENDER_TIMEOUT_MS = 15L * 60L * 1000L
+
+        /** Drive's answers to a poll of an operation it no longer serves: start a new render. */
+        private val VIDS_OPERATION_GONE = setOf(403, 404, 410)
         private const val MAX_THUMB_BYTES = 2L * 1024L * 1024L
         private const val MAX_THUMB_FALLBACK_BYTES = 8L * 1024L * 1024L
         private val REDIRECT_CODES = setOf(301, 302, 303, 307, 308)

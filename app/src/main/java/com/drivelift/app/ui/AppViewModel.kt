@@ -324,6 +324,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     suspend fun openVideoStream(file: com.drivelift.app.drive.DriveFile): com.drivelift.app.drive.DriveVideoStream =
         driveFolders.openVideoStream(file)
 
+    /** The player could not use the stream for [file]; see [com.drivelift.app.drive.DriveFolders.forgetVideoStream]. */
+    fun forgetVideoStream(file: com.drivelift.app.drive.DriveFile) = driveFolders.forgetVideoStream(file)
+
     /** Saves a frame captured from a video into Pictures/DriveLift and says how it went. */
     suspend fun saveVideoFrame(bitmap: android.graphics.Bitmap, videoName: String, positionMs: Long) {
         val name = com.drivelift.app.data.frameFileName(videoName, positionMs)

@@ -3,7 +3,11 @@ package com.drivelift.app.drive
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import com.drivelift.app.data.Prefs
+import kotlinx.coroutines.awaitCancellation
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.yield
 import okhttp3.Interceptor
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
@@ -12,6 +16,7 @@ import okhttp3.Request
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -94,12 +99,19 @@ class DriveClientVidsRenderTest {
 
     private val waits = mutableListOf<Long>()
 
+    /** A fake wall clock: every poll wait moves it on, so the 15 minute limit is reached exactly. */
+    private var clock = 1_000_000L
+
+    /** When set, a poll wait never ends, like a render the user leaves by turning the phone. */
+    private var hangInWait = false
+
     private fun client(drive: FakeDrive, tokens: DriveTokenSource) = DriveClient(
         context,
         prefs,
         tokens,
         OkHttpClient.Builder().addInterceptor(drive).build(),
-        { waits += it },
+        { waits += it; clock += it; if (hangInWait) awaitCancellation() },
+        { clock },
     )
 
     private fun isStart(r: Request) = r.method == "POST" && r.url.encodedPath == "/drive/v3/files/vid1/download"
@@ -266,5 +278,134 @@ class DriveClientVidsRenderTest {
         assertEquals(listOf("tok-1"), tokens.invalidated)
         assertEquals(listOf("Bearer tok-1", "Bearer tok-2"), fake.polls().map { it.auth })
         assertTrue(fake.sent.any { it.url.encodedPath == "/drive/v3/about" && it.auth == "Bearer tok-2" })
+    }
+
+    // Kept renders (finding 2 of the Preview 27 audit): turning the phone rebuilds the screen and
+    // opens the video again. Drive must not be asked to render the same file from the start.
+
+    private fun starts(fake: FakeDrive) = fake.calls().count { it.method == "POST" }
+
+    @Test
+    fun openingTheSameVidsAgainReusesTheReadyLinkWithoutAskingDrive() = runBlocking<Unit> {
+        val fake = drive(polls = listOf(pending, ready))
+        val drive = client(fake, meTokens())
+        assertEquals(trustedLink, drive.openVideoStream(vids).url)
+        val callsAfterFirst = fake.calls().size
+
+        assertEquals(trustedLink, drive.openVideoStream(vids).url)
+        assertEquals(callsAfterFirst, fake.calls().size)
+        assertEquals(1, starts(fake))
+    }
+
+    @Test
+    fun aRenderLeftWhileRunningIsPolledAgainInsteadOfStartedAgain() = runBlocking<Unit> {
+        val fake = drive(polls = listOf(ready))
+        val drive = client(fake, meTokens())
+        hangInWait = true
+        val first = launch { drive.openVideoStream(vids) }
+        while (waits.isEmpty()) yield()
+        first.cancelAndJoin()
+        assertEquals(1, starts(fake))
+        assertEquals(emptyList<Sent>(), fake.polls())
+
+        hangInWait = false
+        assertEquals(trustedLink, drive.openVideoStream(vids).url)
+        assertEquals(1, starts(fake))
+        assertEquals(listOf("/drive/v3/operations/op1"), fake.polls().map { it.url.encodedPath })
+    }
+
+    @Test
+    fun tryAgainAfterTheWaitRanOutGoesOnWithTheSameRender() = runBlocking<Unit> {
+        var finished = false
+        val fake = FakeDrive(mapOf("tok-me" to me)) { r ->
+            when {
+                isStart(r) -> pending
+                isPoll(r) -> if (finished) ready else pending
+                else -> 404 to "{}"
+            }
+        }
+        val drive = client(fake, meTokens())
+        val e = assertThrows(VidsRenderException::class.java) { runBlocking { drive.openVideoStream(vids) } }
+        assertEquals(VIDS_STILL_PREPARING, e.message)
+
+        finished = true
+        assertEquals(trustedLink, drive.openVideoStream(vids).url)
+        assertEquals(1, starts(fake))
+    }
+
+    @Test
+    fun aKeptRenderDriveNoLongerServesIsStartedAgainOnce() = runBlocking<Unit> {
+        var phase = 0
+        val fake = FakeDrive(mapOf("tok-me" to me)) { r ->
+            when {
+                isStart(r) -> pending
+                isPoll(r) -> when (phase) {
+                    0 -> pending
+                    1 -> { phase = 2; 403 to """{"error":{"message":"The operation has expired"}}""" }
+                    else -> ready
+                }
+                else -> 404 to "{}"
+            }
+        }
+        val drive = client(fake, meTokens())
+        assertThrows(VidsRenderException::class.java) { runBlocking { drive.openVideoStream(vids) } }
+
+        phase = 1
+        assertEquals(trustedLink, drive.openVideoStream(vids).url)
+        assertEquals(2, starts(fake))
+    }
+
+    @Test
+    fun aLinkThePlayerCouldNotUseIsForgottenAndTheNextOpenRendersAgain() = runBlocking<Unit> {
+        val fake = drive(start = ready)
+        val drive = client(fake, meTokens())
+        drive.openVideoStream(vids)
+        drive.forgetVideoStream(vids)
+        drive.openVideoStream(vids)
+        assertEquals(2, starts(fake))
+    }
+
+    @Test
+    fun aReadyLinkOlderThanAnHourIsNotReused() = runBlocking<Unit> {
+        val fake = drive(start = ready)
+        val drive = client(fake, meTokens())
+        drive.openVideoStream(vids)
+        clock += VIDS_READY_REUSE_MS
+        drive.openVideoStream(vids)
+        assertEquals(2, starts(fake))
+    }
+
+    @Test
+    fun aFailedRenderIsNotKept() = runBlocking<Unit> {
+        val fake = drive(polls = listOf(200 to """{"name":"operations/op1","done":true,"error":{"code":13}}"""))
+        val drive = client(fake, meTokens())
+        val e = assertThrows(VidsRenderException::class.java) { runBlocking { drive.openVideoStream(vids) } }
+        // Drive gave no message: the player says so plainly instead of showing an empty line.
+        assertEquals(VIDS_RENDER_FAILED, e.message)
+        assertThrows(VidsRenderException::class.java) { runBlocking { drive.openVideoStream(vids) } }
+        assertEquals(2, starts(fake))
+    }
+
+    @Test
+    fun anEditedVidsFileIsRenderedAgain() = runBlocking<Unit> {
+        val fake = drive(start = ready)
+        val drive = client(fake, meTokens())
+        drive.openVideoStream(vids.copy(modifiedTime = "2026-11-19T10:00:00Z"))
+        drive.openVideoStream(vids.copy(modifiedTime = "2026-11-20T09:00:00Z"))
+        assertEquals(2, starts(fake))
+    }
+
+    @Test
+    fun aLinkKeptForOneAccountIsNeverUsedForAnother() = runBlocking<Unit> {
+        val other = "other@example.com"
+        val fake = drive(start = ready, owners = mapOf("tok-me" to me, "tok-other" to other))
+        val drive = client(fake, FakeTokens(mutableMapOf(me to "tok-me", other to "tok-other")))
+        drive.openVideoStream(vids)
+        prefs.accountEmail = other
+        drive.openVideoStream(vids)
+
+        val posts = fake.calls().filter { it.method == "POST" }
+        assertEquals(listOf("Bearer tok-me", "Bearer tok-other"), posts.map { it.auth })
+        assertNotEquals(vidsRenderKey(me, vids), vidsRenderKey(other, vids))
     }
 }
