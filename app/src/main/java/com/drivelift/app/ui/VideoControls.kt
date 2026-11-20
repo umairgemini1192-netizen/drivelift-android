@@ -31,7 +31,9 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Replay10
+import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.ScreenRotation
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -315,6 +317,10 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** Turns the screen between portrait and landscape. */
     onRotate: () -> Unit = {},
+    /** The video picture's quarter turns clockwise so far (0 to 3), for the Turn control. */
+    turns: Int = 0,
+    /** Turns the video picture 90 degrees clockwise. */
+    onTurn: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
     /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
@@ -376,7 +382,14 @@ internal fun VideoControls(
                     )
                 }
                 ControlGroup("Picture", "video-picture") {
-                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the video")
+                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the screen")
+                    PlayerWell(
+                        onClick = onTurn,
+                        icon = Icons.Outlined.RotateRight,
+                        description = turnDescription(turns),
+                        // The arrow turns with the picture, so the well shows the turn it is at.
+                        iconRotation = quarterTurnDegrees(turns).toFloat(),
+                    )
                     PlayerWell(
                         onClick = onCapture,
                         icon = Icons.Outlined.PhotoCamera,
@@ -535,6 +548,8 @@ private fun PlayerWell(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean = true,
+    /** Degrees the icon is turned clockwise, for a well that shows a state (the Turn control). */
+    iconRotation: Float = 0f,
 ) {
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Tokens.TouchTarget)) {
         Box(
@@ -544,7 +559,7 @@ private fun PlayerWell(
                 .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = description)
+            Icon(icon, contentDescription = description, modifier = Modifier.graphicsLayer(rotationZ = iconRotation))
         }
     }
 }

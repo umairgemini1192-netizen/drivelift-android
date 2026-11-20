@@ -84,6 +84,7 @@ class VideoControlsTest {
         val speeds = mutableListOf<Float>()
         var captures = 0
         var rotations = 0
+        var turnTaps = 0
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
@@ -99,6 +100,7 @@ class VideoControlsTest {
                             onSpeed = { speeds += it },
                             onCapture = { captures++ },
                             onRotate = { rotations++ },
+                            onTurn = { turnTaps++ },
                         )
                     }
                 }
@@ -111,7 +113,7 @@ class VideoControlsTest {
             // The controls are in named groups the owner can find without guessing (issue #14).
             for (group in listOf("Speed", "Step", "Picture")) compose.onNodeWithText(group).assertExists()
             val speedLabels = listOf("Speed 0.5x", steppedSpeedDescription(1f))
-            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Rotate the video") + speedLabels) {
+            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Rotate the screen", turnDescription(0)) + speedLabels) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
@@ -130,7 +132,8 @@ class VideoControlsTest {
             compose.onNodeWithContentDescription("Pause").performClick()
             compose.onNodeWithContentDescription("Speed 0.5x").performClick()
             compose.onNodeWithTag("video-speed-step").performClick()
-            compose.onNodeWithContentDescription("Rotate the video").performClick()
+            compose.onNodeWithContentDescription("Rotate the screen").performClick()
+            compose.onNodeWithContentDescription(turnDescription(0)).performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
@@ -142,6 +145,7 @@ class VideoControlsTest {
                 assertTrue("$faster must not have a button of its own", compose.onAllNodesWithText(faster).fetchSemanticsNodes().isEmpty())
             }
             assertEquals(1, rotations)
+            assertEquals(1, turnTaps)
             assertEquals(1, captures)
         }
     }
@@ -213,7 +217,7 @@ class VideoControlsTest {
                 val rootWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
                 for (label in listOf(
                     "Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo",
-                    "Rotate the video", "Fit the whole picture",
+                    "Rotate the screen", turnDescription(0), "Fit the whole picture",
                     "Step back about one frame", "Step forward about one frame",
                 ) + listOf("Speed 0.5x", steppedSpeedDescription(0.5f))) {
                     val node = compose.onNodeWithContentDescription(label)
