@@ -37,6 +37,11 @@ data class MediaItem(
     val relativePath: String,
     val isVideo: Boolean,
     val durationMs: Long,
+    /**
+     * The storage volume MediaStore keeps the file on ("external_primary" for the phone's own
+     * storage, another name for an SD card or USB drive). A folder move never changes it.
+     */
+    val volume: String = MediaStore.VOLUME_EXTERNAL_PRIMARY,
 )
 
 data class MediaFolder(
@@ -221,7 +226,7 @@ class MediaRepository(private val context: Context) {
             FileColumns._ID, FileColumns.DISPLAY_NAME, FileColumns.SIZE, FileColumns.MIME_TYPE,
             FileColumns.DATE_TAKEN, FileColumns.DATE_MODIFIED, FileColumns.BUCKET_ID,
             FileColumns.BUCKET_DISPLAY_NAME, FileColumns.RELATIVE_PATH, FileColumns.MEDIA_TYPE,
-            FileColumns.DURATION,
+            FileColumns.DURATION, FileColumns.VOLUME_NAME,
         )
         val selection =
             "${FileColumns.MEDIA_TYPE} IN (${FileColumns.MEDIA_TYPE_IMAGE}, ${FileColumns.MEDIA_TYPE_VIDEO})"
@@ -241,6 +246,7 @@ class MediaRepository(private val context: Context) {
             val iPath = c.getColumnIndexOrThrow(FileColumns.RELATIVE_PATH)
             val iType = c.getColumnIndexOrThrow(FileColumns.MEDIA_TYPE)
             val iDuration = c.getColumnIndexOrThrow(FileColumns.DURATION)
+            val iVolume = c.getColumnIndex(FileColumns.VOLUME_NAME)
             while (c.moveToNext()) {
                 val id = c.getLong(iId)
                 val isVideo = c.getInt(iType) == FileColumns.MEDIA_TYPE_VIDEO
@@ -261,6 +267,7 @@ class MediaRepository(private val context: Context) {
                     relativePath = c.getString(iPath) ?: "",
                     isVideo = isVideo,
                     durationMs = c.getLong(iDuration),
+                    volume = (if (iVolume >= 0) c.getString(iVolume) else null) ?: MediaStore.VOLUME_EXTERNAL_PRIMARY,
                 )
             }
         }

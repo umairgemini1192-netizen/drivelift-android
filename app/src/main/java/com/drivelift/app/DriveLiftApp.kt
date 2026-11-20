@@ -64,6 +64,12 @@ class Graph(app: Application) {
     /** Builds Android's write-consent request for files DriveLift does not own. Replaced in tests. */
     var writeRequest: (android.content.ContentResolver, List<android.net.Uri>) -> android.app.PendingIntent =
         { resolver, uris -> android.provider.MediaStore.createWriteRequest(resolver, uris) }
+    /** Moves a phone file into another folder ([relativePath]). Replaced in tests. */
+    var moveMedia: (android.content.ContentResolver, android.net.Uri, String) -> Unit =
+        { resolver, uri, path -> com.drivelift.app.data.updateRelativePath(resolver, uri, path) }
+    /** Reads a phone file's folder back from MediaStore after a move; null if it cannot. Replaced in tests. */
+    var mediaFolder: (android.content.ContentResolver, android.net.Uri) -> String? =
+        { resolver, uri -> com.drivelift.app.data.queryRelativePath(resolver, uri) }
     /** Names of the files MediaStore lists in a folder ([relativePath]), for the rename collision check. */
     var folderNames: (android.content.ContentResolver, String) -> List<String> =
         { resolver, path -> com.drivelift.app.data.queryFolderNames(resolver, path) }

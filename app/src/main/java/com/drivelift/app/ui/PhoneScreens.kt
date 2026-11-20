@@ -11,6 +11,7 @@ import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
@@ -32,6 +33,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
@@ -59,6 +61,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberUpdatedState
@@ -71,6 +74,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -96,6 +101,7 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 
 // ---------------------------------------------------------------------------
 // Folder list
@@ -119,7 +125,8 @@ fun PhoneScreen(
     val account by vm.account.collectAsStateWithLifecycle()
     val totalBytes = remember(media) { media.sumOf { it.size } }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize()) {
+    LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
         item(key = "lead") {
             Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header, bottom = Tokens.Small)) {
                 Text(
@@ -200,6 +207,43 @@ fun PhoneScreen(
                 onMove = { onMoveFolder(folder.bucketId) },
             )
         }
+    }
+    // Phone files waiting to be moved: the list is not a folder, so the pill asks to open one.
+    PhoneMovePillBar(vm = vm, visible = true, hereBucketId = null, hereName = "", enabled = true, onMoveHere = {})
+    }
+}
+
+/**
+ * The move pill for phone files at the bottom of a Phone screen, rising in while files wait and
+ * sinking away once they are moved or let go. [hereBucketId] is the folder shown, or null on the
+ * folder list, where "Move here" stays off.
+ */
+@Composable
+private fun ColumnScope.PhoneMovePillBar(
+    vm: AppViewModel,
+    visible: Boolean,
+    hereBucketId: Long?,
+    hereName: String,
+    enabled: Boolean,
+    onMoveHere: () -> Unit,
+) {
+    val context = LocalContext.current
+    val clip by vm.phoneMoveClip.collectAsStateWithLifecycle()
+    var shownClip by remember { mutableStateOf(clip) }
+    clip?.let { shownClip = it }
+    RisingBar(visible = visible && clip != null) {
+        val held = shownClip ?: return@RisingBar
+        MovePill(
+            count = held.items.size,
+            fromName = held.fromName,
+            sizeLabel = formatBytes(context, held.totalBytes),
+            canMoveHere = hereBucketId != null && held.canMoveInto(hereBucketId),
+            hereName = hereName,
+            enabled = enabled && clip != null,
+            onMoveHere = onMoveHere,
+            onCancel = vm::cancelPhoneMoveClip,
+            modifier = Modifier.padding(horizontal = Tokens.Small, vertical = Tokens.Small),
+        )
     }
 }
 
@@ -390,6 +434,17 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
     val deletingIds = remember(deleting) { deleting?.toList() }
     // A rename in progress (issue #42): the one file asked about. Saved across rotation.
     var renaming by rememberSaveable(bucketId) { mutableStateOf<Long?>(null) }
+    // Phone files waiting in the move pill, and a move into this folder waiting for confirmation.
+    val phoneClip by vm.phoneMoveClip.collectAsStateWithLifecycle()
+    val phoneMoveRun by vm.phoneMoveRun.collectAsStateWithLifecycle()
+    val phoneMoving = phoneMoveRun?.working == true
+    var phoneMovePlan by remember { mutableStateOf<com.drivelift.app.data.PhoneMovePlan?>(null) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(phoneMoveRun?.outcome) {
+        if (phoneMoveRun?.outcome == null) return@LaunchedEffect
+        phoneMovePlan = null
+        vm.phoneMoveApplied()
+    }
     fun tapCell(item: MediaItem) {
         if (longPress.consume(item.id)) return
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
@@ -532,14 +587,18 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                 }
             }
 
-            if (selection.isNotEmpty()) {
+            // The last selection stays drawn while the bar sinks away.
+            var barSelection by remember { mutableStateOf(selection) }
+            if (selection.isNotEmpty()) barSelection = selection
+            val barBytes = remember(barSelection, items) { items.sumOf { if (it.id in barSelection) it.size else 0L } }
+            RisingBar(visible = selection.isNotEmpty()) {
                 Box(Modifier.fillMaxWidth().glassBar()) {
-                    // The count and size sit on their own line above the three actions (Clear, trash,
-                    // Move to Drive), so they are never squeezed at any text size or width.
+                    // The count and size sit on their own line above the actions (Clear, trash, move
+                    // to another folder, Move to Drive), so they are never squeezed at any size.
                     val summary: @Composable () -> Unit = {
-                        Text("${selection.size} items", style = MaterialTheme.typography.titleMedium)
+                        Text("${barSelection.size} items", style = MaterialTheme.typography.titleMedium)
                         Text(
-                            formatBytes(context, selectedBytes),
+                            formatBytes(context, barBytes),
                             style = MaterialTheme.typography.bodyMedium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -548,8 +607,8 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                         // Rename sits with the count when exactly one file is selected, so the
                         // action row below keeps its width at every text size.
                         SummaryWithRename(
-                            showRename = selection.size == 1,
-                            onRename = { renaming = selection.first() },
+                            showRename = barSelection.size == 1,
+                            onRename = { renaming = barSelection.first() },
                         ) { summary() }
                         Row(
                             Modifier.fillMaxWidth().padding(top = Tokens.Small),
@@ -557,12 +616,34 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
                             OutlinedButton(onClick = vm::clearSelection) { Text("Clear") }
-                            DeleteSelectedButton { deleting = items.filter { it.id in selection }.map { it.id }.toLongArray() }
+                            DeleteSelectedButton { deleting = items.filter { it.id in barSelection }.map { it.id }.toLongArray() }
+                            IconButton(
+                                onClick = {
+                                    vm.holdPhoneForMove(barSelection, bucketId, title)
+                                    vm.clearSelection()
+                                },
+                                enabled = !phoneMoving,
+                                modifier = Modifier.size(Tokens.TouchTarget),
+                            ) {
+                                Icon(
+                                    Icons.AutoMirrored.Outlined.DriveFileMove,
+                                    contentDescription = "Move selected to another folder on this phone",
+                                )
+                            }
                             Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
                         }
                     }
                 }
             }
+
+            PhoneMovePillBar(
+                vm = vm,
+                visible = selection.isEmpty(),
+                hereBucketId = bucketId,
+                hereName = title,
+                enabled = phoneClip != null && !phoneMoving && phoneMovePlan == null,
+                onMoveHere = { scope.launch { phoneMovePlan = vm.planPhoneMove(bucketId) } },
+            )
         }
         viewing?.let { item ->
             FullScreenOverlay {
@@ -576,6 +657,14 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
         }
         renaming?.let { id ->
             PhoneRenameFlow(vm = vm, id = id, onDone = { renaming = null })
+        }
+        phoneMovePlan?.let { plan ->
+            PhoneMoveDialog(
+                plan = plan,
+                working = phoneMoving,
+                onConfirm = { vm.startPhoneMove(plan) },
+                onDismiss = { if (!phoneMoving) phoneMovePlan = null },
+            )
         }
         deletingIds?.let { ids ->
             // A viewed file that goes to the trash drops out of [items] when the listing reloads,
@@ -628,6 +717,10 @@ private fun MediaCell(
     val inset by animateDpAsState(
         if (selected) Tokens.SelectedInset else Tokens.NoInset, AppMotion.spec(Tokens.Motion.SELECTION), label = "inset",
     )
+    // The picture fades and grows in when it arrives from disk; from the memory cache it just shows.
+    var loaded by remember(item.id) { mutableStateOf(false) }
+    var animateIn by remember(item.id) { mutableStateOf(true) }
+    val pictureShape = RoundedCornerShape(if (selected) Tokens.SelectedCorner else Tokens.NoInset)
     Box(
         Modifier
             .aspectRatio(1f)
@@ -648,7 +741,14 @@ private fun MediaCell(
             model = ImageRequest.Builder(LocalContext.current).data(item.uri).size(256).build(),
             contentDescription = item.name,
             contentScale = ContentScale.Crop,
-            modifier = Modifier.fillMaxSize().padding(inset).clip(RoundedCornerShape(if (selected) Tokens.SelectedCorner else Tokens.NoInset)),
+            onSuccess = { state ->
+                animateIn = state.result.dataSource != coil.decode.DataSource.MEMORY_CACHE
+                loaded = true
+            },
+            modifier = Modifier.fillMaxSize().padding(inset)
+                .selectionGlow(selected, pictureShape)
+                .clip(pictureShape)
+                .revealWhen(loaded, animateIn),
         )
         if (item.isVideo) {
             Text(
@@ -703,6 +803,7 @@ private fun Modifier.dragSelect(
     val pinchGuard by rememberUpdatedState(isPinching)
     val edge = with(LocalDensity.current) { Tokens.AutoScrollEdge.toPx() }
     val cellId by rememberUpdatedState(idAt)
+    val haptics = LocalHapticFeedback.current
     // Every new touch starts with no long press recorded. The Initial pass runs before the cells
     // see the touch, so a tap that follows an earlier long press is never ignored by mistake.
     return pointerInput(guard) {
@@ -712,6 +813,7 @@ private fun Modifier.dragSelect(
         }
     }.pointerInput(Unit) {
         var anchor: Int? = null
+        var last: Int? = null
         var base: Set<Long> = emptySet()
         fun indexAt(point: Offset): Int? = state.layoutInfo.visibleItemsInfo.firstOrNull { info ->
             point.x >= info.offset.x && point.x < info.offset.x + info.size.width &&
@@ -723,8 +825,11 @@ private fun Modifier.dragSelect(
                 if (pinchGuard()) return@detectDragGesturesAfterLongPress
                 indexAt(point)?.let {
                     anchor = it
+                    last = it
                     base = current()
                     guard.id = cellId(it)
+                    // The hold that starts a selection is confirmed with a short buzz.
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     range(base, it, it)
                 }
             },
@@ -753,7 +858,14 @@ private fun Modifier.dragSelect(
                             else -> 0f
                         }
                     )
-                    indexAt(change.position)?.let { range(base, start, it) }
+                    indexAt(change.position)?.let {
+                        // A light tick each time the drag reaches another photo.
+                        if (it != last) {
+                            last = it
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        }
+                        range(base, start, it)
+                    }
                 }
             },
         )

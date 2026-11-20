@@ -76,6 +76,7 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -174,8 +175,6 @@ fun DriveBrowser(
     onClose: (() -> Unit)? = null,
     onPick: ((dest: Destination, pin: Boolean) -> Unit)? = null,
     onViewingFileChange: ((Boolean) -> Unit)? = null,
-    /** False when the picked folder is not a transfer destination (moving Drive files). */
-    offerPreset: Boolean = true,
     /** Opens the Favorites view; the way in is shown at the top of My Drive once something is starred. */
     onOpenFavorites: (() -> Unit)? = null,
 ) {
@@ -210,8 +209,9 @@ fun DriveBrowser(
     // The confirmed batch runs in the view model, so a rotation does not cancel it halfway.
     val trashRun by vm.driveTrashRun.collectAsStateWithLifecycle()
     val trashing = trashRun?.working == true
-    // Moving selected files to another Drive folder: choose the folder, then confirm.
-    var movePicking by rememberSaveable { mutableStateOf(false) }
+    // Moving selected files to another Drive folder: Move puts them in the move pill, the user
+    // opens the destination, taps "Move here" on the pill, then confirms.
+    val moveClip by vm.driveMoveClip.collectAsStateWithLifecycle()
     var movePlan by remember { mutableStateOf<DriveMovePlan?>(null) }
     val moveRun by vm.driveMoveRun.collectAsStateWithLifecycle()
     val moving = moveRun?.working == true
@@ -232,6 +232,10 @@ fun DriveBrowser(
     val accountKey = account?.email.orEmpty()
     val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
     val here = stack.last()
+    // Which way the folder shown now arrived: deeper, or back up to a parent.
+    var lastDepth by remember { mutableIntStateOf(stack.size) }
+    val navStep = if (stack.size >= lastDepth) NavStep.DEEPER else NavStep.UP
+    SideEffect { lastDepth = stack.size }
     val path = stack.joinToString(" / ") { it.name }
     // Search within this folder and the Drive sort choice (issue #36). The picker lists folders
     // only and keeps Drive's order.
@@ -244,6 +248,11 @@ fun DriveBrowser(
     LaunchedEffect(accountKey) {
         thumbCache.evictAll()
         thumbAuthExpired = false
+        // Files held for a move belong to the account they were listed for.
+        val held = moveClip
+        if (held != null && accountKey.isNotBlank() && !held.account.equals(accountKey, ignoreCase = true)) {
+            vm.cancelMoveClip()
+        }
     }
 
 
@@ -370,32 +379,14 @@ fun DriveBrowser(
     }
 
     BackHandler(enabled = selecting && viewerFile == null) { selectedIds = emptySet() }
-    BackHandler(enabled = !selecting && viewerFile == null && (stack.size > 1 || onClose != null)) {
+    // Up one folder, or closing the picker at the top; the predictive back gesture previews it.
+    val upBack = rememberUpBack(enabled = !selecting && viewerFile == null && (stack.size > 1 || onClose != null)) {
         if (stack.size > 1) stack = stack.dropLast(1) else onClose?.invoke()
-    }
-
-    if (movePicking && selecting) {
-        // The folder picker takes the screen; this folder and its selection are kept underneath.
-        val chosen = entries.orEmpty().filter { it.id in selectedIds }
-        val from = here.id
-        DriveBrowser(
-            vm = vm,
-            pickMode = true,
-            offerPreset = false,
-            onClose = { movePicking = false },
-            onPick = { dest, _ ->
-                movePicking = false
-                dest.folderId?.let { to ->
-                    scope.launch { movePlan = vm.planDriveMove(chosen, from, to, dest.label) }
-                }
-            },
-        )
-        return
     }
 
     Box(Modifier.fillMaxSize()) {
         Column(
-            Modifier.fillMaxSize().then(
+            Modifier.fillMaxSize().backPreview(upBack).then(
                 if (pickMode) Modifier.onGloballyPositioned { coords ->
                     recordPickerBounds { copy(rootBottomPx = coords.boundsInWindow().bottom.roundToInt()) }
                 } else Modifier
@@ -533,7 +524,7 @@ fun DriveBrowser(
                 )
             }
 
-            Box(Modifier.weight(1f).fillMaxWidth()) {
+            Box(Modifier.weight(1f).fillMaxWidth().arriveOnChange(here.id, navStep)) {
                 val list = shown
                 when {
                     conn != DriveConn.CONNECTED -> DriveStatusRow(
@@ -651,8 +642,11 @@ fun DriveBrowser(
                 }
             }
 
-            if (selecting) {
-                val chosen = entries.orEmpty().filter { it.id in selectedIds }
+            // The last selection stays drawn while the bar sinks away.
+            var barIds by remember { mutableStateOf(selectedIds) }
+            if (selecting) barIds = selectedIds
+            RisingBar(visible = selecting) {
+                val chosen = entries.orEmpty().filter { it.id in barIds }
                 Column(
                     Modifier
                         .fillMaxWidth()
@@ -679,8 +673,11 @@ fun DriveBrowser(
                     ) {
                         OutlinedButton(onClick = { selectedIds = emptySet() }) { Text("Clear") }
                         OutlinedButton(
-                            onClick = { movePicking = true },
-                            enabled = !moving,
+                            onClick = {
+                                if (vm.holdForMove(chosen, here.id, here.name)) selectedIds = emptySet()
+                            },
+                            // Folders can't be moved yet; with only folders selected there is nothing to hold.
+                            enabled = !moving && chosen.any { !it.isFolder },
                         ) { Text("Move") }
                         IconButton(onClick = { askTrash(chosen) }, modifier = Modifier.size(Tokens.TouchTarget)) {
                             Icon(
@@ -691,6 +688,29 @@ fun DriveBrowser(
                         }
                     }
                 }
+            }
+
+            // The pill keeps showing its last files while it sinks away after a move.
+            var pillClip by remember { mutableStateOf(moveClip) }
+            moveClip?.let { pillClip = it }
+            val held = pillClip
+            RisingBar(visible = !pickMode && !selecting && moveClip != null && conn == DriveConn.CONNECTED) {
+                if (held != null) MovePill(
+                    count = held.files.size,
+                    fromName = held.fromName,
+                    sizeLabel = formatBytes(context, held.totalBytes),
+                    canMoveHere = held.canMoveInto(here.id),
+                    hereName = here.name,
+                    // Off while the pill sinks away, so a tap then never plans a move.
+                    enabled = moveClip != null && !moving && movePlan == null,
+                    onMoveHere = {
+                        val to = here.id
+                        val label = path
+                        scope.launch { movePlan = vm.planDriveMove(held.files, held.fromFolderId, to, label) }
+                    },
+                    onCancel = vm::cancelMoveClip,
+                    modifier = Modifier.padding(horizontal = Tokens.Small, vertical = Tokens.Small),
+                )
             }
 
             if (pickMode && onPick != null && conn == DriveConn.CONNECTED) {
@@ -711,7 +731,7 @@ fun DriveBrowser(
                         Modifier.fillMaxWidth().navigationBarsPadding()
                             .padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
                     ) {
-                        if (offerPreset) Row(
+                        Row(
                             Modifier.fillMaxWidth().clickable(role = Role.Checkbox) { pin = !pin },
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
@@ -918,8 +938,12 @@ private fun DriveMediaGridCard(
 ) {
     val kind = classifyDriveFile(file.mimeType)
     val icon = fileTypeIcon(kind)
+    // A picture fetched while the card was on screen fades in; one already cached just shows.
+    val fetched = remember(file.id) { thumb !is ThumbState.Ready }
     GlassPanel(
-        modifier = Modifier.fillMaxWidth().aspectRatio(1f),
+        modifier = Modifier.fillMaxWidth().aspectRatio(1f)
+            .selectedShrink(selected == true)
+            .selectionGlow(selected == true, Tokens.ThumbShape),
         shape = Tokens.ThumbShape,
         onClick = onClick,
         onClickLabel = when (selected) {
@@ -950,7 +974,7 @@ private fun DriveMediaGridCard(
                     bitmap = thumb.bitmap,
                     contentDescription = file.name,
                     contentScale = ContentScale.Crop,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().revealWhen(loaded = true, animate = fetched),
                 )
                 ThumbState.Error -> Icon(
                     Icons.Outlined.BrokenImage,

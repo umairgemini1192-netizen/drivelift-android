@@ -288,11 +288,47 @@ headers only in date order; Drive folders start by name, as before, and keep fol
 Files with the same date keep the listing's own order, and name and size ties fall back to name,
 so the order is the same every time.
 
+## Moving phone files to another phone folder
+
+In Drive, Move holds only files: selected folders stay where they are and a message names how
+many; with only folders selected, Move is off, and a selection with no files never empties the pill.
+
+In a Phone folder, select files and tap the move-to-folder button beside the trash. The files go
+into the move pill at the bottom of the Phone screens. Open the destination folder and tap **Move
+here**; DriveLift names the files, their size and the destination and asks first. Only the folder
+changes (MediaStore `RELATIVE_PATH`): each file keeps its address, name, content and date, and
+nothing in Google Drive changes. Left in place and named: files a transfer still depends on,
+files whose name is already in the destination (DriveLift never lets Android rename them), files
+already there, and files on other storage (an SD card or USB drive when the destination is on the
+phone's own storage, or the other way round), because Android keeps a file on its own storage
+and would put it in a same-named folder there. Transfers are read again right before each file. For files DriveLift does
+not own, Android asks once for all of them; a refusal moves none of them. Each moved file's folder
+is read back, and a file Android put anywhere else is reported as not moved. Files that failed
+stay in the pill for another try.
+
+## Back gesture and touch feedback
+
+DriveLift opts in to Android's predictive back. A step up one level (a Drive folder to its parent,
+a Phone folder, Settings or Storage back to where they opened from) follows the back swipe: the
+current level shrinks a little and slides toward the edge the swipe started from, and letting go
+completes the step while cancelling leaves it as it was. Each new level slides and fades in from
+the side it comes from, bottom bars rise and sink, thumbnails fade and grow in as their picture
+arrives, and a selected thumbnail gets a coral glow. With animations turned off nothing moves.
+Back that clears a selection is not a step up, so it has no preview. A long press that starts a
+selection gives a short vibration, and dragging a Phone selection across photos gives a light tick
+for each new photo reached.
+
 ## Moving Drive files to another folder
 
-In the Drive tab, select files and tap **Move**. Choose the folder in the Drive folder picker and
-tap **Move here**; DriveLift then names the files, their size and the destination path and asks
-before doing anything. Confirmed files are moved one by one (`files.update` with `addParents` and
+In the Drive tab, select files and tap **Move**. The files go into the move pill, pinned above the
+tab bar: it shows how many files wait, the folder they came from and their size. Browse to the
+destination as usual (folders, Favorites, search; the pill stays across tabs) and tap **Move here**
+on the pill. In the folder the files came from the pill asks for another folder instead, and its
+close button lets the files go without moving anything. Holding files changes nothing on Drive;
+**Move here** opens the confirmation, which names the files, their size and the destination path
+and asks before doing anything. After the batch, moved files and files no move can take leave the
+pill; files that failed stay in it so **Move here** can try them again. The pill is kept in memory
+only and is dropped when another account connects. Confirmed files are moved one by one (`files.update` with `addParents` and
 `removeParents`). Each keeps its Drive id, content and history: nothing is copied, deleted or
 changed on the phone. Access can change: Drive applies the new folder's sharing to a moved file
 and drops access it had only through the old folder, so a private file moved into a shared
@@ -444,6 +480,10 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `data/DriveFolderSizes.kt` | Drive folder totals from one flat listing, paged listing with stop reasons |
 | `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
+| `ui/MovePill.kt`, `data/DriveMove.kt` | Move pill for Drive files, move plan and outcome |
+| `ui/BackPreview.kt` | Predictive back preview for a step up one level |
+| `ui/Motion.kt` | Level transitions, rising bars, thumbnail reveal, selection glow |
+| `ui/PhoneMove.kt`, `data/PhoneMove.kt` | Phone folder move: confirmation, consent, plan and outcome |
 | `ui/Favorites.kt` | Favorites list, star button, way in from Phone and Drive |
 | `ui/DestinationSheet.kt` | Destination chooser and presets |
 | `ui/TransfersScreen.kt` | Progress, controls, removal |
