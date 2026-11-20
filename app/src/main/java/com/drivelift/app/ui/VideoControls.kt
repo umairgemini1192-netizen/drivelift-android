@@ -53,10 +53,11 @@ import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 
 /**
- * Playback speeds offered in the Speed group, slowest first, each one tap away (issue #14). Four
- * choices so they all show at once beside the label on a phone, with 0.5x next to 1x.
+ * Playback speeds offered in the Speed group: 0.5x and 1x, side by side, and nothing faster. The
+ * owner chose these two only (issue #14, PR #62): "0.5x ==> 1x, two options only". Tapping 1x
+ * stays at 1x; there is no cycle on to 1.5x or 2x.
  */
-internal val VIDEO_SPEEDS = listOf(0.5f, 1f, 1.5f, 2f)
+internal val VIDEO_SPEEDS = listOf(0.5f, 1f)
 
 internal const val SKIP_MS = 10_000L
 
@@ -315,10 +316,9 @@ internal fun VideoControls(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
             )
-            // Tool groups, each with its name beside it. Speed has a line of its own; every choice
-            // is always visible, wrapping onto a second line only on a narrow phone with large
-            // text. Step and Picture share the next line where they fit. Kept compact so the
-            // panel does not cover more of the picture than it must.
+            // Tool groups, each with its name beside it: Speed (0.5x and 1x), then Step and
+            // Picture, which share a line where they fit. Kept compact so the panel does not cover
+            // more of the picture than it must.
             ControlGroup("Speed", "video-speed", Modifier.fillMaxWidth().padding(top = Tokens.Small)) {
                 FlowRow(
                     Modifier.weight(1f),

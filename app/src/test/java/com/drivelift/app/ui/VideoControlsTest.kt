@@ -10,6 +10,7 @@ import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithTag
@@ -44,8 +45,8 @@ class VideoControlsTest {
         assertEquals("1:02:09", formatPlaybackTime(3_729_000))
         assertEquals("0:00", formatPlaybackTime(-5))
 
-        // Every speed is one tap away, slowest first, with 0.5x beside 1x (issue #14).
-        assertEquals(listOf(0.5f, 1f, 1.5f, 2f), VIDEO_SPEEDS)
+        // The owner's choice (issue #14, PR #62): two speeds only, 0.5x beside 1x, nothing faster.
+        assertEquals(listOf(0.5f, 1f), VIDEO_SPEEDS)
         // Rotate turns portrait into landscape and back.
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, rotatedOrientation(landscapeNow = false))
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT, rotatedOrientation(landscapeNow = true))
@@ -119,13 +120,16 @@ class VideoControlsTest {
             compose.onNodeWithContentDescription("Pause").performClick()
             compose.onNodeWithContentDescription("Speed 0.5x").performClick()
             compose.onNodeWithContentDescription("Speed 1x").performClick()
-            compose.onNodeWithContentDescription("Speed 2x").performClick()
             compose.onNodeWithContentDescription("Rotate the video").performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
             assertEquals(1, toggles)
-            assertEquals(listOf(0.5f, 1f, 2f), speeds)
+            assertEquals(listOf(0.5f, 1f), speeds)
+            // Tapping 1x stays at 1x: there is no faster speed to cycle on to.
+            for (faster in listOf("Speed 1.25x", "Speed 1.5x", "Speed 2x")) {
+                assertTrue("$faster must not be offered", compose.onAllNodesWithContentDescription(faster).fetchSemanticsNodes().isEmpty())
+            }
             assertEquals(1, rotations)
             assertEquals(1, captures)
         }
@@ -144,7 +148,7 @@ class VideoControlsTest {
                             VideoControls(
                                 state = VideoUiState(
                                     playing = true, position = 3_729_000, duration = 7_200_000,
-                                    speed = 1.5f, quality = qualityLabel(3840, 2160, 60f), zoomed = true,
+                                    speed = 0.5f, quality = qualityLabel(3840, 2160, 60f), zoomed = true,
                                 ),
                                 onPlayPause = {}, onSeek = {}, onSpeed = {}, onCapture = {}, onFit = {},
                                 modifier = androidx.compose.ui.Modifier.padding(Tokens.Edge),
