@@ -1111,6 +1111,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveTrashRun.value = DriveTrashRun(working = true)
         viewModelScope.launch {
             val outcome = trashDriveFiles(plan.eligible, plan.account)
+            // A trashed file can no longer be moved: it leaves the move pill too.
+            driveMoveClip.value = driveMoveClip.value?.without(outcome.trashed.map { it.id }.toSet())
             driveTrashRun.value = DriveTrashRun(working = false, outcome = outcome)
             messages.emit(outcome.message())
         }
@@ -1192,6 +1194,31 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
     ): com.drivelift.app.data.DriveMovePlan =
         com.drivelift.app.data.planDriveMove(files, transferRowsFor(files), fromFolderId, toFolderId, toLabel, prefs.accountEmail)
 
+    /**
+     * Drive files held in the move pill: chosen with Move in one folder, waiting for "Move here"
+     * in another (two taps instead of a separate folder picker). Kept in the view model, so it
+     * stays while the user browses, opens Favorites or switches tabs; nothing changes on Drive
+     * until a move is confirmed in DriveMoveDialog.
+     */
+    val driveMoveClip = MutableStateFlow<com.drivelift.app.data.DriveMoveClip?>(null)
+
+    /** Puts [files] (folders are left out) from folder [fromFolderId] in the move pill. */
+    /**
+     * Puts the selected files in the move pill and names any folders left out. A selection with no
+     * files keeps whatever already waits in the pill. True when the pill now holds the selection.
+     */
+    fun holdForMove(files: List<com.drivelift.app.drive.DriveFile>, fromFolderId: String, fromName: String): Boolean {
+        com.drivelift.app.data.holdNotice(files)?.let { messages.tryEmit(it) }
+        val clip = com.drivelift.app.data.holdForMove(files, fromFolderId, fromName, prefs.accountEmail) ?: return false
+        driveMoveClip.value = clip
+        return true
+    }
+
+    /** Empties the move pill. Nothing on Drive changes. */
+    fun cancelMoveClip() {
+        driveMoveClip.value = null
+    }
+
     /** A confirmed Drive move batch: running, then its outcome until the screen applies it. */
     data class DriveMoveRun(val working: Boolean, val outcome: com.drivelift.app.data.DriveMoveOutcome? = null)
 
@@ -1203,6 +1230,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveMoveRun.value = DriveMoveRun(working = true)
         viewModelScope.launch {
             val outcome = moveDriveFiles(plan)
+            driveMoveClip.value = driveMoveClip.value?.afterMove(plan, outcome)
             driveMoveRun.value = DriveMoveRun(working = false, outcome = outcome)
             messages.emit(outcome.message())
         }
@@ -1253,6 +1281,184 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         return com.drivelift.app.data.DriveMoveOutcome(
             plan.toName, moved, failed, skipped, fromFolderId = plan.fromFolderId, toFolderId = plan.toFolderId,
         )
+    }
+
+    // ------------------------------------------------------------------ phone move (19 Nov 2026)
+
+    /**
+     * Phone files held in the move pill: chosen in one phone folder, waiting for "Move here" in
+     * another. Holding them changes nothing; the move is planned and confirmed like a Drive move.
+     */
+    val phoneMoveClip = MutableStateFlow<com.drivelift.app.data.PhoneMoveClip?>(null)
+
+    /** Puts the phone files [ids] of folder [bucketId] in the move pill, in listing order. */
+    fun holdPhoneForMove(ids: Collection<Long>, bucketId: Long, folderName: String) {
+        val chosen = ids.toSet()
+        val items = media.value.filter { it.id in chosen && it.bucketId == bucketId }
+        phoneMoveClip.value = com.drivelift.app.data.holdPhoneForMove(items, bucketId, folderName)
+    }
+
+    /** Empties the phone move pill. Nothing on the phone changes. */
+    fun cancelPhoneMoveClip() {
+        phoneMoveClip.value = null
+    }
+
+    /**
+     * Works out moving the pill's files into phone folder [toBucketId]. The files are read from
+     * the listing again (files gone since are dropped from the pill) and the names already in the
+     * destination are gathered. Null when the pill is empty or the folder is no longer listed.
+     */
+    suspend fun planPhoneMove(toBucketId: Long): com.drivelift.app.data.PhoneMovePlan? {
+        val clip = phoneMoveClip.value?.refreshed(media.value)
+        phoneMoveClip.value = clip
+        if (clip == null) return null
+        val dest = media.value.firstOrNull { it.bucketId == toBucketId } ?: return null
+        val listed = media.value.filter { it.bucketId == toBucketId && it.relativePath == dest.relativePath && it.volume == dest.volume }.map { it.name }
+        val resolver = getApplication<android.app.Application>().contentResolver
+        val others = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            graph.folderNames(resolver, dest.relativePath)
+        }
+        val rows = graph.db.transfers().byMediaUris(clip.items.map { it.uri.toString() })
+        return com.drivelift.app.data.planPhoneMove(
+            clip.items, rows, toBucketId, dest.relativePath, dest.bucketName, (listed + others).distinct(), dest.volume,
+        )
+    }
+
+    /** A confirmed phone move: running, then its outcome until the screen has shown it. */
+    data class PhoneMoveRun(val working: Boolean, val outcome: com.drivelift.app.data.PhoneMoveOutcome? = null)
+
+    val phoneMoveRun = MutableStateFlow<PhoneMoveRun?>(null)
+
+    /**
+     * Files of a confirmed phone move that Android needs the user's write consent for (files
+     * DriveLift does not own), with what was done before asking. Kept here, outside the lock-gated
+     * screen, so the app locking while Android's dialog is open keeps it. PhoneMoveHost asks.
+     */
+    data class PendingPhoneMove(
+        val plan: com.drivelift.app.data.PhoneMovePlan,
+        val needConsent: List<com.drivelift.app.data.MediaItem>,
+        val moved: List<com.drivelift.app.data.MediaItem>,
+        val failed: List<Pair<com.drivelift.app.data.MediaItem, String>>,
+        val skipped: List<com.drivelift.app.data.MediaItem>,
+        val launched: Boolean = false,
+    )
+
+    val pendingPhoneMove = MutableStateFlow<PendingPhoneMove?>(null)
+
+    /** The last phone move message; read by tests. */
+    @Volatile
+    var lastPhoneMove: String? = null
+        private set
+
+    private class PhoneMoveTally {
+        val moved = mutableListOf<com.drivelift.app.data.MediaItem>()
+        val failed = mutableListOf<Pair<com.drivelift.app.data.MediaItem, String>>()
+        val skipped = mutableListOf<com.drivelift.app.data.MediaItem>()
+        val needConsent = mutableListOf<com.drivelift.app.data.MediaItem>()
+    }
+
+    /**
+     * Moves exactly the plan's eligible files, one at a time. Before each file the transfers are
+     * read again (a file a transfer now depends on stays where it is). After each move the folder
+     * is read back: a file Android put anywhere else is reported, not counted as moved. Files
+     * Android needs consent for are gathered and asked about once, together.
+     */
+    fun startPhoneMove(plan: com.drivelift.app.data.PhoneMovePlan) {
+        if (phoneMoveRun.value?.working == true || pendingPhoneMove.value != null) return
+        phoneMoveRun.value = PhoneMoveRun(working = true)
+        viewModelScope.launch {
+            val tally = PhoneMoveTally()
+            applyPhoneMoves(plan, plan.eligible, tally, consentGiven = false)
+            if (tally.needConsent.isNotEmpty()) {
+                pendingPhoneMove.value = PendingPhoneMove(
+                    plan, tally.needConsent.toList(), tally.moved.toList(), tally.failed.toList(), tally.skipped.toList(),
+                )
+            } else {
+                finishPhoneMove(plan, tally)
+            }
+        }
+    }
+
+    private suspend fun applyPhoneMoves(
+        plan: com.drivelift.app.data.PhoneMovePlan,
+        files: List<com.drivelift.app.data.MediaItem>,
+        tally: PhoneMoveTally,
+        consentGiven: Boolean,
+    ) {
+        val resolver = getApplication<android.app.Application>().contentResolver
+        for (item in files) {
+            val rows = graph.db.transfers().byMediaUris(listOf(item.uri.toString()))
+            if (rows.any { it.status in com.drivelift.app.data.TRANSFER_HOLDS_FILE }) {
+                tally.skipped += item
+                continue
+            }
+            val failure: Exception? = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                try {
+                    graph.moveMedia(resolver, item.uri, plan.toRelativePath)
+                    null
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    e
+                }
+            }
+            when {
+                failure is SecurityException && !consentGiven -> tally.needConsent += item
+                failure is SecurityException -> tally.failed += item to "Android did not allow DriveLift to move it"
+                failure != null -> tally.failed += item to com.drivelift.app.transfer.describeError(failure)
+                else -> {
+                    val now = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+                        graph.mediaFolder(resolver, item.uri)
+                    }
+                    if (now == plan.toRelativePath) tally.moved += item
+                    else tally.failed += item to (now?.let { "Android kept it in $it" } ?: "Android did not confirm where it is now")
+                }
+            }
+        }
+    }
+
+    private suspend fun finishPhoneMove(plan: com.drivelift.app.data.PhoneMovePlan, tally: PhoneMoveTally) {
+        val outcome = com.drivelift.app.data.PhoneMoveOutcome(plan.toName, tally.moved, tally.failed, tally.skipped)
+        phoneMoveClip.value = phoneMoveClip.value?.afterMove(plan, outcome)
+        if (outcome.moved.isNotEmpty()) graph.media.refresh()
+        lastPhoneMove = outcome.message()
+        phoneMoveRun.value = PhoneMoveRun(working = false, outcome = outcome)
+        messages.emit(outcome.message())
+    }
+
+    /** The screen has shown the outcome. */
+    fun phoneMoveApplied() {
+        if (phoneMoveRun.value?.working == false) phoneMoveRun.value = null
+    }
+
+    /** Marks the pending move as shown to Android (never twice) and builds Android's request. */
+    fun startPendingPhoneMove(): android.app.PendingIntent? {
+        val pending = pendingPhoneMove.value?.takeIf { !it.launched } ?: return null
+        pendingPhoneMove.value = pending.copy(launched = true)
+        val resolver = getApplication<android.app.Application>().contentResolver
+        return graph.writeRequest(resolver, pending.needConsent.map { it.uri })
+    }
+
+    /**
+     * Android answered its write-consent dialog (or could not show it). Only on consent are the
+     * remaining files moved; on refusal they stay where they are and are reported.
+     */
+    fun pendingPhoneMoveFinished(confirmed: Boolean, failure: String? = null) {
+        val pending = pendingPhoneMove.value ?: return
+        pendingPhoneMove.value = null
+        viewModelScope.launch {
+            val tally = PhoneMoveTally().apply {
+                moved += pending.moved
+                failed += pending.failed
+                skipped += pending.skipped
+            }
+            when {
+                failure != null -> pending.needConsent.forEach { tally.failed += it to "Android could not open the move request: $failure" }
+                !confirmed -> pending.needConsent.forEach { tally.failed += it to "You did not allow the move" }
+                else -> applyPhoneMoves(pending.plan, pending.needConsent, tally, consentGiven = true)
+            }
+            finishPhoneMove(pending.plan, tally)
+        }
     }
 
     // ------------------------------------------------------------------ rename (issue #42)
@@ -1425,6 +1631,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         driveRenameRun.value = DriveRenameRun(working = true)
         viewModelScope.launch {
             val outcome = renameDriveFile(plan, newName)
+            outcome.renamed?.let { renamed -> driveMoveClip.value = driveMoveClip.value?.renamed(renamed) }
             driveRenameRun.value = DriveRenameRun(working = false, outcome = outcome)
             // A taken name is shown in the dialog, which stays open for another name.
             if (!outcome.nameTaken) messages.emit(outcome.message())

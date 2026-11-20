@@ -39,7 +39,7 @@ jobs:
         run: ./gradlew testDebugUnitTest -PrecordScreenshots
       - name: Require every screenshot
         run: |
-          expected=194
+          expected=200
           actual=$(ls app/build/outputs/screenshots/*.png 2>/dev/null | wc -l)
           echo "screenshots: $actual of $expected"
           test "$actual" -eq "$expected"

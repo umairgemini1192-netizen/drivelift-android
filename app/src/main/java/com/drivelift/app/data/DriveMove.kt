@@ -88,3 +88,65 @@ data class DriveMoveOutcome(
         return listOfNotNull(base, held, untried).joinToString("; ").ifEmpty { "Nothing was moved." }
     }
 }
+
+/**
+ * Drive files waiting in the move pill: chosen with Move in folder [fromFolderId], to be moved
+ * with "Move here" in whichever folder the user opens next. Holding files changes nothing on
+ * Drive; the move itself is planned with [planDriveMove] and confirmed like any other move.
+ */
+data class DriveMoveClip(
+    /** The files, in the order they were selected. Never folders. */
+    val files: List<DriveFile>,
+    val fromFolderId: String,
+    /** The source folder's own name, shown on the pill. */
+    val fromName: String,
+    /** The account the files were listed for; the pill is dropped when another one connects. */
+    val account: String?,
+) {
+    val totalBytes: Long get() = files.sumOf { it.size }
+
+    /** Whether the pill can move its files into [folderId] (not the folder they are in). */
+    fun canMoveInto(folderId: String): Boolean = folderId != fromFolderId
+
+    /** The pill without [ids] (for example files that went to Drive's trash); null once empty. */
+    fun without(ids: Set<String>): DriveMoveClip? =
+        copy(files = files.filterNot { it.id in ids }).takeIf { it.files.isNotEmpty() }
+
+    /** The pill with [file]'s new name, after a rename. */
+    fun renamed(file: DriveFile): DriveMoveClip =
+        copy(files = files.map { if (it.id == file.id) file else it })
+
+    /**
+     * The pill after a confirmed move of [plan] from its folder: moved files leave it, and so do
+     * files no move can take (held by a transfer, or left in place because one came to depend on
+     * them). Files that failed or were not tried stay, so "Move here" can try them again. A move
+     * from another folder leaves the pill as it is.
+     */
+    fun afterMove(plan: DriveMovePlan, outcome: DriveMoveOutcome): DriveMoveClip? {
+        if (plan.fromFolderId != fromFolderId) return this
+        val done = (outcome.moved + outcome.skipped + plan.heldByTransfer + plan.folders).map { it.id }.toSet()
+        return without(done)
+    }
+}
+
+/** A move pill for [selected] in folder [fromFolderId], or null when no file is selected. */
+fun holdForMove(selected: List<DriveFile>, fromFolderId: String, fromName: String, account: String?): DriveMoveClip? {
+    val files = selected.filterNot { it.isFolder }
+    if (files.isEmpty()) return null
+    return DriveMoveClip(files, fromFolderId, fromName, account?.takeIf { it.isNotBlank() })
+}
+
+/**
+ * What to tell the user when Move leaves folders of [selected] out of the pill, or null when the
+ * selection has no folders. Folders are never moved, so they are named rather than dropped silently.
+ */
+fun holdNotice(selected: List<DriveFile>): String? {
+    val folders = selected.count { it.isFolder }
+    if (folders == 0) return null
+    val files = selected.size - folders
+    return when {
+        files == 0 -> "Folders can't be moved yet. Select files to move."
+        folders == 1 -> "1 folder stays where it is; folders can't be moved yet."
+        else -> "$folders folders stay where they are; folders can't be moved yet."
+    }
+}
