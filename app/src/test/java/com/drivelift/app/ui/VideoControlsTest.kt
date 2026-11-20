@@ -17,7 +17,6 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.foundation.layout.padding
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.test.core.app.ActivityScenario
 import com.drivelift.app.data.frameFileName
 import org.junit.Assert.assertEquals
@@ -106,6 +105,12 @@ class VideoControlsTest {
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
             }
+            // At normal text size 0.5x and 1x sit side by side, both fully on screen (issue #14).
+            val screenWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
+            val slow = compose.onNodeWithContentDescription("Speed 0.5x").fetchSemanticsNode().boundsInRoot
+            val normal = compose.onNodeWithContentDescription("Speed 1x").fetchSemanticsNode().boundsInRoot
+            assertTrue("0.5x and 1x must both be fully visible ($slow, $normal, screen $screenWidth)", normal.right <= screenWidth + 1f)
+            assertTrue("0.5x comes before 1x on the same line", slow.right <= normal.left && slow.top == normal.top)
             // The current speed is marked; the others are not.
             compose.onNodeWithContentDescription("Speed 1x").assert(androidx.compose.ui.test.isSelected())
             compose.onNodeWithContentDescription("Speed 0.5x").assert(androidx.compose.ui.test.isNotSelected())
@@ -155,15 +160,22 @@ class VideoControlsTest {
                     "Step back about one frame", "Step forward about one frame",
                 ) + VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }) {
                     val node = compose.onNodeWithContentDescription(label)
-                    // The speed choices scroll sideways on a narrow screen: each must be reachable.
-                    if (label.startsWith("Speed ")) {
-                        node.performScrollTo()
-                        pump()
-                    }
                     node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
+                    // The later speed choices may sit past the edge of the scrolling Speed line,
+                    // checked below; every other control, and the slowest speed, is fully on screen.
+                    if (label.startsWith("Speed ") && label != "Speed 0.5x") continue
                     val bounds = node.fetchSemanticsNode().boundsInRoot
                     org.junit.Assert.assertTrue("$label is cut off ($bounds, screen $rootWidth)", bounds.right <= rootWidth + 1f)
                 }
+                // The Speed line itself fits and scrolls sideways, so every choice can be reached.
+                // (Scrolling is not performed here: the paused test clock would never finish it.)
+                val speedGroup = compose.onNodeWithTag("video-speed").fetchSemanticsNode().boundsInRoot
+                org.junit.Assert.assertTrue("The Speed line is cut off ($speedGroup)", speedGroup.right <= rootWidth + 1f)
+                compose.onNode(
+                    androidx.compose.ui.test.SemanticsMatcher.keyIsDefined(
+                        androidx.compose.ui.semantics.SemanticsProperties.HorizontalScrollAxisRange,
+                    ) and androidx.compose.ui.test.hasAnyAncestor(androidx.compose.ui.test.hasTestTag("video-speed")),
+                ).assertExists()
                 // Owner decision #32: the quality line wraps but is never cut short.
                 val layouts = mutableListOf<androidx.compose.ui.text.TextLayoutResult>()
                 compose.onNodeWithTag("video-quality").fetchSemanticsNode()
