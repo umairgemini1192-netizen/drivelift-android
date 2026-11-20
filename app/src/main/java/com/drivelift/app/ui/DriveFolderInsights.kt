@@ -36,8 +36,9 @@ import com.drivelift.app.data.ScanStop
 
 /*
  * Storage insights: Google Drive folder details (issue #42). File counts and sizes per My Drive
- * folder, counted on request from a read-only listing. Kept apart from the account quota, which
- * Drive, Gmail and Google Photos share.
+ * folder, counted on request from a read-only listing. The last count is saved on the phone and
+ * shown at the next launch, then refreshed in the background when Storage opens (issue #14). Kept
+ * apart from the account quota, which Drive, Gmail and Google Photos share.
  */
 
 /** Said under every count: what the folder figures are, and what they are not. */
@@ -62,26 +63,65 @@ internal fun incompleteReason(stop: ScanStop, items: Int): String = when (stop) 
     is ScanStop.Error -> "Incomplete: the count stopped after ${num(items)} items. ${stop.message}"
 } + " Some folders may be missing files, so the real totals can be higher."
 
-/** The lead panel of the Drive folders section: the state of the count and what it covers. */
+/** "at 14:05" on the day of the count, "on 19 Nov 2026 at 14:05" on a later day. */
+internal fun countedWhen(at: Long, now: Long): String {
+    val zone = java.time.ZoneId.systemDefault()
+    val day = java.time.Instant.ofEpochMilli(at).atZone(zone).toLocalDate()
+    val today = java.time.Instant.ofEpochMilli(now).atZone(zone).toLocalDate()
+    return if (day == today) {
+        "at ${formatClock(at)}"
+    } else {
+        "on ${day.format(java.time.format.DateTimeFormatter.ofPattern("d MMM yyyy"))} at ${formatClock(at)}"
+    }
+}
+
+/** Why a recount left the earlier figures in place, as one or two sentences. */
+internal fun refreshMissReason(miss: AppViewModel.DriveFolderScan.RefreshMiss): String = when (val stop = miss.stop) {
+    ScanStop.ByUser -> "You stopped the recount, so these figures are from the earlier count."
+    ScanStop.TooMany ->
+        "The recount stopped at ${num(DRIVE_SCAN_MAX_ITEMS)} items, so these figures are from the earlier count."
+    ScanStop.AccountChanged -> "The connected account changed during the recount."
+    is ScanStop.Error -> "The recount did not finish. ${stop.message} These figures are from the earlier count."
+}
+
+/**
+ * The lead panel of the Drive folders section: the state of the count and what it covers. The
+ * last count is saved on the phone, so its figures show at launch, before Drive connects, and stay
+ * on screen while a recount runs.
+ */
 @Composable
 internal fun DriveFoldersSummary(
     scan: AppViewModel.DriveFolderScan,
     conn: DriveConn,
     openId: String?,
+    now: Long,
     onStart: () -> Unit,
     onStop: () -> Unit,
     onConnect: () -> Unit,
 ) {
-    val context = LocalContext.current
+    val shown = scan as? AppViewModel.DriveFolderScan.Done ?: (scan as? AppViewModel.DriveFolderScan.Running)?.previous
     GlassPanel(Modifier.fillMaxWidth().testTag("drive-folders")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)) {
             if (conn != DriveConn.CONNECTED) {
-                Text("Google Drive is not connected, so its folders are not counted.", style = MaterialTheme.typography.bodyMedium)
+                Text(
+                    if (shown != null) {
+                        "Google Drive is not connected. These are the figures saved from the last count."
+                    } else {
+                        "Google Drive is not connected, so its folders are not counted."
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                )
                 if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
                     CircularProgressIndicator(Modifier.padding(top = Tokens.Small).size(Tokens.Icon), strokeWidth = Tokens.Stroke)
                 } else {
                     Button(onClick = onConnect, modifier = Modifier.padding(top = Tokens.Small)) { Text("Connect") }
                 }
+                if (shown == null) return@Column
+                Spacer(Modifier.height(Tokens.Medium))
+            }
+            if (scan is AppViewModel.DriveFolderScan.Running && scan.previous != null) {
+                RecountProgress(scan, onStop)
+                DriveCountFigures(scan.previous, openId, now, onStart = null, onConnect = onConnect)
                 return@Column
             }
             when (scan) {
@@ -127,53 +167,101 @@ internal fun DriveFoldersSummary(
                         Button(onClick = onStart, modifier = Modifier.padding(top = Tokens.Medium)) { Text("Try again") }
                     }
                 }
-                is AppViewModel.DriveFolderScan.Done -> {
-                    val tree = scan.tree
-                    val current = openId?.let { tree.folders[it] } ?: tree.root
-                    val path = tree.pathTo(current.id)
-                    Text(
-                        path.joinToString(" / ") { it.name },
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    Text(
-                        "${formatBytes(context, current.bytes)} in ${files(current.fileCount)}" +
-                            if (current.folderCount > 0) ", ${folders(current.folderCount)}" else "",
-                        style = MaterialTheme.typography.bodyLarge,
-                    )
-                    Text(
-                        DRIVE_FOLDERS_SUBFOLDERS,
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    scan.stop?.let { stop ->
-                        Text(
-                            incompleteReason(stop, scan.items),
-                            style = MaterialTheme.typography.bodyMedium,
-                            modifier = Modifier.padding(top = Tokens.Small).testTag("drive-folders-incomplete"),
-                        )
-                    }
-                    driveFolderNotes(context, current, if (current.id == tree.rootId) tree.outsideCount else 0).forEach { note ->
-                        Text(
-                            note,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            modifier = Modifier.padding(top = Tokens.Small),
-                        )
-                    }
-                    Text(
-                        // An incomplete count is not called counted: it read only part of the Drive.
-                        "${if (scan.complete) "Counted" else "Partly counted"} at ${formatClock(scan.at)} " +
-                            "for ${scan.account}. $DRIVE_FOLDERS_SCOPE",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = Tokens.Small),
-                    )
-                    TextButton(onClick = onStart, modifier = Modifier.padding(top = Tokens.Tiny)) { Text("Count again") }
-                }
+                is AppViewModel.DriveFolderScan.Done -> DriveCountFigures(
+                    scan, openId, now,
+                    onStart = onStart.takeIf { conn == DriveConn.CONNECTED },
+                    onConnect = onConnect,
+                )
             }
         }
+    }
+}
+
+/** A recount running behind the figures of the earlier count. */
+@Composable
+private fun RecountProgress(scan: AppViewModel.DriveFolderScan.Running, onStop: () -> Unit) {
+    Column(Modifier.testTag("drive-folders-recount")) {
+        Text(
+            "Counting again in the background: ${num(scan.items)} items read. The figures below stay until it finishes.",
+            style = MaterialTheme.typography.bodyMedium,
+        )
+        LinearProgressIndicator(
+            modifier = Modifier.fillMaxWidth().padding(vertical = Tokens.Small).height(Tokens.ProgressHeight),
+            color = MaterialTheme.colorScheme.tertiary,
+            trackColor = GlassPalette.Dim,
+        )
+        OutlinedButton(onClick = onStop, enabled = !scan.stopping) {
+            Text(if (scan.stopping) "Stopping after this page" else "Stop")
+        }
+        Spacer(Modifier.height(Tokens.Medium))
+    }
+}
+
+/** The figures of one count: the open folder, its totals, what they leave out, and when. */
+@Composable
+private fun DriveCountFigures(
+    scan: AppViewModel.DriveFolderScan.Done,
+    openId: String?,
+    now: Long,
+    /** Null while a recount runs or Drive is not connected: no new count can start then. */
+    onStart: (() -> Unit)?,
+    onConnect: () -> Unit,
+) {
+    val context = LocalContext.current
+    val tree = scan.tree
+    val current = openId?.let { tree.folders[it] } ?: tree.root
+    val path = tree.pathTo(current.id)
+    scan.refreshMiss?.let { miss ->
+        Text(
+            refreshMissReason(miss),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(bottom = Tokens.Small).testTag("drive-folders-refresh-miss"),
+        )
+        if ((miss.stop as? ScanStop.Error)?.needsSignIn == true) {
+            Button(onClick = onConnect, modifier = Modifier.padding(bottom = Tokens.Small)) { Text("Reconnect") }
+        }
+    }
+    Text(
+        path.joinToString(" / ") { it.name },
+        style = MaterialTheme.typography.titleSmall,
+        maxLines = 2,
+        overflow = TextOverflow.Ellipsis,
+    )
+    Text(
+        "${formatBytes(context, current.bytes)} in ${files(current.fileCount)}" +
+            if (current.folderCount > 0) ", ${folders(current.folderCount)}" else "",
+        style = MaterialTheme.typography.bodyLarge,
+    )
+    Text(
+        DRIVE_FOLDERS_SUBFOLDERS,
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+    )
+    scan.stop?.let { stop ->
+        Text(
+            incompleteReason(stop, scan.items),
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(top = Tokens.Small).testTag("drive-folders-incomplete"),
+        )
+    }
+    driveFolderNotes(context, current, if (current.id == tree.rootId) tree.outsideCount else 0).forEach { note ->
+        Text(
+            note,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(top = Tokens.Small),
+        )
+    }
+    Text(
+        // An incomplete count is not called counted: it read only part of the Drive.
+        "${if (scan.complete) "Counted" else "Partly counted"} ${countedWhen(scan.at, now)} " +
+            "for ${scan.account}. $DRIVE_FOLDERS_SCOPE",
+        style = MaterialTheme.typography.bodySmall,
+        color = MaterialTheme.colorScheme.onSurfaceVariant,
+        modifier = Modifier.padding(top = Tokens.Small),
+    )
+    if (onStart != null) {
+        TextButton(onClick = onStart, modifier = Modifier.padding(top = Tokens.Tiny)) { Text("Count again") }
     }
 }
 
