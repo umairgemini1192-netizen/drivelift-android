@@ -46,6 +46,58 @@ data class DriveRenderOperation(
     val downloadUri: String?,
 )
 
+/**
+ * A Google Vids render that Drive could not finish into a playable link. Its message is written
+ * for the person watching, so the player shows it as it is. [operationStillValid] is true when
+ * Drive may still be preparing the video (the wait ran out), so Try again can go on waiting for
+ * the same render instead of starting a new one.
+ */
+class VidsRenderException(
+    message: String,
+    val operationStillValid: Boolean = false,
+) : java.io.IOException(message)
+
+const val VIDS_STILL_PREPARING = "Drive is still preparing this video. Try again later."
+const val VIDS_UNTRUSTED_LINK = "Drive returned a video link to an untrusted address, so DriveLift did not open it."
+const val VIDS_RENDER_FAILED = "Drive could not prepare this video."
+
+/**
+ * What [DriveClient] remembers about one Vids render, so turning the phone, a reconnect or
+ * reopening the video does not make Drive render it again from the start.
+ *
+ * - [Running] keeps the operation name while Drive renders. Drive keeps an operation for at least
+ *   12 hours (long-running operations guide), so polling it again is allowed for that long.
+ * - [Ready] keeps the finished link. Drive does not say how long a download link lasts, and
+ *   polling a finished operation may be refused (403), so the link itself is kept, for
+ *   [VIDS_READY_REUSE_MS]. If it stops working, the player forgets it and Try again renders anew.
+ */
+sealed interface VidsRenderMemo {
+    val at: Long
+
+    data class Running(val operationName: String, override val at: Long) : VidsRenderMemo
+    data class Ready(val uri: HttpUrl, override val at: Long) : VidsRenderMemo
+}
+
+/** One render per account, file and file version: an edited Vids file is rendered again. */
+data class VidsRenderKey(val account: String, val fileId: String, val version: String)
+
+fun vidsRenderKey(account: String, file: DriveFile) =
+    VidsRenderKey(account.trim().lowercase(), file.id, file.modifiedTime.orEmpty())
+
+const val VIDS_RUNNING_REUSE_MS = 12L * 60L * 60L * 1000L
+const val VIDS_READY_REUSE_MS = 60L * 60L * 1000L
+
+/** [memo] when it may still be used at [now]; null when it is too old, from the future, or absent. */
+fun reusableVidsRender(memo: VidsRenderMemo?, now: Long): VidsRenderMemo? {
+    if (memo == null) return null
+    val age = now - memo.at
+    val limit = when (memo) {
+        is VidsRenderMemo.Running -> VIDS_RUNNING_REUSE_MS
+        is VidsRenderMemo.Ready -> VIDS_READY_REUSE_MS
+    }
+    return memo.takeIf { age in 0 until limit }
+}
+
 /** Poll failures in a row that [awaitVidsRender] asks again after, before it gives up. */
 const val VIDS_POLL_RETRIES = 3
 
@@ -70,15 +122,15 @@ suspend fun awaitVidsRender(
     retryable: (Exception) -> Boolean = { false },
 ): HttpUrl {
     var operation = start()
-    operation.errorMessage?.let { throw java.io.IOException(it) }
+    operation.errorMessage?.let { throw VidsRenderException(it) }
     val name = operation.name?.takeIf { it.isNotBlank() }
-        ?: throw java.io.IOException("Drive did not start the video render")
+        ?: throw VidsRenderException("Drive did not start preparing this video.")
     val deadline = now() + timeoutMillis
     var attempt = 0
     var failuresInARow = 0
     while (!operation.done) {
         if (now() > deadline) {
-            throw java.io.IOException("Drive is still preparing this video. Try again later.")
+            throw VidsRenderException(VIDS_STILL_PREPARING, operationStillValid = true)
         }
         wait(drivePollDelayMillis(attempt++))
         operation = try {
@@ -90,11 +142,11 @@ suspend fun awaitVidsRender(
             continue
         }
         failuresInARow = 0
-        operation.errorMessage?.let { throw java.io.IOException(it) }
+        operation.errorMessage?.let { throw VidsRenderException(it) }
     }
     val uri = operation.downloadUri?.toHttpUrlOrNull()
-        ?: throw java.io.IOException("Drive returned no video link")
-    if (!isTrusted(uri)) throw java.io.IOException("Blocked media request to untrusted host")
+        ?: throw VidsRenderException("Drive returned no video link")
+    if (!isTrusted(uri)) throw VidsRenderException(VIDS_UNTRUSTED_LINK)
     return uri
 }
 

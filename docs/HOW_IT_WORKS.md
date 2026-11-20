@@ -469,6 +469,36 @@ For variable-frame-rate video (phones record this way in low light) or a file wi
 rate, a step can occasionally repeat or skip a frame. Exact adjacent-frame navigation needs the
 real timestamp of each frame and is not finished; it is tracked on issue #21.
 
+### Google Vids (`drive/DriveClient.kt`, `drive/DrivePreviewSupport.kt`)
+
+A Google Vids file has no video bytes of its own. Drive renders it to MP4 on request
+(`files.download` with `mimeType=video/mp4`). This is a long-running operation, and DriveLift
+polls it (2 s, doubling, at most 15 s apart) until Drive returns a download link. The player
+streams from that link only when it is https on a trusted Google host, and every redirect hop is
+checked the same way before the token is sent. The wait gives up after 15 minutes with "Drive is
+still preparing this video".
+
+The render is kept per account, file and file version, for as long as the app runs, so it is not
+started again when the screen is rebuilt:
+
+- **While Drive renders**, the operation is kept, and opening the video again polls that same
+  operation. Turning the phone, a reconnect, or Try again after the 15-minute wait all count as
+  opening it again. Drive keeps an operation for at least 12 hours. If Drive refuses the poll
+  (403, 404 or 410, for example once the operation has finished or expired), one new render is
+  started.
+- **Once the link is ready**, the link itself is kept for an hour, because Drive may refuse a poll
+  of a finished operation. If the player cannot use the link, it is forgotten, and Try again
+  renders the file anew.
+- **A render that failed** (Drive's error, no link, or an untrusted link) is not kept.
+
+Messages on the Could not play video card are written for video. Examples are "Drive is still
+preparing this video", or "This video was not found in Google Drive, or this account cannot open
+it". The transfer wording ("Connection problem", "destination folder") is kept for real
+connection problems only.
+
+Not verified on a phone: a real Vids render, how long a large one takes, whether a kept link still
+plays after a long pause, and seeking on the rendered MP4.
+
 ## Source map
 
 | File | Responsibility |

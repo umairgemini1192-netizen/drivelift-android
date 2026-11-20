@@ -2369,6 +2369,36 @@ class ScreenshotTest {
         ) { vm -> AppRoot(vm) }
     }
 
+    /**
+     * A Google Vids render that ran past the 15 minute wait. The card says Drive is still
+     * preparing the video, not "Connection problem" (finding 3 of the Preview 27 audit).
+     */
+    @Test
+    fun driveVidsStillPreparing() {
+        grantMedia()
+        val vids = DriveFile("v1", "Untitled video", com.drivelift.app.drive.GOOGLE_VIDS_MIME, 0, null, false)
+        eachVariant(
+            "drive-vids-still-preparing",
+            expect = com.drivelift.app.drive.VIDS_STILL_PREPARING,
+            connected = true,
+            tab = AppViewModel.TAB_DRIVE,
+            drive = FakeDrive(
+                list = { id, _ -> if (id == DriveClient.ROOT) listOf(vids) else emptyList() },
+                videoError = com.drivelift.app.drive.VidsRenderException(
+                    com.drivelift.app.drive.VIDS_STILL_PREPARING,
+                    operationStillValid = true,
+                ),
+            ),
+            act = {
+                waitFor("Untitled video")
+                compose.onNodeWithText("Untitled video").performClick()
+                waitFor("Could not play video")
+                waitFor(com.drivelift.app.drive.VIDS_STILL_PREPARING)
+                assertTrue(compose.onAllNodesWithText("Connection problem", substring = true).fetchSemanticsNodes().isEmpty())
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
     @Test
     fun driveViewerAuthExpired() {
         grantMedia()
@@ -4124,8 +4154,12 @@ class ScreenshotTest {
         },
         private val create: suspend (name: String) -> DriveFile = { name -> folder("new-folder", name) },
         private val failAuthOnPreview: Boolean = false,
+        /** What opening a video throws; the plain "not available" error unless a test sets it. */
+        private val videoError: Exception = IOException("Video playback is not available"),
     ) : DriveFolders {
         override suspend fun listChildren(folderId: String, foldersOnly: Boolean) = list(folderId, foldersOnly)
+
+        override suspend fun openVideoStream(file: DriveFile): com.drivelift.app.drive.DriveVideoStream = throw videoError
 
         /** Files the app asked to move to Drive's trash, in order. */
         val trashedIds = mutableListOf<String>()

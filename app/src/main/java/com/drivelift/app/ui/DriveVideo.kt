@@ -67,7 +67,10 @@ import androidx.media3.exoplayer.DefaultLoadControl
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.exoplayer.video.VideoFrameMetadataListener
 import androidx.media3.exoplayer.source.DefaultMediaSourceFactory
+import com.drivelift.app.drive.AccountChangedException
 import com.drivelift.app.drive.AuthRequiredException
+import com.drivelift.app.drive.DriveHttpException
+import com.drivelift.app.drive.VidsRenderException
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DriveVideoStream
 import com.drivelift.app.transfer.describeError
@@ -129,6 +132,21 @@ internal fun videoProblemFor(error: PlaybackException, local: Boolean = false): 
     }
 }
 
+/**
+ * Why a Drive video could not be opened, for the Could not play video card. The shared
+ * [describeError] is written for transfers ("Connection problem", "destination folder"), which
+ * reads wrong here, so the cases a video meets get their own words.
+ */
+internal fun describeVideoError(e: Throwable): String = when {
+    e is VidsRenderException -> e.message ?: com.drivelift.app.drive.VIDS_RENDER_FAILED
+    e is AccountChangedException -> "The connected Google account changed. Open the video again."
+    e is DriveHttpException && e.code == 404 ->
+        "This video was not found in Google Drive, or this account cannot open it."
+    e is DriveHttpException && e.code == 403 && e.reason?.contains("RateLimit", ignoreCase = true) != true ->
+        "Google Drive did not allow this account to play this video."
+    else -> describeError(e)
+}
+
 /** Player errors that, for a file on this phone, mean it could not be read. */
 private val LOCAL_READ_ERRORS = setOf(
     PlaybackException.ERROR_CODE_IO_FILE_NOT_FOUND,
@@ -167,7 +185,7 @@ internal fun VideoPreviewContent(
         } catch (_: AuthRequiredException) {
             problem = VideoProblem.AuthExpired
         } catch (e: Exception) {
-            problem = VideoProblem.Failed(describeError(e))
+            problem = VideoProblem.Failed(describeVideoError(e))
         }
     }
 
@@ -177,7 +195,13 @@ internal fun VideoPreviewContent(
             val source = remember(current) {
                 VideoSource(file.id, file.name, current.url, OkHttpDataSource.Factory(current.callFactory), local = false)
             }
-            VideoPlayer(vm, source, onProblem = { problem = it }, onChromeVisibleChange = onChromeVisibleChange)
+            VideoPlayer(
+                vm,
+                source,
+                // A stream the player could not use is not kept: Try again asks Drive afresh.
+                onProblem = { vm.forgetVideoStream(file); problem = it },
+                onChromeVisibleChange = onChromeVisibleChange,
+            )
         } else {
             if (cachedThumb != null) {
                 Image(
