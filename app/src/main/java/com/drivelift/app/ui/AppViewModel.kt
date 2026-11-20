@@ -682,7 +682,16 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
      */
     sealed interface DriveFolderScan {
         data object Idle : DriveFolderScan
-        data class Running(val account: String, val items: Int, val pages: Int, val stopping: Boolean = false) : DriveFolderScan
+
+        /** Counting. [previous] is the earlier count, still shown while this one runs. */
+        data class Running(
+            val account: String,
+            val items: Int,
+            val pages: Int,
+            val stopping: Boolean = false,
+            val previous: Done? = null,
+        ) : DriveFolderScan
+
         data class Done(
             val account: String,
             val tree: com.drivelift.app.data.DriveFolderTree,
@@ -690,9 +699,14 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             val at: Long,
             /** Null when every page was read; otherwise why the count stopped early. */
             val stop: com.drivelift.app.data.ScanStop?,
+            /** Set when a later count did not finish and these earlier figures were kept instead. */
+            val refreshMiss: RefreshMiss? = null,
         ) : DriveFolderScan {
             val complete: Boolean get() = stop == null
         }
+
+        /** Why a recount did not replace the figures shown: how it stopped, after how many items. */
+        data class RefreshMiss(val stop: com.drivelift.app.data.ScanStop, val items: Int)
 
         /** Nothing could be counted. */
         data class Failed(val account: String, val message: String, val needsSignIn: Boolean) : DriveFolderScan
@@ -717,6 +731,22 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         synchronized(driveScanLock) { if (run == driveScanRun) driveFolderScan.value = state }
     }
 
+    /** The account whose count is saved on the phone, as far as this view model knows. */
+    @Volatile
+    private var savedDriveAccount: String? = null
+
+    @Volatile
+    private var savedDriveLoaded = false
+
+    /** Storage is open and its saved figures may need a refresh once Drive is connected. */
+    private var driveRefreshWanted = false
+
+    /** True once a background refresh has started in this launch. */
+    private var driveRefreshedThisLaunch = false
+
+    @Volatile
+    private var driveStopRequested = false
+
     init {
         // A count belongs to one account: when the saved pin moves to another, it is stopped and
         // dropped, so no figure of the old account is shown under the new one.
@@ -729,7 +759,30 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                     is DriveFolderScan.Failed -> s.account
                 }
                 if (owner != null && !owner.equals(pin, ignoreCase = true)) resetDriveFolderScan()
+                // The saved count goes with it: it is never shown for, or kept under, another account.
+                val saved = savedDriveAccount
+                if (saved != null && !saved.equals(pin, ignoreCase = true)) {
+                    savedDriveAccount = null
+                    viewModelScope.launch(Dispatchers.IO) { graph.driveFolderStore.clear() }
+                }
             }
+        }
+        // The last count saved on the phone is shown at once, before Drive has even connected.
+        viewModelScope.launch {
+            val saved = kotlinx.coroutines.withContext(Dispatchers.IO) { graph.driveFolderStore.load() }
+            val pin = prefs.accountEmail
+            if (saved != null && pin != null && saved.account.equals(pin, ignoreCase = true)) {
+                savedDriveAccount = saved.account
+                synchronized(driveScanLock) {
+                    if (driveFolderScan.value == DriveFolderScan.Idle) {
+                        driveFolderScan.value = DriveFolderScan.Done(saved.account, saved.tree, saved.items, saved.at, saved.stop)
+                    }
+                }
+            } else if (saved != null) {
+                kotlinx.coroutines.withContext(Dispatchers.IO) { graph.driveFolderStore.clear() }
+            }
+            savedDriveLoaded = true
+            maybeRefreshDriveFolders()
         }
         // A count that failed (for example on a sign-in error) is cleared once Drive connects
         // again, so Count Drive folders is offered instead of a stale Reconnect.
@@ -740,8 +793,43 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                         if (driveFolderScan.value is DriveFolderScan.Failed) driveFolderScan.value = DriveFolderScan.Idle
                     }
                 }
+                if (conn == DriveConn.CONNECTED) maybeRefreshDriveFolders()
             }
         }
+    }
+
+    /**
+     * Storage opened: the saved count is refreshed in the background, its figures staying on
+     * screen meanwhile. Once per launch, then again only when the shown count is older than
+     * [DRIVE_REFRESH_AFTER_MS], so going in and out of Storage does not read the whole Drive each
+     * time. Without a saved count nothing starts: the first count is the user's choice.
+     */
+    fun storageOpened() {
+        driveRefreshWanted = true
+        maybeRefreshDriveFolders()
+    }
+
+    /** Storage closed: a refresh that was waiting for Drive to connect is no longer wanted. */
+    fun storageClosed() {
+        driveRefreshWanted = false
+    }
+
+    /** The app's clock, fixed in tests. */
+    fun now(): Long = graph.clock()
+
+    private fun maybeRefreshDriveFolders() {
+        if (!driveRefreshWanted || !savedDriveLoaded || driveConn.value != DriveConn.CONNECTED) return
+        val shown = driveFolderScan.value
+        if (shown !is DriveFolderScan.Done) {
+            // Nothing to refresh (never counted), or a count is already running.
+            driveRefreshWanted = false
+            return
+        }
+        driveRefreshWanted = false
+        if (!shown.account.equals(prefs.accountEmail, ignoreCase = true)) return
+        if (driveRefreshedThisLaunch && graph.clock() - shown.at < DRIVE_REFRESH_AFTER_MS) return
+        driveRefreshedThisLaunch = true
+        startDriveFolderScan()
     }
 
     private fun resetDriveFolderScan() {
@@ -766,14 +854,20 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         val account = prefs.accountEmail?.takeIf { it.isNotBlank() }
         if (driveConn.value != DriveConn.CONNECTED || account == null) return
         val stillPinned = { account.equals(prefs.accountEmail, ignoreCase = true) }
+        val previous = (driveFolderScan.value as? DriveFolderScan.Done)
+            ?.takeIf { it.account.equals(account, ignoreCase = true) }
+            ?.copy(refreshMiss = null)
         val run = synchronized(driveScanLock) {
             driveScanRun++
             driveStopRequested = false
-            driveFolderScan.value = DriveFolderScan.Running(account, 0, 0)
+            driveFolderScan.value = DriveFolderScan.Running(account, 0, 0, previous = previous)
             driveScanRun
         }
-        driveFolderOpen.value = null
-        driveFoldersShown.value = DRIVE_FOLDERS_FIRST
+        // With earlier figures on screen, the open folder stays open while they are refreshed.
+        if (previous == null) {
+            driveFolderOpen.value = null
+            driveFoldersShown.value = DRIVE_FOLDERS_FIRST
+        }
         val stopRequested = { driveStopRequested }
         driveScanJob = viewModelScope.launch {
             val source = driveFolders
@@ -782,12 +876,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             } catch (e: kotlinx.coroutines.CancellationException) {
                 throw e
             } catch (e: Exception) {
-                if (stopRequested()) {
-                    publishDriveScan(run, DriveFolderScan.Idle)
-                    return@launch
-                }
-                val stop = describeDriveScanError(e)
-                publishDriveScan(run, DriveFolderScan.Failed(account, stop.message, stop.needsSignIn))
+                val stop = if (stopRequested()) com.drivelift.app.data.ScanStop.ByUser else describeDriveScanError(e)
+                finishDriveScan(run, account, null, com.drivelift.app.data.DriveScan(emptyList(), 0, stop), previous)
                 return@launch
             }
             val scan = com.drivelift.app.data.scanDriveEntries(
@@ -796,32 +886,82 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
                 describe = ::describeDriveScanError,
                 stopRequested = stopRequested,
                 onPage = { items, pages ->
-                    publishDriveScan(run, DriveFolderScan.Running(account, items, pages, stopping = stopRequested()))
+                    publishDriveScan(
+                        run,
+                        DriveFolderScan.Running(account, items, pages, stopping = stopRequested(), previous = previous),
+                    )
                 },
             )
-            finishDriveScan(run, account, rootId, scan)
+            finishDriveScan(run, account, rootId, scan, previous)
         }
     }
 
-    private suspend fun finishDriveScan(run: Int, account: String, rootId: String, scan: com.drivelift.app.data.DriveScan) {
+    /**
+     * Ends a count. With no earlier figures it shows what was read, as before. With earlier
+     * figures on screen ([previous]), a recount replaces them only when it is complete, or when the
+     * earlier count was incomplete too; otherwise they stay, with a note on why the recount did not
+     * finish. A count that replaces the figures is saved on the phone for the next launch.
+     */
+    private suspend fun finishDriveScan(
+        run: Int,
+        account: String,
+        rootId: String?,
+        scan: com.drivelift.app.data.DriveScan,
+        previous: DriveFolderScan.Done?,
+    ) {
         val stop = scan.stop
         if (stop == com.drivelift.app.data.ScanStop.AccountChanged) {
             publishDriveScan(run, DriveFolderScan.Idle)
             return
         }
-        if (scan.entries.isEmpty() && stop == com.drivelift.app.data.ScanStop.ByUser) {
-            publishDriveScan(run, DriveFolderScan.Idle)
-            messages.tryEmit("Drive folder count stopped before anything was read. Nothing was changed.")
+        if (scan.entries.isEmpty() && stop != null) {
+            when {
+                previous != null ->
+                    publishDriveScan(run, previous.copy(refreshMiss = DriveFolderScan.RefreshMiss(stop, 0)))
+                stop == com.drivelift.app.data.ScanStop.ByUser -> {
+                    publishDriveScan(run, DriveFolderScan.Idle)
+                    messages.tryEmit("Drive folder count stopped before anything was read. Nothing was changed.")
+                }
+                stop is com.drivelift.app.data.ScanStop.Error ->
+                    publishDriveScan(run, DriveFolderScan.Failed(account, stop.message, stop.needsSignIn))
+                else -> publishDriveScan(run, DriveFolderScan.Idle)
+            }
             return
         }
-        if (scan.entries.isEmpty() && stop is com.drivelift.app.data.ScanStop.Error) {
-            publishDriveScan(run, DriveFolderScan.Failed(account, stop.message, stop.needsSignIn))
+        if (stop != null && previous != null && previous.complete) {
+            publishDriveScan(run, previous.copy(refreshMiss = DriveFolderScan.RefreshMiss(stop, scan.entries.size)))
             return
         }
         val tree = kotlinx.coroutines.withContext(Dispatchers.Default) {
-            com.drivelift.app.data.driveFolderTotals(rootId, MY_DRIVE, scan.entries)
+            com.drivelift.app.data.driveFolderTotals(rootId!!, MY_DRIVE, scan.entries)
         }
-        publishDriveScan(run, DriveFolderScan.Done(account, tree, scan.entries.size, graph.clock(), stop))
+        val done = DriveFolderScan.Done(account, tree, scan.entries.size, graph.clock(), stop)
+        publishDriveScan(run, done)
+        saveDriveCount(run, done)
+    }
+
+    /**
+     * Keeps [done] on the phone for the next launch. Skipped when a newer count has started or
+     * the account changed meanwhile, so a late write never brings back another account's figures.
+     */
+    private suspend fun saveDriveCount(run: Int, done: DriveFolderScan.Done) {
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            synchronized(driveScanLock) {
+                if (run != driveScanRun || !done.account.equals(prefs.accountEmail, ignoreCase = true)) return@withContext
+                savedDriveAccount = done.account
+            }
+            try {
+                graph.driveFolderStore.save(
+                    com.drivelift.app.data.SavedDriveCount(done.account, done.tree, done.items, done.at, done.stop),
+                )
+            } catch (e: Exception) {
+                // Not saved: this launch still shows the figures; the next one starts without them.
+                graph.driveFolderStore.clear()
+            }
+            // The account changed while writing: the account collector may have cleared before
+            // the write landed, so clear again.
+            if (!done.account.equals(prefs.accountEmail, ignoreCase = true)) graph.driveFolderStore.clear()
+        }
     }
 
     /**
@@ -836,9 +976,6 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
             if (driveFolderScan.value === running) driveFolderScan.value = running.copy(stopping = true)
         }
     }
-
-    @Volatile
-    private var driveStopRequested = false
 
     fun openDriveFolder(folderId: String?) {
         driveFolderOpen.value = folderId
@@ -1690,5 +1827,8 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
         const val DRIVE_FOLDERS_MORE = 25
         private const val DRIVE_SCAN_RETRIES = 2
         const val MY_DRIVE = "My Drive"
+
+        /** After the first refresh of a launch, Storage refreshes Drive folders again only past this age. */
+        const val DRIVE_REFRESH_AFTER_MS = 10 * 60 * 1000L
     }
 }

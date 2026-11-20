@@ -2671,7 +2671,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.28 (build 27)",
+            "build-id", expect = "DriveLift 1.0.0-preview.29 (build 28)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -3143,6 +3143,204 @@ class ScreenshotTest {
                 assertEquals(com.drivelift.app.data.ScanStop.ByUser, done.stop)
                 assertEquals(40, done.items)
                 compose.onNodeWithText("Partly counted at", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    // ------------------------------------------------------------------ saved Drive folder count (issue #14)
+
+    /**
+     * Saves a Drive folder count on the phone as an earlier launch would have: the first 40 items
+     * of the made-up Drive, counted a day before the test clock. [stop] makes it incomplete.
+     */
+    private fun saveEarlierCount(stop: com.drivelift.app.data.ScanStop? = null) {
+        Graph.get(app).prefs.accountEmail = TEST_EMAIL
+        Graph.get(app).driveFolderStore.save(
+            com.drivelift.app.data.SavedDriveCount(TEST_EMAIL, earlierTree(), 40, FIXED_NOW - DAY_MS, stop),
+        )
+    }
+
+    private fun earlierTree() = com.drivelift.app.data.driveFolderTotals(
+        CountedDrive.ROOT_ID, AppViewModel.MY_DRIVE, CountedDrive.ENTRIES.take(40),
+    )
+
+    private fun savedCount() = Graph.get(app).driveFolderStore.load()
+
+    @Test
+    fun storageDriveFoldersSavedCountShowsAtLaunchWhileItRefreshes() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-saved", expect = null, connected = true, drive = CountedDrive(hangAtPage = 2),
+            beforeLaunch = { saveEarlierCount() },
+            act = {
+                val vm = currentVm!!
+                // Shown at launch, before Storage is even opened: no Count tap.
+                settle { vm.driveFolderScan.value is AppViewModel.DriveFolderScan.Done }
+                openDriveFolders(count = false)
+                waitForPart("Counting again in the background: 40 items read.")
+                val running = vm.driveFolderScan.value as AppViewModel.DriveFolderScan.Running
+                assertEquals(earlierTree().root.fileCount, running.previous!!.tree.root.fileCount)
+                compose.onNodeWithText("Count Drive folders").assertDoesNotExist()
+                compose.onNodeWithText("Count again").assertDoesNotExist()
+                compose.onNodeWithText("Counted on", substring = true).assertExists()
+                compose.onNodeWithText("The figures below stay until it finishes.", substring = true).assertExists()
+                scrollStorageTo(hasText("Google Drive folders"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun aBackgroundRefreshReplacesAndSavesTheFiguresOncePerLaunch() {
+        grantMedia()
+        val drive = CountedDrive()
+        eachVariant(
+            "storage-drive-folders-refreshed", expect = null, connected = true, capture = false, drive = drive,
+            beforeLaunch = { saveEarlierCount() },
+            act = {
+                val vm = currentVm!!
+                val pagesBefore = drive.pagesAsked.size
+                settle { vm.driveFolderScan.value is AppViewModel.DriveFolderScan.Done }
+                assertEquals("nothing is read from Drive before Storage opens", pagesBefore, drive.pagesAsked.size)
+                openDriveFolders(count = false)
+                settle { (vm.driveFolderScan.value as? AppViewModel.DriveFolderScan.Done)?.at == FIXED_NOW }
+                val done = vm.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertEquals(CountedDrive.COUNTED_FILES, done.tree.root.fileCount)
+                assertEquals(CountedDrive.COUNTED_BYTES, done.tree.root.bytes)
+                waitForPart("Counted at")
+                // The new figures are what the next launch shows.
+                settle { savedCount()?.at == FIXED_NOW }
+                assertEquals(CountedDrive.COUNTED_FILES, savedCount()!!.tree.root.fileCount)
+                // Leaving Storage and opening it again within ten minutes does not read Drive again.
+                val pagesAfter = drive.pagesAsked.size
+                compose.onNodeWithContentDescription("Back to folders").press()
+                pump(8)
+                openStorage()
+                pump(12)
+                assertEquals(pagesAfter, drive.pagesAsked.size)
+                assertTrue(vm.driveFolderScan.value is AppViewModel.DriveFolderScan.Done)
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun aCountIsSavedForTheNextLaunchAndDroppedWhenTheAccountChanges() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-relaunch", expect = null, connected = true, capture = false, drive = CountedDrive(),
+            act = {
+                openDriveFolders(count = true)
+                waitForPart("Counted at")
+                settle { savedCount() != null }
+                assertEquals(TEST_EMAIL, savedCount()!!.account)
+                // A new launch shows the saved figures straight away.
+                val relaunched = AppViewModel(app)
+                settle { relaunched.driveFolderScan.value is AppViewModel.DriveFolderScan.Done }
+                val shown = relaunched.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertEquals(CountedDrive.COUNTED_FILES, shown.tree.root.fileCount)
+                assertTrue(shown.complete)
+                // Another account: the saved count is deleted and not shown.
+                Graph.get(app).prefs.accountEmail = "someone.else@example.com"
+                settle { savedCount() == null && relaunched.driveFolderScan.value == AppViewModel.DriveFolderScan.Idle }
+                val otherLaunch = AppViewModel(app)
+                pump(12)
+                assertEquals(AppViewModel.DriveFolderScan.Idle, otherLaunch.driveFolderScan.value)
+                Graph.get(app).prefs.accountEmail = TEST_EMAIL
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun aSavedCountOfAnotherAccountIsNeverShown() {
+        grantMedia()
+        // Not connected, so the scenario leaves the pin as the earlier launch set it.
+        eachVariant(
+            "storage-drive-folders-other-account", expect = "Google Drive is not connected, so its folders are not counted.",
+            capture = false, drive = CountedDrive(hangAtPage = 0),
+            beforeLaunch = {
+                saveEarlierCount()
+                Graph.get(app).prefs.accountEmail = "someone.else@example.com"
+            },
+            act = {
+                val vm = currentVm!!
+                settle { savedCount() == null }
+                assertEquals(AppViewModel.DriveFolderScan.Idle, vm.driveFolderScan.value)
+                openDriveFolders(count = false)
+                Graph.get(app).prefs.accountEmail = TEST_EMAIL
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersRecountFailureKeepsTheSavedFigures() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-recount-failed", expect = null, connected = true, drive = CountedDrive(failAtPage = 1),
+            beforeLaunch = { saveEarlierCount() },
+            act = {
+                val vm = currentVm!!
+                openDriveFolders(count = false)
+                waitForPart("The recount did not finish.")
+                val done = vm.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertEquals(FIXED_NOW - DAY_MS, done.at)
+                assertEquals(earlierTree().root.fileCount, done.tree.root.fileCount)
+                assertTrue(done.refreshMiss!!.stop is com.drivelift.app.data.ScanStop.Error)
+                compose.onNodeWithText("Connection problem", substring = true).assertExists()
+                compose.onNodeWithText("These figures are from the earlier count.", substring = true).assertExists()
+                compose.onNodeWithText("Count again").assertExists()
+                // The saved count is not replaced by the part the recount read.
+                assertEquals(FIXED_NOW - DAY_MS, savedCount()!!.at)
+                scrollStorageTo(hasText("Google Drive folders"))
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun aRecountThatNeedsSignInKeepsTheFiguresAndOffersReconnect() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-recount-signin", expect = null, connected = true, capture = false,
+            drive = CountedDrive(failRoot = AuthRequiredException()),
+            beforeLaunch = { saveEarlierCount() },
+            act = {
+                openDriveFolders(count = false)
+                waitForPart("The recount did not finish. Google Drive needs you to sign in again.")
+                compose.onNodeWithText("Reconnect").assertExists()
+                compose.onNodeWithText("Counted on", substring = true).assertExists()
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun anIncompleteRecountReplacesAnIncompleteSavedCount() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-recount-partial", expect = null, connected = true, capture = false,
+            drive = CountedDrive(failAtPage = 3),
+            beforeLaunch = { saveEarlierCount(stop = com.drivelift.app.data.ScanStop.ByUser) },
+            act = {
+                val vm = currentVm!!
+                openDriveFolders(count = false)
+                settle { (vm.driveFolderScan.value as? AppViewModel.DriveFolderScan.Done)?.at == FIXED_NOW }
+                val done = vm.driveFolderScan.value as AppViewModel.DriveFolderScan.Done
+                assertEquals(60, done.items)
+                assertEquals(null, done.refreshMiss)
+                waitForPart("Partly counted at")
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun storageDriveFoldersSavedCountShowsWhileDriveIsNotConnected() {
+        grantMedia()
+        eachVariant(
+            "storage-drive-folders-saved-offline", expect = null, connected = false, drive = CountedDrive(),
+            beforeLaunch = { saveEarlierCount() },
+            act = {
+                openDriveFolders(count = false)
+                waitForPart("These are the figures saved from the last count.")
+                compose.onNodeWithText("Counted on", substring = true).assertExists()
+                compose.onNodeWithText("Count again").assertDoesNotExist()
+                scrollStorageTo(hasText("Google Drive folders"))
             },
         ) { vm -> AppRoot(vm) }
     }
@@ -3790,10 +3988,15 @@ class ScreenshotTest {
         drive: DriveFolders = FakeDrive(),
         /** False for a scenario that only checks behaviour and writes no image. */
         capture: Boolean = true,
+        /** Runs before the view model is made, as before an app launch: for state saved on the phone. */
+        beforeLaunch: (() -> Unit)? = null,
         act: (() -> Unit)? = null,
         content: @Composable (AppViewModel) -> Unit,
     ) {
         for (variant in Variant.entries) {
+            // Each variant starts without a Drive folder count saved by the one before.
+            Graph.get(app).driveFolderStore.clear()
+            beforeLaunch?.invoke()
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             // Set on the device, not on one composition: a sheet or dialog is its own window and
             // takes its text size from the system, as it does on a phone.
@@ -4133,6 +4336,7 @@ class ScreenshotTest {
 
         /** The time the Storage screen shows for its figures: 15 March 2026, 14:05 UTC. */
         const val FIXED_NOW = 1_773_583_500_000L
+        const val DAY_MS = 24 * 60 * 60 * 1000L
 
         const val PICTURE_SIZE = 256
 
