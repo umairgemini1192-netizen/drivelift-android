@@ -15,6 +15,8 @@ import androidx.compose.material3.SliderDefaults
 import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
@@ -28,6 +30,7 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Replay10
+import androidx.compose.material.icons.outlined.ScreenRotation
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -40,23 +43,26 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalConfiguration
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
+import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 
-/** Playback speeds offered by the speed button, in order. */
-internal val VIDEO_SPEEDS = listOf(1f, 1.25f, 1.5f, 2f, 0.5f, 0.75f)
+/** Playback speeds offered in the Speed group, slowest first, each one tap away (issue #14). */
+internal val VIDEO_SPEEDS = listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f)
 
 internal const val SKIP_MS = 10_000L
 
-internal fun nextVideoSpeed(current: Float): Float {
-    val i = VIDEO_SPEEDS.indexOfFirst { it == current }
-    return VIDEO_SPEEDS[(if (i < 0) 0 else i + 1) % VIDEO_SPEEDS.size]
-}
+/**
+ * The orientation Rotate asks for: landscape from portrait, portrait from landscape. The sensor
+ * variants let the phone still flip within that orientation (either landscape side).
+ */
+internal fun rotatedOrientation(landscapeNow: Boolean): Int =
+    if (landscapeNow) android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT
+    else android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
 
 internal fun speedLabel(speed: Float): String =
     if (speed % 1f == 0f) "${speed.toInt()}x" else String.format(Locale.US, "%sx", speed.toString().trimEnd('0'))
@@ -261,23 +267,30 @@ internal data class VideoUiState(
 )
 
 /**
- * DriveLift's own player controls on a glass panel (owner decision #32): the original quality
- * named above with the speed as a capsule pill, a continuous scrubber with a round thumb, Step
- * back and Step forward as pills, and the transport row with Play/Pause as the one lead element
- * and the other actions in flat wells. Every control keeps a 48 dp touch target.
+ * DriveLift's own player controls on a glass panel (owner decision #32), in labelled groups so
+ * each control is easy to find (issue #14): the original quality on its own line; Speed, Step and
+ * Picture groups that wrap onto more lines on a narrow phone or with large text; the scrubber; and
+ * the playback row with Play/Pause as the one lead element. Every control keeps a 48 dp touch
+ * target.
  */
 // The custom scrubber thumb and track (SliderDefaults.Track with sliderState) are marked
 // experimental in Material 3 1.3; the API used is pinned by the Compose BOM in app/build.gradle.kts.
-@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+@OptIn(
+    androidx.compose.material3.ExperimentalMaterial3Api::class,
+    androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
+)
 @Composable
 internal fun VideoControls(
     state: VideoUiState,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
-    onSpeed: () -> Unit,
+    /** The speed the user picked from the Speed group. */
+    onSpeed: (Float) -> Unit,
     onCapture: () -> Unit,
     modifier: Modifier = Modifier,
     onFit: () -> Unit = {},
+    /** Turns the screen between portrait and landscape. */
+    onRotate: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
     /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
@@ -291,35 +304,51 @@ internal fun VideoControls(
 
     GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
-            // The quality line is never cut short. Beside the pills normally; on its own full-width
-            // line with the pills below it with large text or on a narrow phone (rule 8).
-            val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-                LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
-            val pills: @Composable () -> Unit = {
-                Row(horizontalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+            // Never cut short: it wraps instead (owner decision #32).
+            Text(
+                state.quality,
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
+            )
+            // Tool groups. Each group keeps its own label and stays together; a group that does not
+            // fit beside the others moves to the next line, and its own buttons wrap if needed.
+            FlowRow(
+                Modifier.fillMaxWidth().padding(top = Tokens.Small),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Section),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                ControlGroup("Speed", "video-speed") {
+                    for (speed in VIDEO_SPEEDS) {
+                        SpeedChoice(speed, selected = speed == state.speed, onClick = { onSpeed(speed) })
+                    }
+                }
+                // Small steps of about one frame. Shown while playing too: a step pauses the video
+                // first (issue #29). Exact for constant frame rate; variable-rate or unknown-rate
+                // files can occasionally repeat or skip a frame, so the group says "step", not
+                // "frame" (docs/HOW_IT_WORKS.md).
+                ControlGroup("Step", "frame-step") {
+                    PlayerPill(onClick = { onStepFrame(false) }, description = "Step back about one frame") {
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
+                        Text("Back")
+                    }
+                    PlayerPill(onClick = { onStepFrame(true) }, description = "Step forward about one frame") {
+                        Text("Forward")
+                        Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
+                    }
+                }
+                ControlGroup("Picture", "video-picture") {
+                    PlayerPill(onClick = onRotate, description = "Rotate the video") {
+                        Icon(Icons.Outlined.ScreenRotation, contentDescription = null)
+                        Text("Rotate", modifier = Modifier.padding(start = Tokens.Tiny))
+                    }
+                    PlayerPill(onClick = onCapture, description = "Save this frame as a photo", enabled = !state.capturing) {
+                        Icon(Icons.Outlined.PhotoCamera, contentDescription = null)
+                        Text("Save frame", modifier = Modifier.padding(start = Tokens.Tiny))
+                    }
                     if (state.zoomed) {
                         PlayerPill(onClick = onFit, description = "Fit the whole picture") { Text("Fit") }
                     }
-                    PlayerPill(onClick = onSpeed, description = "Playback speed ${speedLabel(state.speed)}") {
-                        Text(speedLabel(state.speed))
-                    }
-                }
-            }
-            val quality: @Composable (Modifier) -> Unit = { m ->
-                Text(
-                    state.quality,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = m.testTag("video-quality"),
-                )
-            }
-            if (stacked) {
-                quality(Modifier.fillMaxWidth().padding(top = Tokens.Small))
-                Row(Modifier.fillMaxWidth().padding(top = Tokens.Small), horizontalArrangement = Arrangement.End) { pills() }
-            } else {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    quality(Modifier.weight(1f))
-                    pills()
                 }
             }
             Slider(
@@ -374,27 +403,10 @@ internal fun VideoControls(
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
             }
-            // Small steps of about one frame, as two pills. Shown while playing too: a step pauses
-            // the video first (issue #29). Exact for constant frame rate; variable-rate or
-            // unknown-rate files can occasionally repeat or skip a frame, so the labels say "step",
-            // not "frame" (docs/HOW_IT_WORKS.md).
+            // Playback: skip back, Play/Pause, skip forward.
             Row(
-                Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("frame-step"),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Medium, Alignment.CenterHorizontally),
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                PlayerPill(onClick = { onStepFrame(false) }, description = "Step back about one frame") {
-                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowLeft, contentDescription = null)
-                    Text("Step")
-                }
-                PlayerPill(onClick = { onStepFrame(true) }, description = "Step forward about one frame") {
-                    Text("Step")
-                    Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null)
-                }
-            }
-            Row(
-                Modifier.fillMaxWidth().padding(vertical = Tokens.Small),
-                horizontalArrangement = Arrangement.SpaceEvenly,
+                Modifier.fillMaxWidth().padding(vertical = Tokens.Small).testTag("video-playback"),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Section, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PlayerWell(
@@ -423,22 +435,69 @@ internal fun VideoControls(
                     icon = Icons.Outlined.Forward10,
                     description = "Forward 10 seconds",
                 )
-                PlayerWell(
-                    onClick = onCapture,
-                    icon = Icons.Outlined.PhotoCamera,
-                    description = "Save this frame as a photo",
-                    enabled = !state.capturing,
-                )
             }
         }
     }
 }
 
-/** A capsule pill: flat well fill, thin edge, coral content, at least 48 dp tall. */
+/** A named group of controls: a small label above its buttons, which wrap if the line is full. */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
 @Composable
-private fun PlayerPill(onClick: () -> Unit, description: String, content: @Composable RowScope.() -> Unit) {
+private fun ControlGroup(label: String, tag: String, content: @Composable () -> Unit) {
+    Column(Modifier.testTag(tag)) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.padding(bottom = Tokens.Tiny),
+        )
+        FlowRow(
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) { content() }
+    }
+}
+
+/**
+ * One playback speed. The chosen speed has a coral edge and coral text; the others are plain, so
+ * the current speed is visible at a glance without competing with Play/Pause.
+ */
+@Composable
+private fun SpeedChoice(speed: Float, selected: Boolean, onClick: () -> Unit) {
+    val label = speedLabel(speed)
     Button(
         onClick = onClick,
+        shape = Tokens.PillShape,
+        colors = ButtonDefaults.buttonColors(
+            containerColor = GlassPalette.Well,
+            contentColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+        ),
+        border = BorderStroke(Tokens.Hairline, if (selected) MaterialTheme.colorScheme.primary else GlassPalette.WellEdge),
+        contentPadding = PaddingValues(horizontal = Tokens.Small),
+        modifier = Modifier
+            .heightIn(min = Tokens.TouchTarget)
+            .widthIn(min = Tokens.TouchTarget)
+            .semantics {
+                contentDescription = "Speed $label"
+                this.selected = selected
+                stateDescription = if (selected) "Selected" else "Not selected"
+            },
+    ) {
+        Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    }
+}
+
+/** A capsule pill: flat well fill, thin edge, coral content, at least 48 dp tall. */
+@Composable
+private fun PlayerPill(
+    onClick: () -> Unit,
+    description: String,
+    enabled: Boolean = true,
+    content: @Composable RowScope.() -> Unit,
+) {
+    Button(
+        onClick = onClick,
+        enabled = enabled,
         shape = Tokens.PillShape,
         colors = ButtonDefaults.buttonColors(
             containerColor = GlassPalette.Well,

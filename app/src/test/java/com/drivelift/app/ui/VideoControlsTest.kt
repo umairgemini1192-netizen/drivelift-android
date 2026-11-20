@@ -43,9 +43,11 @@ class VideoControlsTest {
         assertEquals("1:02:09", formatPlaybackTime(3_729_000))
         assertEquals("0:00", formatPlaybackTime(-5))
 
-        assertEquals(1.25f, nextVideoSpeed(1f))
-        assertEquals(1f, nextVideoSpeed(0.75f))
-        assertEquals(1f, nextVideoSpeed(3f))
+        // Every speed is one tap away, slowest first, with 0.5x beside 1x (issue #14).
+        assertEquals(listOf(0.5f, 0.75f, 1f, 1.25f, 1.5f, 2f), VIDEO_SPEEDS)
+        // Rotate turns portrait into landscape and back.
+        assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, rotatedOrientation(landscapeNow = false))
+        assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT, rotatedOrientation(landscapeNow = true))
         assertEquals("1x", speedLabel(1f))
         assertEquals("1.25x", speedLabel(1.25f))
         assertEquals("0.5x", speedLabel(0.5f))
@@ -67,8 +69,9 @@ class VideoControlsTest {
     fun controlsSeekSkipToggleAndCaptureWithLargeTargets() {
         val seeks = mutableListOf<Long>()
         var toggles = 0
-        var speeds = 0
+        val speeds = mutableListOf<Float>()
         var captures = 0
+        var rotations = 0
         compose.mainClock.autoAdvance = false
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity {
@@ -81,8 +84,9 @@ class VideoControlsTest {
                             ),
                             onPlayPause = { toggles++ },
                             onSeek = { seeks += it },
-                            onSpeed = { speeds++ },
+                            onSpeed = { speeds += it },
                             onCapture = { captures++ },
+                            onRotate = { rotations++ },
                         )
                     }
                 }
@@ -92,20 +96,30 @@ class VideoControlsTest {
             compose.onNodeWithText("0:30").assertExists()
             compose.onNodeWithText("-1:30").assertExists()
             // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
-            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Playback speed 1x")) {
+            // The controls are in named groups the owner can find without guessing (issue #14).
+            for (group in listOf("Speed", "Step", "Picture")) compose.onNodeWithText(group).assertExists()
+            val speedLabels = VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }
+            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Rotate the video") + speedLabels) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
             }
+            // The current speed is marked; the others are not.
+            compose.onNodeWithContentDescription("Speed 1x").assert(androidx.compose.ui.test.isSelected())
+            compose.onNodeWithContentDescription("Speed 0.5x").assert(androidx.compose.ui.test.isNotSelected())
             compose.onNodeWithContentDescription("Back 10 seconds").performClick()
             compose.onNodeWithContentDescription("Forward 10 seconds").performClick()
             compose.onNodeWithContentDescription("Pause").performClick()
-            compose.onNodeWithContentDescription("Playback speed 1x").performClick()
+            compose.onNodeWithContentDescription("Speed 0.5x").performClick()
+            compose.onNodeWithContentDescription("Speed 1x").performClick()
+            compose.onNodeWithContentDescription("Speed 2x").performClick()
+            compose.onNodeWithContentDescription("Rotate the video").performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
             assertEquals(1, toggles)
-            assertEquals(1, speeds)
+            assertEquals(listOf(0.5f, 1f, 2f), speeds)
+            assertEquals(1, rotations)
             assertEquals(1, captures)
         }
     }
@@ -135,8 +149,9 @@ class VideoControlsTest {
                 val rootWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
                 for (label in listOf(
                     "Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo",
-                    "Playback speed 1.25x", "Fit the whole picture",
-                )) {
+                    "Rotate the video", "Fit the whole picture",
+                    "Step back about one frame", "Step forward about one frame",
+                ) + VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }) {
                     val node = compose.onNodeWithContentDescription(label)
                     node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
                     val bounds = node.fetchSemanticsNode().boundsInRoot

@@ -427,8 +427,14 @@ or verified and waiting for removal. The transfers are read again just before th
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the
-original file). **Step back** and **Step forward** move by about one frame. They are shown
-while the video plays too; a tap pauses it first and the picture stays on the stepped frame.
+original file). The controls are in labelled groups (issue #14): **Speed** offers 0.5x, 0.75x,
+1x, 1.25x, 1.5x and 2x as direct choices with the current one marked; **Step** has Back and
+Forward; **Picture** has **Rotate**, **Save frame**, and **Fit** while zoomed in; below them are
+the scrubber and the playback row (back 10 s, Play/Pause, forward 10 s). **Rotate** switches the
+screen between portrait and landscape while the video is open; closing the player hands the
+orientation back to the phone. **Step back** and **Step forward** move by about one frame. They
+are shown while the video plays too; a tap pauses it first and the picture stays on the stepped
+frame.
 
 Step speed: each step is a precise seek, so the player decodes from the nearest earlier keyframe
 up to the target frame; on a Drive video that may also mean fetching media again. To keep this
