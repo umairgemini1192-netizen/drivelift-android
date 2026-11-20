@@ -53,11 +53,30 @@ import androidx.compose.ui.text.font.FontWeight
 import java.util.Locale
 
 /**
- * Playback speeds offered in the Speed group: 0.5x and 1x, side by side, and nothing faster. The
- * owner chose these two only (issue #14, PR #62): "0.5x ==> 1x, two options only". Tapping 1x
- * stays at 1x; there is no cycle on to 1.5x or 2x.
+ * The Speed group shows two buttons, 0.5x and 1x (owner, issue #14, PR #62: "0.5x ==> 1x, two
+ * options only" and "when I tap 1x it should increase to 1.5x eventually 2x"). 0.5x is its own
+ * button. The second button steps through [STEPPED_SPEEDS], one step per tap.
  */
-internal val VIDEO_SPEEDS = listOf(0.5f, 1f)
+internal const val SLOW_SPEED = 0.5f
+
+/** The speeds the second Speed button steps through, in order. */
+internal val STEPPED_SPEEDS = listOf(1f, 1.5f, 2f)
+
+/** What the second Speed button shows: the current speed when it is one of its steps, else 1x. */
+internal fun steppedSpeedShown(current: Float): Float = if (current in STEPPED_SPEEDS) current else STEPPED_SPEEDS.first()
+
+/**
+ * Where a tap on the second Speed button goes: 1x to 1.5x to 2x. The owner did not say what comes
+ * after 2x, so it goes back to 1x (flagged in PR #62). From 0.5x the first tap goes to 1x.
+ */
+internal fun nextSteppedSpeed(current: Float): Float {
+    val i = STEPPED_SPEEDS.indexOf(current)
+    return if (i < 0) STEPPED_SPEEDS.first() else STEPPED_SPEEDS[(i + 1) % STEPPED_SPEEDS.size]
+}
+
+/** Spoken description of the second Speed button: its speed and where the next tap goes. */
+internal fun steppedSpeedDescription(current: Float): String =
+    "Speed ${speedLabel(steppedSpeedShown(current))}, tap for ${speedLabel(nextSteppedSpeed(current))}"
 
 internal const val SKIP_MS = 10_000L
 
@@ -316,19 +335,24 @@ internal fun VideoControls(
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
             )
-            // Tool groups, each with its name beside it: Speed (0.5x and 1x), then Step and
-            // Picture, which share a line where they fit. Kept compact so the panel does not cover
-            // more of the picture than it must.
+            // Tool groups, each with its name beside it: Speed (0.5x, and 1x that steps up to 1.5x
+            // and 2x), then Step and Picture, which share a line where they fit. Kept compact so
+            // the panel does not cover more of the picture than it must.
             ControlGroup("Speed", "video-speed", Modifier.fillMaxWidth().padding(top = Tokens.Small)) {
-                FlowRow(
-                    Modifier.weight(1f),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    for (speed in VIDEO_SPEEDS) {
-                        SpeedChoice(speed, selected = speed == state.speed, onClick = { onSpeed(speed) })
-                    }
-                }
+                SpeedChoice(
+                    label = speedLabel(SLOW_SPEED),
+                    description = "Speed ${speedLabel(SLOW_SPEED)}",
+                    selected = state.speed == SLOW_SPEED,
+                    tag = "video-speed-slow",
+                    onClick = { onSpeed(SLOW_SPEED) },
+                )
+                SpeedChoice(
+                    label = speedLabel(steppedSpeedShown(state.speed)),
+                    description = steppedSpeedDescription(state.speed),
+                    selected = state.speed in STEPPED_SPEEDS,
+                    tag = "video-speed-step",
+                    onClick = { onSpeed(nextSteppedSpeed(state.speed)) },
+                )
             }
             FlowRow(
                 Modifier.fillMaxWidth().padding(top = Tokens.Small),
@@ -476,12 +500,11 @@ private fun ControlGroup(
 }
 
 /**
- * One playback speed. The chosen speed has a coral edge and coral text; the others are plain, so
+ * One Speed button. The one playing now has a coral edge and coral text; the other is plain, so
  * the current speed is visible at a glance without competing with Play/Pause.
  */
 @Composable
-private fun SpeedChoice(speed: Float, selected: Boolean, onClick: () -> Unit) {
-    val label = speedLabel(speed)
+private fun SpeedChoice(label: String, description: String, selected: Boolean, tag: String, onClick: () -> Unit) {
     Button(
         onClick = onClick,
         shape = Tokens.PillShape,
@@ -494,8 +517,9 @@ private fun SpeedChoice(speed: Float, selected: Boolean, onClick: () -> Unit) {
         modifier = Modifier
             .heightIn(min = Tokens.TouchTarget)
             .widthIn(min = Tokens.TouchTarget)
+            .testTag(tag)
             .semantics {
-                contentDescription = "Speed $label"
+                contentDescription = description
                 this.selected = selected
                 stateDescription = if (selected) "Selected" else "Not selected"
             },

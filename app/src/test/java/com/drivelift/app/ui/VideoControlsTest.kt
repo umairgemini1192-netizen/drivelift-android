@@ -45,8 +45,18 @@ class VideoControlsTest {
         assertEquals("1:02:09", formatPlaybackTime(3_729_000))
         assertEquals("0:00", formatPlaybackTime(-5))
 
-        // The owner's choice (issue #14, PR #62): two speeds only, 0.5x beside 1x, nothing faster.
-        assertEquals(listOf(0.5f, 1f), VIDEO_SPEEDS)
+        // The owner's design (issue #14, PR #62): a 0.5x button, and a 1x button whose taps step up
+        // to 1.5x and then 2x. After 2x it goes back to 1x (not specified by the owner; flagged).
+        assertEquals(0.5f, SLOW_SPEED)
+        assertEquals(listOf(1f, 1.5f, 2f), STEPPED_SPEEDS)
+        assertEquals(1.5f, nextSteppedSpeed(1f))
+        assertEquals(2f, nextSteppedSpeed(1.5f))
+        assertEquals(1f, nextSteppedSpeed(2f))
+        assertEquals(1f, nextSteppedSpeed(0.5f))
+        assertEquals(1f, steppedSpeedShown(0.5f))
+        assertEquals(1.5f, steppedSpeedShown(1.5f))
+        assertEquals("Speed 1x, tap for 1.5x", steppedSpeedDescription(1f))
+        assertEquals("Speed 2x, tap for 1x", steppedSpeedDescription(2f))
         // Rotate turns portrait into landscape and back.
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE, rotatedOrientation(landscapeNow = false))
         assertEquals(android.content.pm.ActivityInfo.SCREEN_ORIENTATION_SENSOR_PORTRAIT, rotatedOrientation(landscapeNow = true))
@@ -100,7 +110,7 @@ class VideoControlsTest {
             // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
             // The controls are in named groups the owner can find without guessing (issue #14).
             for (group in listOf("Speed", "Step", "Picture")) compose.onNodeWithText(group).assertExists()
-            val speedLabels = VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }
+            val speedLabels = listOf("Speed 0.5x", steppedSpeedDescription(1f))
             for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Rotate the video") + speedLabels) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
@@ -109,29 +119,72 @@ class VideoControlsTest {
             // At normal text size 0.5x and 1x sit side by side, both fully on screen (issue #14).
             val screenWidth = compose.onRoot().fetchSemanticsNode().boundsInRoot.width
             val slow = compose.onNodeWithContentDescription("Speed 0.5x").fetchSemanticsNode().boundsInRoot
-            val normal = compose.onNodeWithContentDescription("Speed 1x").fetchSemanticsNode().boundsInRoot
+            val normal = compose.onNodeWithTag("video-speed-step").fetchSemanticsNode().boundsInRoot
             assertTrue("0.5x and 1x must both be fully visible ($slow, $normal, screen $screenWidth)", normal.right <= screenWidth + 1f)
             assertTrue("0.5x comes before 1x on the same line", slow.right <= normal.left && slow.top == normal.top)
             // The current speed is marked; the others are not.
-            compose.onNodeWithContentDescription("Speed 1x").assert(androidx.compose.ui.test.isSelected())
+            compose.onNodeWithTag("video-speed-step").assert(androidx.compose.ui.test.isSelected())
             compose.onNodeWithContentDescription("Speed 0.5x").assert(androidx.compose.ui.test.isNotSelected())
             compose.onNodeWithContentDescription("Back 10 seconds").performClick()
             compose.onNodeWithContentDescription("Forward 10 seconds").performClick()
             compose.onNodeWithContentDescription("Pause").performClick()
             compose.onNodeWithContentDescription("Speed 0.5x").performClick()
-            compose.onNodeWithContentDescription("Speed 1x").performClick()
+            compose.onNodeWithTag("video-speed-step").performClick()
             compose.onNodeWithContentDescription("Rotate the video").performClick()
             compose.onNodeWithContentDescription("Save this frame as a photo").performClick()
             pump()
             assertEquals(listOf(20_000L, 40_000L), seeks)
             assertEquals(1, toggles)
-            assertEquals(listOf(0.5f, 1f), speeds)
-            // Tapping 1x stays at 1x: there is no faster speed to cycle on to.
-            for (faster in listOf("Speed 1.25x", "Speed 1.5x", "Speed 2x")) {
-                assertTrue("$faster must not be offered", compose.onAllNodesWithContentDescription(faster).fetchSemanticsNodes().isEmpty())
+            // 0.5x picks 0.5x; the second button, showing 1x, steps up to 1.5x.
+            assertEquals(listOf(0.5f, 1.5f), speeds)
+            // Only two Speed buttons: 1.5x and 2x are reached through the second one, not shown apart.
+            for (faster in listOf("1.25x", "1.5x", "2x")) {
+                assertTrue("$faster must not have a button of its own", compose.onAllNodesWithText(faster).fetchSemanticsNodes().isEmpty())
             }
             assertEquals(1, rotations)
             assertEquals(1, captures)
+        }
+    }
+
+    @Test
+    fun theSecondSpeedButtonStepsUpFromOneToTwoAndBack() {
+        // The owner's tap sequence (issue #14, PR #62), with the speed fed back as the player does.
+        var speed by androidx.compose.runtime.mutableFloatStateOf(1f)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity {
+                it.setContent {
+                    DriveLiftTheme {
+                        VideoControls(
+                            state = VideoUiState(playing = true, position = 1_000, duration = 60_000, speed = speed, quality = "Original quality"),
+                            onPlayPause = {}, onSeek = {}, onSpeed = { speed = it }, onCapture = {},
+                        )
+                    }
+                }
+            }
+            pump()
+            fun shows(label: String, selected: Boolean) {
+                val step = compose.onNodeWithTag("video-speed-step")
+                step.assert(androidx.compose.ui.test.hasText(label))
+                step.assert(if (selected) androidx.compose.ui.test.isSelected() else androidx.compose.ui.test.isNotSelected())
+            }
+            shows("1x", selected = true)
+            for ((expected, label) in listOf(1.5f to "1.5x", 2f to "2x", 1f to "1x")) {
+                compose.onNodeWithTag("video-speed-step").performClick()
+                pump()
+                assertEquals(expected, speed)
+                shows(label, selected = true)
+            }
+            // 0.5x is its own button; from there the second button shows 1x, unmarked, and goes to 1x.
+            compose.onNodeWithTag("video-speed-slow").performClick()
+            pump()
+            assertEquals(0.5f, speed)
+            compose.onNodeWithTag("video-speed-slow").assert(androidx.compose.ui.test.isSelected())
+            shows("1x", selected = false)
+            compose.onNodeWithTag("video-speed-step").performClick()
+            pump()
+            assertEquals(1f, speed)
+            shows("1x", selected = true)
         }
     }
 
@@ -162,7 +215,7 @@ class VideoControlsTest {
                     "Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo",
                     "Rotate the video", "Fit the whole picture",
                     "Step back about one frame", "Step forward about one frame",
-                ) + VIDEO_SPEEDS.map { "Speed ${speedLabel(it)}" }) {
+                ) + listOf("Speed 0.5x", steppedSpeedDescription(0.5f))) {
                     val node = compose.onNodeWithContentDescription(label)
                     node.assertWidthIsAtLeast(Tokens.TouchTarget).assertHeightIsAtLeast(Tokens.TouchTarget)
                     val bounds = node.fetchSemanticsNode().boundsInRoot

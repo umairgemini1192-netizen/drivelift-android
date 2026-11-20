@@ -427,8 +427,8 @@ or verified and waiting for removal. The transfers are read again just before th
 ## Viewing Drive videos
 
 Drive videos stream inside DriveLift in their original quality (Google's API serves only the
-original file). The controls are in labelled groups (issue #14): **Speed** offers 0.5x and 1x
-only, side by side, with the current one marked (the owner's choice; nothing faster); **Step** has Back and
+original file). The controls are in labelled groups (issue #14): **Speed** has two buttons,
+0.5x and 1x; each tap on 1x steps up to 1.5x, then 2x, then back to 1x (the owner's design); **Step** has Back and
 Forward; **Picture** has **Rotate**, **Save frame**, and **Fit** while zoomed in; below them are
 the scrubber and the playback row (back 10 s, Play/Pause, forward 10 s). **Rotate** switches the
 screen between portrait and landscape while the video is open; closing the player hands the
