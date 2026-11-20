@@ -202,6 +202,17 @@ again starts over. If nothing could be read the screen says why and offers Try a
 Reconnect for a sign-in problem. A count belongs to the account it started for: if the saved
 account changes it is stopped and discarded.
 
+The last count is saved on the phone (`data/DriveFolderStore.kt`, a small text file in the app's
+private no-backup folder holding folder ids, folder names, counts and sizes, never file names).
+At the next launch its figures show at once, even before Drive connects, with the day and time
+they were counted. Opening Storage then counts again in the background, once per launch and after
+that only when the figures are more than ten minutes old; the earlier figures stay on screen with
+a progress line and a Stop button. A finished recount replaces them and is saved. A recount that
+stops early or fails keeps the earlier figures and says why, unless they were incomplete too, in
+which case the newer partial count replaces them. Nothing is counted automatically before the
+first Count Drive folders tap. The saved count is deleted when the connected account changes, and
+a damaged or cut-short file is ignored rather than shown.
+
 ### Duplicate candidates
 
 Tap Check for duplicates. Files are first grouped by exact byte size; only files that share a
@@ -478,6 +489,7 @@ real timestamp of each frame and is not finished; it is tracked on issue #21.
 | `data/StorageInsights.kt` | Breakdown, size-then-SHA-256 duplicate grouping, cleanup plan |
 | `ui/DriveFolderInsights.kt` | Storage: Google Drive folder counts, more folders, open a folder |
 | `data/DriveFolderSizes.kt` | Drive folder totals from one flat listing, paged listing with stop reasons |
+| `data/DriveFolderStore.kt` | The last Drive folder count saved on the phone for the next launch |
 | `transfer/PhoneFileFence.kt` | Reserves a phone trash request against queuing, removal and the copy a duplicate cleanup keeps |
 | `ui/DriveBrowser.kt` | Drive browser and folder picker |
 | `ui/MovePill.kt`, `data/DriveMove.kt` | Move pill for Drive files, move plan and outcome |

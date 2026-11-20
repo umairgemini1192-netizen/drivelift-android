@@ -36,6 +36,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
@@ -117,6 +118,12 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
     val largest = remember(media) { largestItems(media, LARGEST_SHOWN) }
     val selectedItems = remember(groups, selected) { groups.flatMap { it.items }.filter { it.id in selected } }
     val selectedBytes = selectedItems.sumOf { it.size }
+
+    // Opening Storage refreshes a saved Drive folder count in the background (issue #14).
+    DisposableEffect(vm) {
+        vm.storageOpened()
+        onDispose { vm.storageClosed() }
+    }
 
     // The file open in the viewer, kept across rotation; the list stays composed beneath it.
     var viewingId by rememberSaveable { mutableLongStateOf(NOT_VIEWING) }
@@ -202,13 +209,17 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
                             scan = driveScan,
                             conn = conn,
                             openId = driveOpen,
+                            now = vm.now(),
                             onStart = vm::startDriveFolderScan,
                             onStop = vm::stopDriveFolderScan,
                             onConnect = { vm.connectDrive(interactive = true) },
                         )
                     }
                 }
-                val done = (driveScan as? AppViewModel.DriveFolderScan.Done)?.takeIf { conn == DriveConn.CONNECTED }
+                // The saved or earlier figures are listed even before Drive connects and while a
+                // recount runs.
+                val done = driveScan as? AppViewModel.DriveFolderScan.Done
+                    ?: (driveScan as? AppViewModel.DriveFolderScan.Running)?.previous
                 if (done != null) item(key = "drive-folder-list") {
                     DriveFolderList(
                         tree = done.tree,
