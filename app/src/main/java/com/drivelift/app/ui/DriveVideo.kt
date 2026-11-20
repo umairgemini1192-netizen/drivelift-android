@@ -418,6 +418,15 @@ internal fun VideoPlayer(
     LifecycleEventEffect(Lifecycle.Event.ON_STOP) {
         if (activity?.isChangingConfigurations != true) player.pause()
     }
+    // Rotate asks for one orientation while the video is open. Leaving the player hands the
+    // orientation back to the phone; the recreation that a rotation itself causes does not.
+    DisposableEffect(activity) {
+        onDispose {
+            if (activity?.isChangingConfigurations != true) {
+                activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
+            }
+        }
+    }
     // Hidden controls give a clear, full-screen picture: the viewer's top bar and Android's
     // status and navigation bars step aside too. A swipe from the edge shows the bars briefly.
     DisposableEffect(controlsVisible) {
@@ -510,6 +519,8 @@ internal fun VideoPlayer(
                     )
                 },
         )
+        val landscape = androidx.compose.ui.platform.LocalConfiguration.current.orientation ==
+            android.content.res.Configuration.ORIENTATION_LANDSCAPE
         if (controlsVisible) {
             VideoControls(
                 state = VideoUiState(
@@ -544,9 +555,13 @@ internal fun VideoPlayer(
                     position = it
                     touched()
                 },
-                onSpeed = {
-                    savedSpeed = nextVideoSpeed(savedSpeed)
-                    player.setPlaybackSpeed(savedSpeed)
+                onSpeed = { picked ->
+                    savedSpeed = picked
+                    player.setPlaybackSpeed(picked)
+                    touched()
+                },
+                onRotate = {
+                    activity?.requestedOrientation = rotatedOrientation(landscape)
                     touched()
                 },
                 onCapture = {
