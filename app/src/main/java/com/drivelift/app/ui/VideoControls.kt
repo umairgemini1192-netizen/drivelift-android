@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -31,7 +32,9 @@ import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Replay10
+import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.ScreenRotation
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -315,6 +318,10 @@ internal fun VideoControls(
     onFit: () -> Unit = {},
     /** Turns the screen between portrait and landscape. */
     onRotate: () -> Unit = {},
+    /** The video picture's quarter turns clockwise so far (0 to 3), for the Turn control. */
+    turns: Int = 0,
+    /** Turns the video picture 90 degrees clockwise. */
+    onTurn: () -> Unit = {},
     /** True while a finger is dragging the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
     /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
@@ -375,8 +382,15 @@ internal fun VideoControls(
                         description = "Step forward about one frame",
                     )
                 }
-                ControlGroup("Picture", "video-picture") {
-                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the video")
+                WrappingControlGroup("Picture", "video-picture") {
+                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the screen")
+                    PlayerWell(
+                        onClick = onTurn,
+                        icon = Icons.Outlined.RotateRight,
+                        description = turnDescription(turns),
+                        // The arrow turns with the picture, so the well shows the turn it is at.
+                        iconRotation = quarterTurnDegrees(turns).toFloat(),
+                    )
                     PlayerWell(
                         onClick = onCapture,
                         icon = Icons.Outlined.PhotoCamera,
@@ -500,6 +514,32 @@ private fun ControlGroup(
 }
 
 /**
+ * A tool group whose buttons wrap onto a second line when a large text size leaves no room for
+ * them all side by side. Each button keeps its full touch target (rule 7, issue #32).
+ */
+@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
+@Composable
+private fun WrappingControlGroup(
+    label: String,
+    tag: String,
+    modifier: Modifier = Modifier,
+    content: @Composable FlowRowScope.() -> Unit,
+) {
+    FlowRow(
+        modifier.testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
+    }
+}
+
+/**
  * One Speed button. The one playing now has a coral edge and coral text; the other is plain, so
  * the current speed is visible at a glance without competing with Play/Pause.
  */
@@ -535,6 +575,8 @@ private fun PlayerWell(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean = true,
+    /** Degrees the icon is turned clockwise, for a well that shows a state (the Turn control). */
+    iconRotation: Float = 0f,
 ) {
     IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Tokens.TouchTarget)) {
         Box(
@@ -544,7 +586,7 @@ private fun PlayerWell(
                 .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = description)
+            Icon(icon, contentDescription = description, modifier = Modifier.graphicsLayer(rotationZ = iconRotation))
         }
     }
 }

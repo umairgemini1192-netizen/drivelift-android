@@ -3,8 +3,9 @@ package com.drivelift.app.ui
 import androidx.annotation.OptIn
 import android.view.TextureView
 import androidx.compose.foundation.gestures.detectTransformGestures
-import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.requiredSize
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
@@ -337,6 +338,11 @@ internal fun VideoPlayer(
     // a placeholder and must not be used to limit a restored zoom position.
     var aspectKnown by remember(player) { mutableStateOf(false) }
     var viewport by remember(player) { mutableStateOf(IntSize.Zero) }
+    // The Turn control: quarter turns clockwise of the picture (0 to 3, i.e. 0 to 270 degrees).
+    // Kept while this video is open, so a restored screen keeps the same turn.
+    var quarterTurns by rememberSaveable(source.key) { mutableIntStateOf(0) }
+    // The shape the picture has on screen: the video's own shape, flipped after a quarter turn.
+    val shownAspect = turnedAspect(videoAspect, quarterTurns)
     // Zoom stays exactly where the user leaves it (through hiding controls, seeking, pausing and
     // rotation) until they pinch again or tap Fit.
     var savedZoom by rememberSaveable(source.key) { mutableFloatStateOf(1f) }
@@ -431,9 +437,9 @@ internal fun VideoPlayer(
     }
     // A rotation or resize changes the fitted picture and the screen, so a restored pan offset is
     // limited again at once; the zoom level itself is kept.
-    LaunchedEffect(viewport, videoAspect, aspectKnown) {
+    LaunchedEffect(viewport, shownAspect, aspectKnown) {
         if (aspectKnown && viewport.width > 0 && viewport.height > 0) {
-            zoom.applyVideoGesture(Offset.Zero, 1f, fittedVideoSize(viewport, videoAspect), viewport)
+            zoom.applyVideoGesture(Offset.Zero, 1f, fittedVideoSize(viewport, shownAspect), viewport)
             rememberZoom()
         }
     }
@@ -499,6 +505,11 @@ internal fun VideoPlayer(
         ) {
             // Full screen, fitted to the video's shape; the top bar overlays it while the
             // controls are shown. A TextureView, unlike a SurfaceView, can be scaled for zoom.
+            // The texture is laid out in the video's own shape and then turned as a whole, so the
+            // picture is never stretched. Its box is the fitted size with the sides swapped after a
+            // quarter turn, which turns back to exactly the fitted size on screen.
+            val density = LocalDensity.current
+            val box = unturnedSize(fittedVideoSize(viewport, shownAspect), quarterTurns)
             AndroidView(
                 factory = { viewContext ->
                     TextureView(viewContext).also { view ->
@@ -508,9 +519,10 @@ internal fun VideoPlayer(
                     }
                 },
                 modifier = Modifier
-                    .aspectRatio(videoAspect)
+                    .requiredSize(with(density) { box.width.toDp() }, with(density) { box.height.toDp() })
                     .testTag("viewer-video")
                     .graphicsLayer(
+                        rotationZ = quarterTurnDegrees(quarterTurns).toFloat(),
                         scaleX = zoom.scale,
                         scaleY = zoom.scale,
                         translationX = zoom.offset.x,
@@ -526,7 +538,7 @@ internal fun VideoPlayer(
                 .testTag("video-touch")
                 .pointerInput(player) {
                     detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom.applyVideoGesture(pan, gestureZoom, fittedVideoSize(viewport, videoAspect), viewport)
+                        zoom.applyVideoGesture(pan, gestureZoom, fittedVideoSize(viewport, shownAspect), viewport)
                         rememberZoom()
                     }
                 }
@@ -588,6 +600,11 @@ internal fun VideoPlayer(
                     activity?.requestedOrientation = rotatedOrientation(landscape)
                     touched()
                 },
+                turns = quarterTurns,
+                onTurn = {
+                    quarterTurns = nextQuarterTurn(quarterTurns)
+                    touched()
+                },
                 onCapture = {
                     captureFrame()
                     touched()
@@ -625,6 +642,26 @@ internal fun VideoPlayer(
     }
 }
 
+
+/** The next quarter turn after [turns]: 0 to 1 to 2 to 3 and back to 0. Each tap adds 90 degrees clockwise. */
+internal fun nextQuarterTurn(turns: Int): Int = (turns.mod(4) + 1) % 4
+
+/** The turn in degrees: 0, 90, 180 or 270. */
+internal fun quarterTurnDegrees(turns: Int): Int = turns.mod(4) * 90
+
+/** True after a quarter or three quarter turn, when the picture's width and height swap on screen. */
+internal fun isSideways(turns: Int): Boolean = turns.mod(4) % 2 == 1
+
+/** The video's aspect (width over height) as it appears on screen after [turns]. */
+internal fun turnedAspect(aspect: Float, turns: Int): Float = if (isSideways(turns)) 1f / aspect else aspect
+
+/** The size of the unturned picture whose turned shape fills [visible]: the sides swap after a quarter turn. */
+internal fun unturnedSize(visible: androidx.compose.ui.geometry.Size, turns: Int): androidx.compose.ui.geometry.Size =
+    if (isSideways(turns)) androidx.compose.ui.geometry.Size(visible.height, visible.width) else visible
+
+/** Spoken label for the Turn control: the action and the turn it is at now. */
+internal fun turnDescription(turns: Int): String =
+    "Turn the video clockwise, now ${quarterTurnDegrees(turns)} degrees"
 
 /** The size the video occupies when fitted inside [viewport] with its own shape. */
 internal fun fittedVideoSize(viewport: IntSize, aspect: Float): androidx.compose.ui.geometry.Size {
