@@ -16,6 +16,7 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.FlowRowScope
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -381,7 +382,7 @@ internal fun VideoControls(
                         description = "Step forward about one frame",
                     )
                 }
-                ControlGroup("Picture", "video-picture") {
+                WrappingControlGroup("Picture", "video-picture") {
                     PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the screen")
                     PlayerWell(
                         onClick = onTurn,
@@ -502,6 +503,31 @@ private fun ControlGroup(
         modifier.testTag(tag),
         horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
         verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            label,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        content()
+    }
+}
+
+/**
+ * A tool group whose buttons wrap onto a second line when a large text size leaves no room for
+ * them all side by side. Each button keeps its full touch target (rule 7, issue #32).
+ */
+@Composable
+private fun WrappingControlGroup(
+    label: String,
+    tag: String,
+    modifier: Modifier = Modifier,
+    content: @Composable FlowRowScope.() -> Unit,
+) {
+    FlowRow(
+        modifier.testTag(tag),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
         Text(
             label,
