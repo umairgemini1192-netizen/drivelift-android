@@ -127,6 +127,10 @@ dependencies {
     implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
     implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
+    implementation("androidx.datastore:datastore-preferences:1.1.7")
+    implementation("androidx.glance:glance-appwidget:1.2.0")
+    implementation("androidx.glance:glance-material3:1.2.0")
+
     testImplementation("junit:junit:4.13.2")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")

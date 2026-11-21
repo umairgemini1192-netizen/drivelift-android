@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">DriveLift</string>
+    <string name="cockpit_widget_description">All-in-one glass clock, next alarm countdown, DriveLift telemetry, quick toggles, and pinned apps.</string>
 </resources>

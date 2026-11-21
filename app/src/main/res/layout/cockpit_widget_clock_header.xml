@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="vertical">
+
+    <TextClock
+        android:id="@+id/cockpit_widget_time"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFeatureSettings="tnum"
+        android:format12Hour="h:mm a"
+        android:format24Hour="HH:mm"
+        android:includeFontPadding="false"
+        android:textColor="@color/cockpit_on_surface"
+        android:textSize="26sp"
+        android:textStyle="bold" />
+
+    <TextClock
+        android:id="@+id/cockpit_widget_date"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:fontFeatureSettings="tnum"
+        android:format12Hour="EEE, MMM d"
+        android:format24Hour="EEE, MMM d"
+        android:includeFontPadding="false"
+        android:textColor="@color/cockpit_on_surface_variant"
+        android:textSize="12sp" />
+</LinearLayout>

@@ -106,6 +106,11 @@ class Graph(app: Application) {
         com.drivelift.app.feature.intelligence.IntelligenceAutomationModule(app, this)
     }
 
+    /** Self-contained Cockpit Dynamic Island, Master Widget, Tile & Calibration Hub module. */
+    val cockpit: com.drivelift.app.feature.cockpit.CockpitModule by lazy {
+        com.drivelift.app.feature.cockpit.CockpitModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
