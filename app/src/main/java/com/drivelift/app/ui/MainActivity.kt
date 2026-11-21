@@ -141,7 +141,7 @@ class MainActivity : FragmentActivity() {
             intent?.getBooleanExtra(
                 com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService.EXTRA_OPEN_COCKPIT,
                 false,
-            ) == true || intent?.action == android.service.quicksettings.action.QS_TILE_PREFERENCES ->
+            ) == true || intent?.action == android.service.quicksettings.TileService.ACTION_QS_TILE_PREFERENCES ->
                 Graph.get(this).cockpit.requestOpenHub()
         }
     }
