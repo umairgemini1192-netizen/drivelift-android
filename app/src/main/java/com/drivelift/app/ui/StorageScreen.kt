@@ -19,6 +19,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -96,7 +97,11 @@ internal const val STORAGE_NOT_COVERED =
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
+fun StorageScreen(
+    vm: AppViewModel,
+    onBack: () -> Unit,
+    onOpenIntelligence: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val media by vm.media.collectAsStateWithLifecycle()
     val loaded by vm.mediaLoaded.collectAsStateWithLifecycle()
@@ -144,6 +149,16 @@ fun StorageScreen(vm: AppViewModel, onBack: () -> Unit) {
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Outlined.ArrowBack, contentDescription = "Back to folders")
+                    }
+                },
+                actions = {
+                    if (onOpenIntelligence != null) {
+                        IconButton(
+                            onClick = onOpenIntelligence,
+                            modifier = Modifier.testTag("storage-intelligence-entry"),
+                        ) {
+                            Icon(Icons.Outlined.Insights, contentDescription = "Open Storage Intelligence")
+                        }
                     }
                 },
             )

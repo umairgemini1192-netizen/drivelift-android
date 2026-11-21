@@ -174,11 +174,13 @@ fun AppRoot(vm: AppViewModel) {
     // Favorites opens over the Phone or Drive tab; Back returns there (issues #36 and #42).
     var showFavorites by rememberSaveable { mutableStateOf(false) }
     var showStorage by rememberSaveable { mutableStateOf(false) }
+    var showStorageIntelligence by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
     val inFavorites = showFavorites && tab != AppViewModel.TAB_TRANSFERS
     // Storage insights (issue #42) opens over the Phone tab; Back returns to the folder list.
     val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
+    val inStorageIntelligence = tab == AppViewModel.TAB_PHONE && showStorageIntelligence && openBucket == NO_BUCKET && hasPermission
 
     LaunchedEffect(selection) {
         if (!selectionSynced) {
@@ -202,10 +204,11 @@ fun AppRoot(vm: AppViewModel) {
     // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
     // list. The predictive back gesture previews it (BackPreview.kt).
     val upBack = rememberUpBack(
-        enabled = !pickingDestination && (inSettings || inStorage || (inFolder && selection.isEmpty())),
+        enabled = !pickingDestination && (inSettings || inStorage || inStorageIntelligence || (inFolder && selection.isEmpty())),
     ) {
         when {
             inSettings -> showSettings = false
+            inStorageIntelligence -> showStorageIntelligence = false
             inStorage -> showStorage = false
             inFolder -> openBucket = NO_BUCKET
         }
@@ -215,8 +218,8 @@ fun AppRoot(vm: AppViewModel) {
 
     // The level shown now and how it arrived: a step down into a folder or a screen opened over
     // a tab, a step back up, or a move across to another tab (Motion.kt).
-    val level = listOf(tab, openBucket, inSettings, inStorage, inFavorites, pickingDestination, hasPermission)
-    val depth = listOf(inFolder, inSettings, inStorage, inFavorites, pickingDestination).count { it }
+    val level = listOf(tab, openBucket, inSettings, inStorage, inStorageIntelligence, inFavorites, pickingDestination, hasPermission)
+    val depth = listOf(inFolder, inSettings, inStorage, inStorageIntelligence, inFavorites, pickingDestination).count { it }
     var lastLevel by remember { mutableStateOf(Pair(tab, depth)) }
     val levelStep = when {
         tab != lastLevel.first -> NavStep.ACROSS
@@ -241,7 +244,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -317,7 +320,25 @@ fun AppRoot(vm: AppViewModel) {
                                 },
                                 onMove = { showDestination = true },
                             )
-                            inStorage -> StorageScreen(vm = vm, onBack = { showStorage = false })
+                            inStorageIntelligence -> com.drivelift.app.feature.storageintelligence.ui.StorageIntelligenceHubScreen(
+                                appViewModel = vm,
+                                onBack = { showStorageIntelligence = false },
+                                onRevealLocalFolder = { bucketId ->
+                                    showStorageIntelligence = false
+                                    showStorage = false
+                                    openBucket = bucketId
+                                },
+                                onRevealDriveFolder = { file ->
+                                    showStorageIntelligence = false
+                                    showStorage = false
+                                    vm.openDriveFolder(file)
+                                },
+                            )
+                            inStorage -> StorageScreen(
+                                vm = vm,
+                                onBack = { showStorage = false },
+                                onOpenIntelligence = { showStorageIntelligence = true },
+                            )
                             else -> PhoneScreen(
                                 vm = vm,
                                 onOpenFavorites = { showFavorites = true },
