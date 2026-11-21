@@ -97,6 +97,7 @@ import com.drivelift.app.feature.intelligence.nlsearch.SearchResult
 import com.drivelift.app.feature.intelligence.nlsearch.SearchSnippet
 import com.drivelift.app.feature.intelligence.ocr.IndexingTelemetry
 import com.drivelift.app.feature.intelligence.rules.RuleTemplates
+import com.drivelift.app.feature.intelligence.rules.SmartRuleMatcher
 import com.drivelift.app.ui.AppViewModel
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
@@ -725,9 +726,25 @@ private fun RulesTab(vm: IntelligenceViewModel, onEdit: (SmartRuleEntity) -> Uni
 internal fun ruleSummary(rule: SmartRuleEntity): String {
     val source = rule.sourceFolderLabel.ifBlank { "No source folder yet" }
     val conditions = buildList {
-        if (rule.extensionsCsv.isNotBlank()) add(rule.extensionsCsv)
+        val types = SmartRuleMatcher.parseTypes(rule.extensionsCsv).map { t ->
+            when {
+                t == "video/" -> "videos"
+                t == "image/" -> "pictures"
+                '/' in t -> t
+                else -> ".$t"
+            }
+        }
+        if (types.isNotEmpty()) add(types.joinToString(" "))
         rule.minVideoHeightPx?.let { add(if (it >= 2160) "4K or higher" else "${it}p or higher") }
-        rule.minAgeHours?.let { add(if (it % 24 == 0) "older than ${it / 24} days" else "older than $it hours") }
+        rule.minAgeHours?.let { hours ->
+            add(
+                when {
+                    hours % 24 == 0 -> (hours / 24).let { d -> if (d == 1) "older than 1 day" else "older than $d days" }
+                    hours == 1 -> "older than 1 hour"
+                    else -> "older than $hours hours"
+                },
+            )
+        }
     }
     val target = rule.targetDestinationLabel.ifBlank { "no destination yet" }
     val verb = when (rule.action) {
