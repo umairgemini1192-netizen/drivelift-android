@@ -2,8 +2,11 @@ package com.drivelift.app.feature.desktopdrop
 
 import com.drivelift.app.feature.desktopdrop.data.DirectoryDropDestinationWriter
 import com.drivelift.app.feature.desktopdrop.data.FileSharedItemSource
+import com.drivelift.app.feature.desktopdrop.data.SharedItemSource
 import com.drivelift.app.feature.desktopdrop.model.DropJson
+import com.drivelift.app.feature.desktopdrop.model.DropTransferStatus
 import com.drivelift.app.feature.desktopdrop.model.SharedDropItem
+import com.drivelift.app.feature.desktopdrop.model.TransferDirection
 import com.drivelift.app.feature.desktopdrop.server.DesktopDropServerEngine
 import com.drivelift.app.feature.desktopdrop.server.ResumableUploadStore
 import com.drivelift.app.feature.desktopdrop.server.SessionAuthManager
@@ -15,20 +18,29 @@ import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
+import okhttp3.Response
+import okhttp3.WebSocket
+import okhttp3.WebSocketListener
 import org.junit.After
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import java.io.ByteArrayInputStream
 import java.io.File
+import java.io.InputStream
 import java.net.ServerSocket
 import java.nio.file.Files
 import java.security.MessageDigest
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -324,6 +336,314 @@ class DesktopDropServerEngineTest {
             assertArrayEquals(file2.readBytes(), unpacked["notes.txt"])
         }
         assertEquals(0, tempRoot.walkTopDown().count { it.extension.equals("zip", ignoreCase = true) })
+    }
+
+    private fun awaitCondition(timeoutMs: Long = 3_000L, predicate: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            if (predicate()) return
+            Thread.sleep(20)
+        }
+        assertTrue("Condition was not satisfied within ${timeoutMs}ms", predicate())
+    }
+
+    private fun openTelemetryWebSocket(
+        client: OkHttpClient,
+        port: Int,
+    ): Pair<WebSocket, LinkedBlockingQueue<String>> {
+        val frames = LinkedBlockingQueue<String>()
+        val opened = CountDownLatch(1)
+        val ws = client.newWebSocket(
+            Request.Builder().url("ws://127.0.0.1:$port/ws/telemetry").build(),
+            object : WebSocketListener() {
+                override fun onOpen(webSocket: WebSocket, response: Response) {
+                    opened.countDown()
+                }
+
+                override fun onMessage(webSocket: WebSocket, text: String) {
+                    frames.offer(text)
+                }
+            },
+        )
+        assertTrue("WebSocket did not open within 5s", opened.await(5, TimeUnit.SECONDS))
+        return ws to frames
+    }
+
+    private fun pollMatchingFrame(
+        frames: LinkedBlockingQueue<String>,
+        timeoutMs: Long = 5_000L,
+        predicate: (Map<String, Any?>) -> Boolean,
+    ): Map<String, Any?> {
+        val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
+        while (System.nanoTime() < deadline) {
+            val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1L)
+            val raw = frames.poll(remainingMs, TimeUnit.MILLISECONDS) ?: break
+            val parsed = DropJson.parseObject(raw)
+            if (predicate(parsed)) return parsed
+        }
+        throw AssertionError("Timed out waiting for matching WebSocket frame")
+    }
+
+    @Test
+    fun queueMutationBroadcastsQueueUpdatedWebSocketEvent() {
+        authManager.requireApproval = false
+        val port = startLoopbackServer()
+        val (client, _) = clientWithJar()
+        val token = authManager.sessionToken
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
+        ).execute().use { assertEquals(200, it.code) }
+
+        val (ws, frames) = openTelemetryWebSocket(client, port)
+        try {
+            val initial = pollMatchingFrame(frames) { it["type"] == "telemetry" }
+            assertEquals(0L, (initial["sharedFilesCount"] as Number).toLong())
+
+            val sampleFile = File(shareDir, "PXL_20261120_180255203.mp4").apply {
+                writeBytes(ByteArray(1024) { 0x2A })
+            }
+            engine.setSharedItems(
+                listOf(
+                    SharedDropItem(
+                        id = "pxl-1",
+                        name = "PXL_20261120_180255203.mp4",
+                        relativePath = "",
+                        sizeBytes = sampleFile.length(),
+                        mimeType = "video/mp4",
+                        localFilePath = sampleFile.absolutePath,
+                        addedAtMs = 1000L,
+                    ),
+                ),
+            )
+
+            val addedEvent = pollMatchingFrame(frames) { it["type"] == "queue_updated" }
+            assertEquals(1L, (addedEvent["sharedFilesCount"] as Number).toLong())
+
+            client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { filesResp ->
+                assertEquals(200, filesResp.code)
+                assertEquals("no-store", filesResp.header("Cache-Control"))
+                assertTrue(filesResp.body!!.string().contains("PXL_20261120_180255203.mp4"))
+            }
+
+            engine.setSharedItems(emptyList())
+            val clearedEvent = pollMatchingFrame(frames) {
+                it["type"] == "queue_updated" && (it["sharedFilesCount"] as? Number)?.toLong() == 0L
+            }
+            assertEquals(0L, (clearedEvent["sharedFilesCount"] as Number).toLong())
+        } finally {
+            ws.close(1000, "done")
+        }
+    }
+
+    @Test
+    fun largeBufferStreamingPreservesExactBytesAndRangeIntegrityForFileAndSafStreams() {
+        authManager.requireApproval = false
+        val largeBytes = ByteArray(1_600_000) { idx -> ((idx * 17 + 5) and 0xFF).toByte() }
+        val bigFile = File(shareDir, "PXL_20261120_180255203.mp4").apply { writeBytes(largeBytes) }
+        engine.setSharedItems(
+            listOf(
+                SharedDropItem(
+                    id = "big-file",
+                    name = "PXL_20261120_180255203.mp4",
+                    relativePath = "Camera",
+                    sizeBytes = largeBytes.size.toLong(),
+                    mimeType = "video/mp4",
+                    localFilePath = bigFile.absolutePath,
+                    addedAtMs = 1000L,
+                ),
+            ),
+        )
+        startLoopbackServer()
+        val (client, _) = clientWithJar()
+        val token = authManager.sessionToken
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
+        ).execute().use { assertEquals(200, it.code) }
+
+        // Direct FileChannel 512 KB streaming path: full body.
+        client.newCall(Request.Builder().url("$baseUrl/api/download/big-file").build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertEquals("1600000", resp.header("Content-Length"))
+            assertArrayEquals(largeBytes, resp.body!!.bytes())
+        }
+        awaitCondition { engine.activeTransferCount() == 0 }
+
+        // Multi-buffer unaligned Range (206 Partial Content) across 512 KB boundaries.
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/download/big-file").addHeader("Range", "bytes=600000-1350000").build(),
+        ).execute().use { partial ->
+            assertEquals(206, partial.code)
+            assertEquals("bytes 600000-1350000/1600000", partial.header("Content-Range"))
+            assertEquals("750001", partial.header("Content-Length"))
+            assertArrayEquals(largeBytes.copyOfRange(600_000, 1_350_001), partial.body!!.bytes())
+        }
+        awaitCondition { engine.activeTransferCount() == 0 }
+
+        // Tail slice Range check.
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/download/big-file").addHeader("Range", "bytes=1599900-1599999").build(),
+        ).execute().use { tail ->
+            assertEquals(206, tail.code)
+            assertArrayEquals(largeBytes.copyOfRange(1_599_900, 1_600_000), tail.body!!.bytes())
+        }
+        awaitCondition { engine.activeTransferCount() == 0 }
+
+        // Streaming STORED ZIP archive over large buffer preserves exact bytes.
+        client.newCall(Request.Builder().url("$baseUrl/api/download-zip?ids=big-file").build()).execute().use { zipResp ->
+            assertEquals(200, zipResp.code)
+            ZipInputStream(ByteArrayInputStream(zipResp.body!!.bytes())).use { zis ->
+                val entry = zis.nextEntry
+                assertNotNull(entry)
+                assertEquals("Camera/PXL_20261120_180255203.mp4", entry!!.name)
+                assertEquals(ZipEntry.STORED, entry.method)
+                assertArrayEquals(largeBytes, zis.readBytes())
+            }
+        }
+        awaitCondition { engine.activeTransferCount() == 0 }
+        assertEquals(0, tempRoot.walkTopDown().count { it.extension.equals("zip", ignoreCase = true) })
+
+        // SAF / ContentResolver InputStream path (localFileOrNull returns null) with 512 KB ByteArray.
+        val safAuth = SessionAuthManager(allowLoopbackForTest = true).apply { requireApproval = false }
+        val safSource = object : SharedItemSource {
+            override fun localFileOrNull(item: SharedDropItem): File? = null
+
+            override fun openInputStream(item: SharedDropItem): InputStream =
+                ByteArrayInputStream(largeBytes)
+
+            override fun openRangedInputStream(item: SharedDropItem, startOffset: Long, length: Long): InputStream =
+                ByteArrayInputStream(largeBytes, startOffset.toInt(), length.toInt())
+        }
+        val safEngine = DesktopDropServerEngine(
+            authManager = safAuth,
+            uploadStore = ResumableUploadStore(File(tempRoot, "saf-parts").apply { mkdirs() }),
+            itemSource = safSource,
+            destinationWriter = DirectoryDropDestinationWriter(File(tempRoot, "saf-dest").apply { mkdirs() }, "SafDest"),
+            htmlProvider = { "<html></html>" },
+            destinationLabelProvider = { "SafDest" },
+        )
+        try {
+            safEngine.setSharedItems(
+                listOf(
+                    SharedDropItem(
+                        id = "saf-big",
+                        name = "saf_video.mp4",
+                        relativePath = "",
+                        sizeBytes = largeBytes.size.toLong(),
+                        mimeType = "video/mp4",
+                        sourceUri = "content://synthetic/saf-big",
+                        addedAtMs = 1000L,
+                    ),
+                ),
+            )
+            val safPort = runBlocking { safEngine.start("127.0.0.1", 0) }
+            val safBaseUrl = "http://127.0.0.1:$safPort"
+            val (safClient, _) = clientWithJar()
+            safClient.newCall(
+                Request.Builder()
+                    .url("$safBaseUrl/api/auth/request")
+                    .post("""{"token":"${safAuth.sessionToken}"}""".toRequestBody("application/json".toMediaType()))
+                    .build(),
+            ).execute().use { assertEquals(200, it.code) }
+
+            safClient.newCall(Request.Builder().url("$safBaseUrl/api/download/saf-big").build()).execute().use { resp ->
+                assertEquals(200, resp.code)
+                assertEquals("1600000", resp.header("Content-Length"))
+                assertArrayEquals(largeBytes, resp.body!!.bytes())
+            }
+            awaitCondition { safEngine.activeTransferCount() == 0 }
+
+            safClient.newCall(
+                Request.Builder().url("$safBaseUrl/api/download/saf-big").addHeader("Range", "bytes=600000-1350000").build(),
+            ).execute().use { partial ->
+                assertEquals(206, partial.code)
+                assertEquals("bytes 600000-1350000/1600000", partial.header("Content-Range"))
+                assertArrayEquals(largeBytes.copyOfRange(600_000, 1_350_001), partial.body!!.bytes())
+            }
+            awaitCondition { safEngine.activeTransferCount() == 0 }
+        } finally {
+            safEngine.stop()
+        }
+    }
+
+    @Test
+    fun telemetryThrottlingPreventsPerChunkEmissionFloods() {
+        val fakeClock = AtomicLong(10_000L)
+        val stateChangedCount = AtomicInteger(0)
+        val throttledAuth = SessionAuthManager(clock = { fakeClock.get() }, allowLoopbackForTest = true).apply {
+            requireApproval = false
+        }
+        val throttledEngine = DesktopDropServerEngine(
+            authManager = throttledAuth,
+            uploadStore = ResumableUploadStore(File(tempRoot, "t-parts").apply { mkdirs() }, clock = { fakeClock.get() }),
+            itemSource = FileSharedItemSource(),
+            destinationWriter = DirectoryDropDestinationWriter(File(tempRoot, "t-dest").apply { mkdirs() }, "TDest"),
+            htmlProvider = { "<html></html>" },
+            destinationLabelProvider = { "TDest" },
+            clock = { fakeClock.get() },
+            onStateChanged = { stateChangedCount.incrementAndGet() },
+        )
+        var ws: WebSocket? = null
+        try {
+            val port = runBlocking { throttledEngine.start("127.0.0.1", 0) }
+            val (client, _) = clientWithJar()
+            client.newCall(
+                Request.Builder()
+                    .url("http://127.0.0.1:$port/api/auth/request")
+                    .post("""{"token":"${throttledAuth.sessionToken}"}""".toRequestBody("application/json".toMediaType()))
+                    .build(),
+            ).execute().use { assertEquals(200, it.code) }
+
+            val (socket, frames) = openTelemetryWebSocket(client, port)
+            ws = socket
+            pollMatchingFrame(frames) { it["type"] == "telemetry" }
+
+            val transferId = throttledEngine.registerTransferStart(
+                filename = "PXL_20261120_180255203.mp4",
+                relativePath = "",
+                direction = TransferDirection.PHONE_TO_PC,
+                totalBytes = 20L * 1024L * 1024L,
+            )
+            pollMatchingFrame(frames) {
+                it["type"] == "telemetry" && (it["activeTransferCount"] as? Number)?.toInt() == 1
+            }
+            frames.clear()
+            val baselineEmits = stateChangedCount.get()
+
+            // Phase 1: 50 rapid chunks within 200 ms (< 300 ms threshold) produce zero progress emissions.
+            repeat(50) {
+                fakeClock.addAndGet(4L)
+                throttledEngine.recordTransferProgress(transferId, 65_536L)
+            }
+            assertEquals(baselineEmits, stateChangedCount.get())
+            assertEquals(1, throttledEngine.activeTransferCount())
+
+            // Phase 2: 200 more chunks spanning 1000 ms cross the 300 ms gate only 4 times.
+            repeat(200) {
+                fakeClock.addAndGet(5L)
+                throttledEngine.recordTransferProgress(transferId, 65_536L)
+            }
+            val deltaEmits = stateChangedCount.get() - baselineEmits
+            assertEquals(4, deltaEmits)
+
+            Thread.sleep(150L)
+            val wsTelemetryFramesDuringBurst = generateSequence { frames.poll() }.count { raw ->
+                DropJson.parseObject(raw)["type"] == "telemetry"
+            }
+            assertTrue(
+                "Expected <= 5 WebSocket telemetry frames during 250 chunks, got $wsTelemetryFramesDuringBurst",
+                wsTelemetryFramesDuringBurst <= 5,
+            )
+
+            throttledEngine.markTransferCompleted(transferId)
+            assertTrue(stateChangedCount.get() > baselineEmits + deltaEmits)
+            assertEquals(0, throttledEngine.activeTransferCount())
+            val completed = throttledEngine.transfersSnapshot().first { it.transferId == transferId }
+            assertEquals(DropTransferStatus.COMPLETED, completed.status)
+            assertEquals(250L * 65_536L, completed.transferredBytes)
+        } finally {
+            ws?.close(1000, "done")
+            throttledEngine.stop()
+        }
     }
 
     @Test

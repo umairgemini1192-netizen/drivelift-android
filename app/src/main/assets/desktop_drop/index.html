@@ -247,7 +247,7 @@
     <div class="grid">
       <section class="glass">
         <h2>Send from computer to phone</h2>
-        <p class="sub">Streams raw 8 MB resumable chunks straight to phone storage.</p>
+        <p class="sub">Streams raw 8 MB to 16 MB resumable chunks straight to phone storage.</p>
         <div id="dropzone" class="dropzone">
           <strong>Drop files or folders here</strong>
           <span>Supports multi-gigabyte files and nested folder trees</span>
@@ -278,12 +278,25 @@
 
 <script>
 (function () {
-  const CHUNK_SIZE = 8 * 1024 * 1024;
+  const DEFAULT_CHUNK_SIZE = 8 * 1024 * 1024;
+  const LARGE_FILE_CHUNK_SIZE = 16 * 1024 * 1024;
+  const LARGE_FILE_THRESHOLD = 64 * 1024 * 1024;
+  const FALLBACK_POLL_MS = 5000;
+  function selectChunkSize(fileSize) {
+    return fileSize > LARGE_FILE_THRESHOLD ? LARGE_FILE_CHUNK_SIZE : DEFAULT_CHUNK_SIZE;
+  }
+
   const urlParams = new URLSearchParams(window.location.search);
   let activeToken = (urlParams.get("token") || "").trim().toUpperCase();
   let peerId = null;
   let pollTimer = null;
   let ws = null;
+  let wsConnected = false;
+  let wsNeedsResync = false;
+  let wsReconnectTimer = null;
+  let fallbackFilesTimer = null;
+  let filesRefreshInFlight = false;
+  let filesRefreshPending = false;
 
   const authCard = document.getElementById("authCard");
   const authPrompt = document.getElementById("authPrompt");
@@ -390,16 +403,49 @@
     }, 1200);
   }
 
+  function startFallbackFilesPoll() {
+    if (fallbackFilesTimer) return;
+    fallbackFilesTimer = setInterval(() => {
+      if (!wsConnected && !appMain.classList.contains("hidden")) {
+        refreshSharedFiles();
+      }
+    }, FALLBACK_POLL_MS);
+  }
+
+  function stopFallbackFilesPoll() {
+    if (fallbackFilesTimer) {
+      clearInterval(fallbackFilesTimer);
+      fallbackFilesTimer = null;
+    }
+  }
+
+  function scheduleWsReconnect() {
+    if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+    wsReconnectTimer = setTimeout(() => {
+      wsReconnectTimer = null;
+      if (!appMain.classList.contains("hidden")) {
+        connectTelemetryWs();
+      }
+    }, 2000);
+  }
+
   function enterAuthorizedState() {
     authCard.classList.add("hidden");
     appMain.classList.remove("hidden");
     connDot.className = "dot live";
     hudText.textContent = "Connected";
+    wsNeedsResync = false;
+    stopFallbackFilesPoll();
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
     refreshSharedFiles();
     connectTelemetryWs();
   }
 
   function handleRevoked() {
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    stopFallbackFilesPoll();
+    wsConnected = false;
+    wsNeedsResync = false;
     if (ws) { try { ws.close(); } catch (_) {} ws = null; }
     appMain.classList.add("hidden");
     authCard.classList.remove("hidden");
@@ -410,71 +456,116 @@
   }
 
   function connectTelemetryWs() {
-    if (ws) { try { ws.close(); } catch (_) {} }
+    if (wsReconnectTimer) { clearTimeout(wsReconnectTimer); wsReconnectTimer = null; }
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
     const scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
-    ws = new WebSocket(scheme + window.location.host + "/ws/telemetry");
+    try {
+      ws = new WebSocket(scheme + window.location.host + "/ws/telemetry");
+    } catch (_) {
+      wsConnected = false;
+      wsNeedsResync = true;
+      startFallbackFilesPoll();
+      scheduleWsReconnect();
+      return;
+    }
+    ws.onopen = function () {
+      wsConnected = true;
+      stopFallbackFilesPoll();
+      connDot.className = "dot live";
+      hudText.textContent = "Connected";
+      if (wsNeedsResync) {
+        wsNeedsResync = false;
+        refreshSharedFiles();
+      }
+    };
     ws.onmessage = function (ev) {
       try {
-        const snap = JSON.parse(ev.data);
-        speedReadout.textContent = formatBytes(snap.speedBytesPerSec || 0) + "/s";
-        const count = snap.activeTransferCount || 0;
-        activeReadout.textContent = count === 1 ? "1 active" : count + " active";
+        const msg = JSON.parse(ev.data);
+        if (msg.type === "queue_updated") {
+          refreshSharedFiles();
+          return;
+        }
+        if (typeof msg.speedBytesPerSec === "number") {
+          speedReadout.textContent = formatBytes(msg.speedBytesPerSec) + "/s";
+        }
+        if (typeof msg.activeTransferCount === "number") {
+          const count = msg.activeTransferCount;
+          activeReadout.textContent = count === 1 ? "1 active" : count + " active";
+        }
       } catch (_) {}
     };
+    ws.onerror = function () {
+      wsConnected = false;
+      wsNeedsResync = true;
+      startFallbackFilesPoll();
+    };
     ws.onclose = function (ev) {
+      wsConnected = false;
+      ws = null;
       if (ev.code === 1008 || ev.reason === "Peer disconnected") {
         handleRevoked();
         return;
       }
-      setTimeout(() => {
-        if (!appMain.classList.contains("hidden")) connectTelemetryWs();
-      }, 2000);
+      wsNeedsResync = true;
+      startFallbackFilesPoll();
+      scheduleWsReconnect();
     };
   }
 
   async function refreshSharedFiles() {
+    if (filesRefreshInFlight) {
+      filesRefreshPending = true;
+      return;
+    }
+    filesRefreshInFlight = true;
     try {
-      const resp = await fetch("/api/files");
-      if (resp.status === 401) { handleRevoked(); return; }
-      const data = await resp.json();
-      if (data.destinationLabel) {
-        destLabel.textContent = "Saving uploads to: " + data.destinationLabel;
-      }
-      const files = data.files || [];
-      sharedList.innerHTML = "";
-      if (files.length === 0) {
-        sharedEmpty.classList.remove("hidden");
-        zipAllBtn.classList.add("hidden");
-        return;
-      }
-      sharedEmpty.classList.add("hidden");
-      zipAllBtn.classList.toggle("hidden", files.length < 1);
-      for (const f of files) {
-        const row = document.createElement("div");
-        row.className = "item";
-        const top = document.createElement("div");
-        top.className = "item-top";
-        const meta = document.createElement("div");
-        meta.className = "item-meta";
-        const nameEl = document.createElement("div");
-        nameEl.className = "item-name";
-        nameEl.textContent = f.name;
-        const subEl = document.createElement("div");
-        subEl.className = "item-sub";
-        subEl.textContent = formatBytes(f.sizeBytes) + (f.relativePath ? " - " + f.relativePath : "");
-        meta.appendChild(nameEl);
-        meta.appendChild(subEl);
-        const dl = document.createElement("a");
-        dl.className = "btn btn-well btn-sm";
-        dl.href = "/api/download/" + encodeURIComponent(f.id);
-        dl.setAttribute("download", f.name);
-        dl.textContent = "Download";
-        top.appendChild(meta);
-        top.appendChild(dl);
-        row.appendChild(top);
-        sharedList.appendChild(row);
-      }
-    } catch (_) {}
+      do {
+        filesRefreshPending = false;
+        const resp = await fetch("/api/files", { cache: "no-store" });
+        if (resp.status === 401) { handleRevoked(); return; }
+        const data = await resp.json();
+        if (data.destinationLabel) {
+          destLabel.textContent = "Saving uploads to: " + data.destinationLabel;
+        }
+        const files = data.files || [];
+        sharedList.innerHTML = "";
+        if (files.length === 0) {
+          sharedEmpty.classList.remove("hidden");
+          zipAllBtn.classList.add("hidden");
+        } else {
+          sharedEmpty.classList.add("hidden");
+          zipAllBtn.classList.toggle("hidden", files.length < 1);
+          for (const f of files) {
+            const row = document.createElement("div");
+            row.className = "item";
+            const top = document.createElement("div");
+            top.className = "item-top";
+            const meta = document.createElement("div");
+            meta.className = "item-meta";
+            const nameEl = document.createElement("div");
+            nameEl.className = "item-name";
+            nameEl.textContent = f.name;
+            const subEl = document.createElement("div");
+            subEl.className = "item-sub";
+            subEl.textContent = formatBytes(f.sizeBytes) + (f.relativePath ? " - " + f.relativePath : "");
+            meta.appendChild(nameEl);
+            meta.appendChild(subEl);
+            const dl = document.createElement("a");
+            dl.className = "btn btn-well btn-sm";
+            dl.href = "/api/download/" + encodeURIComponent(f.id);
+            dl.setAttribute("download", f.name);
+            dl.textContent = "Download";
+            top.appendChild(meta);
+            top.appendChild(dl);
+            row.appendChild(top);
+            sharedList.appendChild(row);
+          }
+        }
+      } while (filesRefreshPending);
+    } catch (_) {
+    } finally {
+      filesRefreshInFlight = false;
+    }
   }
 
   function enqueueFile(file, relativePath) {
@@ -607,9 +698,10 @@
         job.receivedBytes = initData.receivedBytes || 0;
         renderJobRow(job);
 
+        const chunkSize = selectChunkSize(job.file.size);
         while (job.receivedBytes < job.file.size && !job.cancelled && !job.paused) {
           const offset = job.receivedBytes;
-          const end = Math.min(job.file.size, offset + CHUNK_SIZE);
+          const end = Math.min(job.file.size, offset + chunkSize);
           const slice = job.file.slice(offset, end);
           const t0 = performance.now();
           const patchResp = await fetch("/api/upload/" + encodeURIComponent(job.uploadId), {
