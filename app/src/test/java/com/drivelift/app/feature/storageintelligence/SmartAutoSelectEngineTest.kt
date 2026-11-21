@@ -113,4 +113,28 @@ class SmartAutoSelectEngineTest {
         // Existing selected item can always be toggled off
         assertTrue(engine.canToggleSelect(group, selectedBothLocal, "local:2"))
     }
+
+    @Test
+    fun maxSelectableCopiesAndSelectAllExtraCopiesRespectProtectionAndKeepOneCopy() {
+        val group = mixedGroup()
+
+        assertEquals(2, engine.maxSelectableCopies(listOf(group)))
+        val allNormal = engine.selectAllExtraCopies(listOf(group))
+        assertEquals(setOf("local:1", "gdrive:3"), allNormal.selectedNodeIds)
+        assertEquals(listOf("local:2"), allNormal.keptNodeIdsByGroup[group.groupKey])
+
+        // 1 protected node -> protected item stays unselected; 2 unlocked items can be selected.
+        val protectedOne = setOf("local:1")
+        assertEquals(2, engine.maxSelectableCopies(listOf(group), protectedOne))
+        val allWithProtected = engine.selectAllExtraCopies(listOf(group), protectedOne)
+        assertEquals(setOf("local:2", "gdrive:3"), allWithProtected.selectedNodeIds)
+        assertFalse("local:1" in allWithProtected.selectedNodeIds)
+        assertTrue(group.items.count { it.id !in allWithProtected.selectedNodeIds } >= 1)
+
+        // All items protected -> nothing selectable.
+        val allProtected = setOf("local:1", "local:2", "gdrive:3")
+        assertEquals(0, engine.maxSelectableCopies(listOf(group), allProtected))
+        val noneSelected = engine.selectAllExtraCopies(listOf(group), allProtected)
+        assertTrue(noneSelected.selectedNodeIds.isEmpty())
+    }
 }

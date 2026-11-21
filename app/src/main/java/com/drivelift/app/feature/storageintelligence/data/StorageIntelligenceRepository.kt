@@ -402,11 +402,16 @@ class StorageIntelligenceRepository(
         val lock = lockProvider.snapshot()
         val out = HashSet<String>()
         val session = dao.latestSessionOnce() ?: return out
-        val items = dao.duplicateItemsForSession(session.sessionId)
-        for (item in items) {
-            val isLocalHeld = item.localUri != null && item.localUri in lock.activeMediaUris
-            val isCloudHeld = item.nativeId in lock.activeDriveFileIds || item.name in lock.activeFileNames
-            if (isLocalHeld || isCloudHeld) out += item.nodeId
+        fun isHeld(localUri: String?, nativeId: String, name: String): Boolean {
+            val isLocalHeld = localUri != null && localUri in lock.activeMediaUris
+            val isCloudHeld = nativeId in lock.activeDriveFileIds || name in lock.activeFileNames
+            return isLocalHeld || isCloudHeld
+        }
+        for (item in dao.duplicateItemsForSession(session.sessionId)) {
+            if (isHeld(item.localUri, item.nativeId, item.name)) out += item.nodeId
+        }
+        for (item in dao.largeFilesForSession(session.sessionId)) {
+            if (isHeld(item.localUri, item.nativeId, item.name)) out += item.nodeId
         }
         return out
     }

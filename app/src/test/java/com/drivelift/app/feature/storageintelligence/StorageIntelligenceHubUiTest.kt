@@ -47,6 +47,7 @@ import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
 import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -94,8 +95,8 @@ class StorageIntelligenceHubUiTest {
                 bytesAnalyzed = 680_000_000L,
                 duplicateReclaimableBytes = 145_000_000L,
                 largeFilesTotalBytes = 320_000_000L,
-                orphanReclaimableBytes = 24_000_000L,
-                totalReclaimableBytes = 169_000_000L,
+                orphanReclaimableBytes = 30_000_000L,
+                totalReclaimableBytes = 175_000_000L,
                 partialErrorsJson = encodeScanErrors(
                     listOf(
                         SourceScanError(
@@ -225,6 +226,25 @@ class StorageIntelligenceHubUiTest {
                     canClean = true,
                 ),
                 OrphanArtifactEntity(
+                    artifactId = "local-cache:/cache/stale_thumb.bin",
+                    sessionId = 0L,
+                    sourceId = LOCAL_SOURCE_ID,
+                    sourceLabel = "This phone",
+                    sourceType = StorageSourceType.LOCAL.name,
+                    category = OrphanCategory.LOCAL_APP_CACHE.name,
+                    name = "stale_thumb.bin",
+                    path = "/cache/drive_preview/stale_thumb.bin",
+                    sizeBytes = 6_000_000L,
+                    modifiedAt = FIXED_TIME_MS - 120_000_000L,
+                    itemCount = 1,
+                    nativeId = null,
+                    detail = "Cached Drive thumbnail",
+                    localUri = null,
+                    transferStatus = null,
+                    isLocked = false,
+                    canClean = true,
+                ),
+                OrphanArtifactEntity(
                     artifactId = "cloud-trash:gdrive:primary",
                     sessionId = 0L,
                     sourceId = "gdrive:primary",
@@ -271,6 +291,15 @@ class StorageIntelligenceHubUiTest {
         compose.onNodeWithText(text).assertExists()
     }
 
+    private fun waitForTextGone(text: String, timeoutMs: Long = 10_000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            pump(2)
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty()) return
+        }
+        assertTrue(compose.onAllNodesWithText(text).fetchSemanticsNodes().isEmpty())
+    }
+
     @Test
     fun storageIntelligenceHubRendersAllVariantsAndExercisesTabsAutoSelectAndConfirmation() {
         for (variant in Variant.entries) {
@@ -309,6 +338,11 @@ class StorageIntelligenceHubUiTest {
                 pump(4)
                 compose.onNodeWithText("SYNTH_CLIP_01.mp4").assertExists()
 
+                // Verify TabSelectionBar Select all is present on Duplicates across all screen sizes.
+                compose.onNodeWithTag("si-list").performScrollToKey("dup-select-bar")
+                pump(4)
+                compose.onNodeWithTag("si-select-all").assertExists()
+
                 // Scroll to smart auto-select presets and click Keep cloud copy.
                 compose.onNodeWithTag("si-list").performScrollToKey("dup-presets")
                 pump(4)
@@ -328,7 +362,7 @@ class StorageIntelligenceHubUiTest {
                     )
                 }
 
-                // Exercise confirmation modal and verify per-source breakdown.
+                // Exercise confirmation modal, Select all / Select none across all tabs, and StickyActionBar Select all.
                 if (variant == Variant.STANDARD) {
                     compose.onNodeWithText("Clean selected").performClick()
                     waitForTag("si-cleanup-confirm")
@@ -338,14 +372,55 @@ class StorageIntelligenceHubUiTest {
                     compose.onNodeWithText("Cancel").performClick()
                     waitForText("1 item selected")
 
-                    // Exercise Large files tab and Orphans tab.
+                    compose.onNodeWithTag("si-list").performScrollToKey("dup-select-bar")
+                    pump(4)
+                    compose.onNodeWithText("Select none").performClick()
+                    waitForText("Select all")
+                    waitForTextGone("Clean selected")
+                    compose.onNodeWithTag("si-select-all").performClick()
+                    waitForText("1 item selected")
+                    compose.onNodeWithText("Select none").performClick()
+                    waitForText("Select all")
+                    waitForTextGone("Clean selected")
+
+                    // Exercise Large files tab and Select all / Select none.
+                    compose.onNodeWithTag("si-list").performScrollToKey("tabs")
+                    pump(4)
                     compose.onNodeWithTag("si-tab-large").performClick()
                     waitForText("Synthetic_Archive.zip")
                     compose.onNodeWithText("Synthetic_Archive.zip").assertExists()
+                    compose.onNodeWithTag("si-list").performScrollToKey("large-select-bar")
+                    pump(4)
+                    compose.onNodeWithTag("si-select-all").performClick()
+                    waitForText("2 items selected")
+                    compose.onNodeWithText("Select none").performClick()
+                    waitForText("Select all")
+                    waitForTextGone("Clean selected")
 
+                    // Exercise Orphans tab: partial manual selection offers StickyActionBar Select all, which selects both cleanable orphans only.
+                    compose.onNodeWithTag("si-list").performScrollToKey("tabs")
+                    pump(4)
                     compose.onNodeWithTag("si-tab-orphans").performClick()
                     waitForText("stale_preview.bin")
                     compose.onNodeWithText("stale_preview.bin").assertExists()
+                    compose.onNodeWithText("stale_preview.bin").performClick()
+                    waitForText("1 item selected")
+                    compose.onNodeWithTag("si-bar-select-all").assertIsDisplayed()
+                    compose.onNodeWithTag("si-bar-select-all").performClick()
+                    waitForText("2 items selected")
+                    pump(12)
+                    compose.onNodeWithTag("si-list").performScrollToKey("orphan-select-bar")
+                    pump(6)
+                    compose.onNodeWithText("Select none").assertIsDisplayed()
+                    if (recordSi) {
+                        compose.onRoot().captureRoboImage(
+                            "build/outputs/si-screenshots/si-orphans-standard.png",
+                        )
+                    }
+                    compose.onNodeWithTag("si-select-all").performClick()
+                    waitForText("Select all")
+                    waitForTextGone("Clean selected")
+
                     compose.onNodeWithTag("si-list").performScrollToKey("orphan-cloud-trash:gdrive:primary")
                     pump(4)
                     compose.onNodeWithText("Google Drive trash").assertExists()

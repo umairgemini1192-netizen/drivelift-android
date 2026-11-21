@@ -76,31 +76,61 @@ data class StorageIntelligenceUiState(
         get() = duplicateGroups.sumOf { it.reclaimableBytes } +
             orphans.filter { it.canClean }.sumOf { it.sizeBytes }
 
+    val selectableCount: Int
+        get() = when (activeTab) {
+            IntelligenceTab.DUPLICATES -> AUTO_SELECT.maxSelectableCopies(duplicateGroups, protectedNodeIds)
+            IntelligenceTab.LARGE_FILES -> largeFiles.count { it.id !in protectedNodeIds }
+            IntelligenceTab.ORPHANS -> orphans.count { it.canClean }
+        }
+
     val selectedCount: Int
         get() = when (activeTab) {
-            IntelligenceTab.DUPLICATES -> selectedDuplicateNodeIds.size
-            IntelligenceTab.LARGE_FILES -> selectedLargeFileNodeIds.size
-            IntelligenceTab.ORPHANS -> selectedOrphanArtifactIds.size
+            IntelligenceTab.DUPLICATES -> duplicateGroups.sumOf { g ->
+                g.items.count { it.id in selectedDuplicateNodeIds && it.id !in protectedNodeIds }
+            }
+            IntelligenceTab.LARGE_FILES -> largeFiles.count {
+                it.id in selectedLargeFileNodeIds && it.id !in protectedNodeIds
+            }
+            IntelligenceTab.ORPHANS -> orphans.count {
+                it.canClean && it.artifactId in selectedOrphanArtifactIds
+            }
         }
 
     val selectedBytes: Long
         get() = when (activeTab) {
             IntelligenceTab.DUPLICATES -> duplicateGroups
                 .flatMap { it.items }
-                .filter { it.id in selectedDuplicateNodeIds }
+                .filter { it.id in selectedDuplicateNodeIds && it.id !in protectedNodeIds }
                 .sumOf { it.sizeBytes }
             IntelligenceTab.LARGE_FILES -> largeFiles
-                .filter { it.id in selectedLargeFileNodeIds }
+                .filter { it.id in selectedLargeFileNodeIds && it.id !in protectedNodeIds }
                 .sumOf { it.sizeBytes }
             IntelligenceTab.ORPHANS -> orphans
-                .filter { it.artifactId in selectedOrphanArtifactIds }
+                .filter { it.canClean && it.artifactId in selectedOrphanArtifactIds }
                 .sumOf { it.sizeBytes }
         }
 
     val hasSelectedLocalLargeFiles: Boolean
         get() = activeTab == IntelligenceTab.LARGE_FILES && largeFiles.any {
-            it.id in selectedLargeFileNodeIds && it.isLocal
+            it.id in selectedLargeFileNodeIds && it.id !in protectedNodeIds && it.isLocal
         }
+
+    val allVisibleSelected: Boolean
+        get() = when (activeTab) {
+            IntelligenceTab.DUPLICATES -> selectableCount > 0 && selectedCount >= selectableCount
+            IntelligenceTab.LARGE_FILES -> {
+                val eligible = largeFiles.filter { it.id !in protectedNodeIds }
+                eligible.isNotEmpty() && eligible.all { it.id in selectedLargeFileNodeIds }
+            }
+            IntelligenceTab.ORPHANS -> {
+                val cleanable = orphans.filter { it.canClean }
+                cleanable.isNotEmpty() && cleanable.all { it.artifactId in selectedOrphanArtifactIds }
+            }
+        }
+
+    private companion object {
+        val AUTO_SELECT = SmartAutoSelectEngine()
+    }
 }
 
 class StorageIntelligenceViewModel(app: Application) : AndroidViewModel(app) {
@@ -423,6 +453,10 @@ class StorageIntelligenceViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun toggleLargeFileSelection(nodeId: String) {
+        if (nodeId in uiState.value.protectedNodeIds) {
+            _messages.tryEmit("This file is protected by an active transfer")
+            return
+        }
         val current = selectedLargeFileNodeIds.value
         selectedLargeFileNodeIds.value = if (nodeId in current) current - nodeId else current + nodeId
     }
@@ -432,6 +466,65 @@ class StorageIntelligenceViewModel(app: Application) : AndroidViewModel(app) {
         if (!candidate.canClean) return
         val current = selectedOrphanArtifactIds.value
         selectedOrphanArtifactIds.value = if (artifactId in current) current - artifactId else current + artifactId
+    }
+
+    fun toggleSelectAll() {
+        if (cleanupBusy.value) return
+        val state = uiState.value
+        when (state.activeTab) {
+            IntelligenceTab.DUPLICATES -> {
+                val visibleIds = state.duplicateGroups.flatMapTo(HashSet()) { g -> g.items.map { it.id } }
+                if (state.allVisibleSelected) {
+                    activeAutoPreset.value = null
+                    selectedDuplicateNodeIds.value = selectedDuplicateNodeIds.value - visibleIds
+                } else {
+                    val result = autoSelect.selectAllExtraCopies(state.duplicateGroups, state.protectedNodeIds)
+                    activeAutoPreset.value = null
+                    selectedDuplicateNodeIds.value = (selectedDuplicateNodeIds.value - visibleIds) + result.selectedNodeIds
+                    val count = result.selectedNodeIds.size
+                    _messages.tryEmit(
+                        when (count) {
+                            0 -> "No extra copies available to select"
+                            1 -> "1 extra copy selected; at least 1 copy per group stays"
+                            else -> "$count extra copies selected; at least 1 copy per group stays"
+                        },
+                    )
+                }
+            }
+            IntelligenceTab.LARGE_FILES -> {
+                val visibleEligible = state.largeFiles
+                    .filter { it.id !in state.protectedNodeIds }
+                    .mapTo(HashSet()) { it.id }
+                val allVisible = state.largeFiles.mapTo(HashSet()) { it.id }
+                if (state.allVisibleSelected) {
+                    selectedLargeFileNodeIds.value = selectedLargeFileNodeIds.value - allVisible
+                } else {
+                    selectedLargeFileNodeIds.value = selectedLargeFileNodeIds.value + visibleEligible
+                    val count = visibleEligible.size
+                    if (count > 0) {
+                        _messages.tryEmit(
+                            if (count == 1) "1 large file selected" else "$count large files selected",
+                        )
+                    }
+                }
+            }
+            IntelligenceTab.ORPHANS -> {
+                val visibleCleanable = state.orphans
+                    .filter { it.canClean }
+                    .mapTo(HashSet()) { it.artifactId }
+                if (state.allVisibleSelected) {
+                    selectedOrphanArtifactIds.value = selectedOrphanArtifactIds.value - visibleCleanable
+                } else {
+                    selectedOrphanArtifactIds.value = selectedOrphanArtifactIds.value + visibleCleanable
+                    val count = visibleCleanable.size
+                    if (count > 0) {
+                        _messages.tryEmit(
+                            if (count == 1) "1 cleanable item selected" else "$count cleanable items selected",
+                        )
+                    }
+                }
+            }
+        }
     }
 
     fun clearSelection() {
@@ -456,10 +549,14 @@ class StorageIntelligenceViewModel(app: Application) : AndroidViewModel(app) {
                     groups = state.duplicateGroups,
                 )
                 IntelligenceTab.LARGE_FILES -> repository.buildLargeFileCleanupPlan(
-                    selectedNodes = state.largeFiles.filter { it.id in state.selectedLargeFileNodeIds },
+                    selectedNodes = state.largeFiles.filter {
+                        it.id in state.selectedLargeFileNodeIds && it.id !in state.protectedNodeIds
+                    },
                 )
                 IntelligenceTab.ORPHANS -> repository.buildOrphanCleanupPlan(
-                    selectedOrphans = state.orphans.filter { it.artifactId in state.selectedOrphanArtifactIds },
+                    selectedOrphans = state.orphans.filter {
+                        it.canClean && it.artifactId in state.selectedOrphanArtifactIds
+                    },
                 )
             }
             if (plan.totalEligibleCount == 0) {
@@ -585,7 +682,7 @@ class StorageIntelligenceViewModel(app: Application) : AndroidViewModel(app) {
     fun offloadSelectedLargeFiles() {
         val state = uiState.value
         val mediaIds = state.largeFiles
-            .filter { it.id in state.selectedLargeFileNodeIds && it.isLocal }
+            .filter { it.id in state.selectedLargeFileNodeIds && it.id !in state.protectedNodeIds && it.isLocal }
             .mapNotNull { it.nativeId.toLongOrNull() }
         if (mediaIds.isEmpty()) {
             _messages.tryEmit("Select at least 1 local file to offload to Google Drive")
