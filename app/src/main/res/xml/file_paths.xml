@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<paths>
+    <cache-path
+        name="whatsapp_send_staging"
+        path="whatsapp_send_staging/" />
+    <cache-path
+        name="app_cache"
+        path="." />
+    <files-path
+        name="app_files"
+        path="." />
+    <external-path
+        name="external_files"
+        path="." />
+</paths>

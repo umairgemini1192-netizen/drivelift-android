@@ -96,6 +96,11 @@ class Graph(app: Application) {
         com.drivelift.app.feature.desktopdrop.di.DesktopDropModule(app, this)
     }
 
+    /** Self-contained WhatsApp Quick Sender module. */
+    val whatsAppSender: com.drivelift.app.feature.whatsappsender.di.WhatsAppSenderModule by lazy {
+        com.drivelift.app.feature.whatsappsender.di.WhatsAppSenderModule(app, this)
+    }
+
     /** Self-contained On-Device Intelligence & Automation module (offline OCR search, Smart rules). */
     val intelligence: com.drivelift.app.feature.intelligence.IntelligenceAutomationModule by lazy {
         com.drivelift.app.feature.intelligence.IntelligenceAutomationModule(app, this)
