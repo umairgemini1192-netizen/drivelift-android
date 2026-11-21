@@ -411,7 +411,7 @@ private fun QuickFolderRow(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${folder.count} items  \u00B7  ${formatBytes(context, folder.bytes)}",
+                    "${folder.count} ${if (folder.count == 1) "item" else "items"}  \u00B7  ${formatBytes(context, folder.bytes)}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

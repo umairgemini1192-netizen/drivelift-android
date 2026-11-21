@@ -78,11 +78,13 @@ fun WhatsAppSenderSheet(
 ) {
     val context = LocalContext.current
     val state by senderVm.state.collectAsStateWithLifecycle()
-    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     LaunchedEffect(payload) {
         senderVm.loadPayload(payload)
     }
+    if (state.payload != payload) return
+
+    val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
 
     val report = state.report
     val effectiveItems = report.effectiveItems(state.excludeOversized)
@@ -237,6 +239,9 @@ fun WhatsAppSenderSheet(
                     Text(
                         "$effectiveCount ${if (effectiveCount == 1) "file" else "files"} ready",
                         style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier
+                            .weight(1f)
+                            .padding(end = Tokens.Small),
                     )
                     Text(
                         formatBytes(context, effectiveBytes),

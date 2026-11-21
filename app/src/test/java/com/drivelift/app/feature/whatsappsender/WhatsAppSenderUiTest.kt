@@ -110,6 +110,7 @@ class WhatsAppSenderUiTest {
     private fun pump(times: Int = 10) = repeat(times) {
         shadowOf(Looper.getMainLooper()).idle()
         compose.mainClock.advanceTimeBy(64)
+        shadowOf(Looper.getMainLooper()).idle()
         Thread.sleep(15)
     }
 
@@ -129,6 +130,28 @@ class WhatsAppSenderUiTest {
             if (compose.onAllNodesWithText(text, substring = substring).fetchSemanticsNodes().isNotEmpty()) return
         }
         compose.onNodeWithText(text, substring = substring).assertExists()
+    }
+
+    private fun waitForTextDisplayed(text: String, timeoutMs: Long = 10_000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var lastError: AssertionError? = null
+        while (System.currentTimeMillis() < deadline) {
+            pump(2)
+            try {
+                compose.onNodeWithText(text).assertIsDisplayed()
+                return
+            } catch (err: AssertionError) {
+                lastError = err
+            }
+        }
+        val nodes = compose.onAllNodesWithText(text).fetchSemanticsNodes()
+        val details = nodes.joinToString("; ") { node ->
+            "boundsInRoot=${node.boundsInRoot}, boundsInWindow=${node.boundsInWindow}, isPlaced=${node.layoutInfo.isPlaced}"
+        }
+        throw AssertionError(
+            "Timed out waiting for '$text' to be displayed (nodes=${nodes.size}: [$details])",
+            lastError,
+        )
     }
 
     @OptIn(ExperimentalRoborazziApi::class)
@@ -177,10 +200,15 @@ class WhatsAppSenderUiTest {
         )
 
         for (variant in Variant.entries) {
+            val graph = Graph.get(app)
+            graph.whatsAppSender.prefs.clearPresets()
+            graph.whatsAppSender.prefs.setDefaultTarget(WhatsAppTarget.PERSONAL)
+            graph.whatsAppSender.prefs.setDefaultQualityMode(QualityMode.ORIGINAL_QUALITY)
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             RuntimeEnvironment.setFontScale(variant.fontScale)
             compose.mainClock.autoAdvance = false
             val senderVm = WhatsAppSenderViewModel(app)
+            pump(12)
 
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
@@ -204,6 +232,8 @@ class WhatsAppSenderUiTest {
                 waitForTag("wa-sender-sheet")
                 waitForTag("wa-oversized-warning")
                 pump(40)
+                waitForTextDisplayed("Send to WhatsApp")
+                pump(10)
 
                 compose.onNodeWithText("Send to WhatsApp").assertIsDisplayed()
                 compose.onNodeWithTag("wa-target-personal").assertHeightIsAtLeast(Tokens.TouchTarget)
@@ -231,6 +261,7 @@ class WhatsAppSenderUiTest {
                     waitForText("Send batch 1 of 2 (30 files) to WhatsApp Business")
                 }
             }
+            pump(8)
         }
     }
 
