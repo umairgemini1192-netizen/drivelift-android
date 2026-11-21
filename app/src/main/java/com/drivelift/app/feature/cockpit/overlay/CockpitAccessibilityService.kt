@@ -83,7 +83,6 @@ class CockpitAccessibilityService :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         controller?.updateMetrics()
-        controller?.applyVisibility()
     }
 
     override fun onUnbind(intent: Intent?): Boolean {

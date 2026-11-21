@@ -111,7 +111,6 @@ class CockpitOverlayService :
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         controller?.updateMetrics()
-        controller?.applyVisibility()
     }
 
     override fun onDestroy() {
