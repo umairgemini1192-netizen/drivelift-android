@@ -25,12 +25,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -48,7 +45,9 @@ class DesktopDropController(
     private val hotspotController: LocalHotspotController,
     private val clock: () -> Long = System::currentTimeMillis,
 ) {
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val scope: CoroutineScope by lazy {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    }
     private val partsDir = File(app.cacheDir, "desktop_drop_parts")
     private val authManager = SessionAuthManager(clock = clock).apply {
         requireApproval = prefs.current.requireApproval
@@ -77,9 +76,13 @@ class DesktopDropController(
     private val _snapshot = MutableStateFlow(DesktopDropSnapshot(prefs = prefs.current))
     val snapshot: StateFlow<DesktopDropSnapshot> = _snapshot.asStateFlow()
 
-    val isServerRunning: StateFlow<Boolean> = _snapshot
-        .map { it.status == ServerStatus.RUNNING || it.status == ServerStatus.STARTING }
-        .stateIn(scope, SharingStarted.Eagerly, false)
+    private val _isServerRunning = MutableStateFlow(false)
+    val isServerRunning: StateFlow<Boolean> = _isServerRunning.asStateFlow()
+
+    private fun setSnapshot(next: DesktopDropSnapshot) {
+        _snapshot.value = next
+        _isServerRunning.value = next.status == ServerStatus.RUNNING || next.status == ServerStatus.STARTING
+    }
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val messages = _messages.asSharedFlow()
@@ -101,7 +104,7 @@ class DesktopDropController(
                 startServerInternal(newMode)
             }
         } else {
-            _snapshot.value = current.copy(mode = newMode, errorMessage = null)
+            setSnapshot(current.copy(mode = newMode, errorMessage = null))
         }
     }
 
@@ -115,12 +118,14 @@ class DesktopDropController(
         if (_snapshot.value.status == ServerStatus.STARTING) return
         authManager.requireApproval = prefs.current.requireApproval
         val token = authManager.rotateToken()
-        _snapshot.value = _snapshot.value.copy(
-            status = ServerStatus.STARTING,
-            mode = mode,
-            sessionToken = token,
-            errorMessage = null,
-            statusNote = "Starting server...",
+        setSnapshot(
+            _snapshot.value.copy(
+                status = ServerStatus.STARTING,
+                mode = mode,
+                sessionToken = token,
+                errorMessage = null,
+                statusNote = "Starting server...",
+            ),
         )
         DesktopDropService.startService(app)
 
@@ -145,19 +150,21 @@ class DesktopDropController(
                 lanMonitor.registerMdns(actualPort)
             }
             val url = "http://$bindIp:$actualPort/?token=$token"
-            _snapshot.value = _snapshot.value.copy(
-                status = ServerStatus.RUNNING,
-                mode = mode,
-                bindIp = bindIp,
-                port = actualPort,
-                sessionToken = token,
-                dropUrl = url,
-                hotspotCredentials = hotspotCreds,
-                peers = authManager.allPeers(),
-                pendingApproval = authManager.pendingApproval(),
-                prefs = prefs.current,
-                errorMessage = null,
-                statusNote = null,
+            setSnapshot(
+                _snapshot.value.copy(
+                    status = ServerStatus.RUNNING,
+                    mode = mode,
+                    bindIp = bindIp,
+                    port = actualPort,
+                    sessionToken = token,
+                    dropUrl = url,
+                    hotspotCredentials = hotspotCreds,
+                    peers = authManager.allPeers(),
+                    pendingApproval = authManager.pendingApproval(),
+                    prefs = prefs.current,
+                    errorMessage = null,
+                    statusNote = null,
+                ),
             )
             syncSnapshot()
         } catch (e: Exception) {
@@ -166,14 +173,16 @@ class DesktopDropController(
             engine.stop()
             DesktopDropService.stopService(app)
             val msg = e.message ?: "Could not start Desktop Drop server"
-            _snapshot.value = _snapshot.value.copy(
-                status = ServerStatus.ERROR,
-                bindIp = null,
-                port = null,
-                dropUrl = null,
-                hotspotCredentials = null,
-                errorMessage = msg,
-                statusNote = null,
+            setSnapshot(
+                _snapshot.value.copy(
+                    status = ServerStatus.ERROR,
+                    bindIp = null,
+                    port = null,
+                    dropUrl = null,
+                    hotspotCredentials = null,
+                    errorMessage = msg,
+                    statusNote = null,
+                ),
             )
             _messages.tryEmit(msg)
         }
@@ -195,16 +204,18 @@ class DesktopDropController(
         authManager.resetSessions()
         uploadStore.cleanupAllParts()
         DesktopDropService.stopService(app)
-        _snapshot.value = _snapshot.value.copy(
-            status = ServerStatus.STOPPED,
-            bindIp = null,
-            port = null,
-            dropUrl = null,
-            hotspotCredentials = null,
-            peers = emptyList(),
-            pendingApproval = null,
-            errorMessage = null,
-            statusNote = note,
+        setSnapshot(
+            _snapshot.value.copy(
+                status = ServerStatus.STOPPED,
+                bindIp = null,
+                port = null,
+                dropUrl = null,
+                hotspotCredentials = null,
+                peers = emptyList(),
+                pendingApproval = null,
+                errorMessage = null,
+                statusNote = note,
+            ),
         )
     }
 
@@ -339,7 +350,7 @@ class DesktopDropController(
 
     /** Seeds deterministic synthetic state for Robolectric UI tests without opening sockets. */
     internal fun seedPreviewStateForTest(snapshot: DesktopDropSnapshot) {
-        _snapshot.value = snapshot
+        setSnapshot(snapshot)
     }
 
     private fun resolveDocumentItem(uri: Uri): SharedDropItem? {
@@ -379,14 +390,16 @@ class DesktopDropController(
 
     private fun syncSnapshot() {
         val current = _snapshot.value
-        _snapshot.value = current.copy(
-            peers = authManager.allPeers(),
-            pendingApproval = authManager.pendingApproval(),
-            sharedItems = engine.sharedItemsSnapshot(),
-            transfers = engine.transfersSnapshot(),
-            aggregateSpeedBytesPerSec = engine.aggregateSpeedBytesPerSec(),
-            activeTransferCount = engine.activeTransferCount(),
-            prefs = prefs.current,
+        setSnapshot(
+            current.copy(
+                peers = authManager.allPeers(),
+                pendingApproval = authManager.pendingApproval(),
+                sharedItems = engine.sharedItemsSnapshot(),
+                transfers = engine.transfersSnapshot(),
+                aggregateSpeedBytesPerSec = engine.aggregateSpeedBytesPerSec(),
+                activeTransferCount = engine.activeTransferCount(),
+                prefs = prefs.current,
+            ),
         )
     }
 }
