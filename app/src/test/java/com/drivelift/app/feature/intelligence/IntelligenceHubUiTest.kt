@@ -15,6 +15,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
 import androidx.test.core.app.ActivityScenario
@@ -198,7 +199,7 @@ class IntelligenceHubUiTest {
                 compose.onNodeWithTag("intel-privacy").assertIsDisplayed()
                 compose.onNodeWithTag("intel-scan").assertHeightIsAtLeast(Tokens.TouchTarget)
 
-                compose.onNodeWithText("Duas / دعا").performClick()
+                compose.onNodeWithText("Duas / دعا").performScrollTo().performClick()
                 waitForResults("2 results")
                 compose.onNodeWithTag("intel-understood").assertExists()
                 waitForTag("intel-snippet-rtl")
