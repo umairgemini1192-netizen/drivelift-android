@@ -565,6 +565,7 @@ class CockpitUiScreenshotTest {
                 senderName = "Amina",
                 messageSnippet = "Arrived",
                 notificationKey = "k_blocked",
+                canInlineReply = true,
             ),
         )
         assertFalse(
