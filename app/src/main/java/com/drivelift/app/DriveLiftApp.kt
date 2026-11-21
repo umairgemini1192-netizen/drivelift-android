@@ -86,6 +86,11 @@ class Graph(app: Application) {
     /** Wall clock for the times the Storage screen shows. Fixed in screenshot tests. */
     var clock: () -> Long = System::currentTimeMillis
 
+    /** Self-contained Storage Intelligence module (local + multi-cloud analysis). */
+    val storageIntelligence: com.drivelift.app.feature.storageintelligence.di.StorageIntelligenceModule by lazy {
+        com.drivelift.app.feature.storageintelligence.di.StorageIntelligenceModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
