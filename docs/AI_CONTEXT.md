@@ -86,6 +86,15 @@ These protect the user's files. A change that touches them is high risk and need
    each group always stays, and the picked and kept copies are read again right before the
    request. Duplicates are candidates, never presented as safe to delete; nothing is removed
    automatically.
+   **Smart Folder rules (owner request, 21 November 2026):** a rule the user creates and switches
+   on may copy or move files between folders the user picked with Android's folder picker, or
+   queue phone media for upload through the normal transfer pipeline. A move copies first,
+   compares the written byte count with the original, and only then removes the original from
+   the picked folder; on any mismatch or error the original stays and the file is logged as
+   failed. A rule never removes MediaStore media (phone photos and videos listed through
+   MediaStore), never touches files changed in the last 60 seconds or held by a `QUEUED`,
+   `UPLOADING`, `UPLOADED` or `VERIFIED` transfer, starts switched off, offers a dry-run preview,
+   and logs every file it handles or skips. Its code lives in `feature/intelligence/`.
 4. **Retries have no limit.** Recoverable errors are retried forever with capped backoff. A
    dropped connection resumes from the byte Drive confirms, never from an assumed offset.
 5. **A bad copy is never left looking good.** A size or checksum mismatch trashes the Drive copy
