@@ -18,7 +18,7 @@ class CockpitStateCoordinator {
     private val activitiesById = LinkedHashMap<String, CockpitLiveActivity>()
     private val softDismissedIds = LinkedHashSet<String>()
     private var currentPrefs = CockpitPrefsState()
-    private var focusedActivityId: String? = null
+    private var manualFocusId: String? = null
     private var expanded = false
     private var inlineReplyOpen = false
 
@@ -35,7 +35,12 @@ class CockpitStateCoordinator {
     fun upsertActivity(activity: CockpitLiveActivity) {
         if (activity is CockpitLiveActivity.IdleQuickDockActivity) return
         synchronized(lock) {
+            val isNew = activity.id !in activitiesById
+            val currentPrimaryPriority = _slotState.value.primary.priority
             activitiesById[activity.id] = activity
+            if (isNew && activity.priority < currentPrimaryPriority) {
+                manualFocusId = null
+            }
             recomputeLocked()
         }
     }
@@ -44,7 +49,7 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             activitiesById.remove(id)
             softDismissedIds.remove(id)
-            if (focusedActivityId == id) focusedActivityId = null
+            if (manualFocusId == id) manualFocusId = null
             recomputeLocked()
         }
     }
@@ -63,7 +68,7 @@ class CockpitStateCoordinator {
             for (id in idsToRemove) {
                 activitiesById.remove(id)
                 softDismissedIds.remove(id)
-                if (focusedActivityId == id) focusedActivityId = null
+                if (manualFocusId == id) manualFocusId = null
             }
             if (idsToRemove.isNotEmpty()) recomputeLocked()
         }
@@ -75,7 +80,7 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             if (id in activitiesById) {
                 softDismissedIds.add(id)
-                if (focusedActivityId == id) focusedActivityId = null
+                if (manualFocusId == id) manualFocusId = null
                 inlineReplyOpen = false
                 recomputeLocked()
             }
@@ -85,7 +90,7 @@ class CockpitStateCoordinator {
     fun restoreDismissed(id: String) {
         synchronized(lock) {
             if (softDismissedIds.remove(id)) {
-                focusedActivityId = id
+                manualFocusId = null
                 recomputeLocked()
             }
         }
@@ -95,7 +100,7 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             if (softDismissedIds.isNotEmpty()) {
                 softDismissedIds.clear()
-                focusedActivityId = null
+                manualFocusId = null
                 recomputeLocked()
             }
         }
@@ -105,9 +110,10 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             val ordered = sortedVisibleLocked()
             if (ordered.size <= 1) return
-            val currentIdx = ordered.indexOfFirst { it.id == focusedActivityId }.takeIf { it >= 0 } ?: 0
+            val currentIdx = manualFocusId?.let { id -> ordered.indexOfFirst { it.id == id } }
+                ?.takeIf { it >= 0 } ?: 0
             val nextIdx = (currentIdx + 1) % ordered.size
-            focusedActivityId = ordered[nextIdx].id
+            manualFocusId = ordered[nextIdx].id
             inlineReplyOpen = false
             recomputeLocked()
         }
@@ -117,9 +123,10 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             val ordered = sortedVisibleLocked()
             if (ordered.size <= 1) return
-            val currentIdx = ordered.indexOfFirst { it.id == focusedActivityId }.takeIf { it >= 0 } ?: 0
+            val currentIdx = manualFocusId?.let { id -> ordered.indexOfFirst { it.id == id } }
+                ?.takeIf { it >= 0 } ?: 0
             val prevIdx = (currentIdx - 1 + ordered.size) % ordered.size
-            focusedActivityId = ordered[prevIdx].id
+            manualFocusId = ordered[prevIdx].id
             inlineReplyOpen = false
             recomputeLocked()
         }
@@ -128,7 +135,7 @@ class CockpitStateCoordinator {
     fun focusActivity(id: String) {
         synchronized(lock) {
             if (id in activitiesById && id !in softDismissedIds) {
-                focusedActivityId = id
+                manualFocusId = id
                 recomputeLocked()
             }
         }
@@ -154,7 +161,7 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             activitiesById.clear()
             softDismissedIds.clear()
-            focusedActivityId = null
+            manualFocusId = null
             expanded = false
             inlineReplyOpen = false
             recomputeLocked()
@@ -182,7 +189,7 @@ class CockpitStateCoordinator {
         }
 
         if (visible.isEmpty()) {
-            focusedActivityId = null
+            manualFocusId = null
             _slotState.value = CockpitSlotState(
                 primary = CockpitLiveActivity.IdleQuickDockActivity(),
                 secondary = null,
@@ -194,12 +201,14 @@ class CockpitStateCoordinator {
             return
         }
 
-        val focusedIndex = focusedActivityId?.let { id -> visible.indexOfFirst { it.id == id } }
+        val focusedIndex = manualFocusId?.let { id -> visible.indexOfFirst { it.id == id } }
             ?.takeIf { it >= 0 } ?: 0
+        if (focusedIndex == 0) {
+            manualFocusId = null
+        }
         val rotated = List(visible.size) { offset ->
             visible[(focusedIndex + offset) % visible.size]
         }
-        focusedActivityId = rotated.first().id
 
         _slotState.value = CockpitSlotState(
             primary = rotated[0],
