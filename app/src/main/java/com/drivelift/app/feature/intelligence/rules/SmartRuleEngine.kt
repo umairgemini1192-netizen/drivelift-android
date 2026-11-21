@@ -90,7 +90,7 @@ class SmartRuleMatcher(private val now: () -> Long) {
         const val ACTIVE_WINDOW_MS = 60_000L
         const val HOUR_MS = 60L * 60 * 1000
 
-        /** `apk, .pdf, video/*` style lists. Empty means every file. */
+        /** `apk, .pdf, video/` style lists. Empty means every file. */
         fun parseTypes(csv: String): List<String> =
             csv.split(',', ';', ' ').map { it.trim().lowercase(Locale.ROOT).removePrefix(".").removeSuffix("*") }
                 .filter { it.isNotEmpty() }
