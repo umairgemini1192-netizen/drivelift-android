@@ -11,6 +11,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -41,7 +42,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
+fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onOpenCockpit: (() -> Unit)? = null) {
     val context = LocalContext.current
     val wifiOnly by vm.prefs.wifiOnly.collectAsStateWithLifecycle()
     val autoRemove by vm.prefs.autoRemove.collectAsStateWithLifecycle()
@@ -98,6 +99,33 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit) {
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Tiny),
                     )
+                }
+            }
+            if (onOpenCockpit != null) {
+                SectionHeading("Cockpit")
+                GlassPanel(
+                    modifier = Modifier.fillMaxWidth().testTag("cockpit-settings-entry"),
+                    onClick = onOpenCockpit,
+                    onClickLabel = "Open Cockpit Dynamic Island setup",
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("Dynamic Island and widget", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Configure system overlay, live activities, pinned apps, and cutout fit",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
         }

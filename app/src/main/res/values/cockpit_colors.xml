@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Colours matched to ui/Theme.kt Night & GlassPalette tokens. -->
+    <color name="cockpit_sky_top">#FF070A1E</color>
+    <color name="cockpit_surface">#FF0D1030</color>
+    <color name="cockpit_surface_container">#FF191C4A</color>
+    <color name="cockpit_surface_container_high">#FF202358</color>
+    <color name="cockpit_on_surface">#FFF3F1FF</color>
+    <color name="cockpit_on_surface_variant">#FFBDB9DE</color>
+    <color name="cockpit_primary">#FFFF8F70</color>
+    <color name="cockpit_secondary">#FFA596FF</color>
+    <color name="cockpit_tertiary">#FF62C6FF</color>
+    <color name="cockpit_error">#FFFF6482</color>
+    <color name="cockpit_outline_variant">#FF373A72</color>
+    <color name="cockpit_scrim">#FF000000</color>
+</resources>
