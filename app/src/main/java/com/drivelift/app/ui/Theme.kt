@@ -99,6 +99,25 @@ object GlassPalette {
 
     /** Bottom gradient scrim over media tiles so white captions remain legible. */
     val ThumbScrim = Color(0xCC070A1E)
+
+    // Futuristic Cyber-Glass Bento HUD tokens (shared between Glance widget Canvas renderer and in-app parity preview).
+    val HudShellFill = Color(0xD10B101C)
+    val HudShellDeep = Color(0xE6070A14)
+    val HudAuroraCyan = Color(0x3838BDF8)
+    val HudAuroraViolet = Color(0x2EA596FF)
+    val HudRimTop = Color(0x40FFFFFF)
+    val HudRimBottom = Color(0x0DFFFFFF)
+    val HudTrackRecessed = Color(0x66050811)
+    val HudTrackRing = Color(0x26FFFFFF)
+    val HudTileRecessed = Color(0xA6101628)
+    val HudDockFill = Color(0xBF070B14)
+    val HudEmerald = Color(0xFF34D399)
+    val HudAmber = Color(0xFFFBBF24)
+    val HudCoral = Color(0xFFFF6482)
+    val HudElectricCyan = Color(0xFF38BDF8)
+    val HudVioletBlue = Color(0xFF818CF8)
+    val HudGaugeTextPrimary = Color(0xFFF3F1FF)
+    val HudGaugeLabelMuted = Color(0xFFBDB9DE)
 }
 
 /**

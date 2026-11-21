@@ -50,6 +50,8 @@ import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
+import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
+import com.drivelift.app.feature.cockpit.widget.RamHudMetric
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
@@ -344,6 +346,10 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("Alarm 06:30 AM").assertExists()
                 compose.onNodeWithText("Rings in 07:14:22").assertExists()
                 compose.onNodeWithText("Drop 55.3 MB/s").assertExists()
+                compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-pinned-row").assertIsDisplayed()
             },
         )
     }
@@ -584,6 +590,77 @@ class CockpitUiScreenshotTest {
             "DriveLift 1.0.0-preview.37 (build 36 \u00B7 PR #78 @ a1d8b31)",
             appVersionLabel(app, buildStamp = "PR #78 @ a1d8b31"),
         )
+    }
+
+    @Test
+    fun bentoHudRendersInactiveNoAlarmAndToggleTransitionsCleanly() {
+        var dropOn by mutableStateOf(false)
+        var torchOn by mutableStateOf(false)
+        var islandOn by mutableStateOf(false)
+        val noAlarm = NextAlarmUiModel(
+            hasAlarm = false,
+            formattedTime = "No alarm set",
+            countdownMode = AlarmCountdownMode.NONE,
+            chronometerBaseElapsedMs = null,
+            countdownText = "No alarm set",
+            triggerAtMillis = null,
+        )
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CockpitMasterWidgetCard(
+                                clockTimeLabel = "08:00 AM",
+                                clockDateLabel = "Sun, Nov 22",
+                                alarm = noAlarm,
+                                telemetry = DriveLiftTelemetrySummary(
+                                    isDesktopDropRunning = dropOn,
+                                    statusHeadline = if (dropOn) "Drop 42.0 MB/s" else "Ready",
+                                ),
+                                freeStorageLabel = "118 GB free",
+                                batteryLabel = "22% batt",
+                                torchOn = torchOn,
+                                islandOn = islandOn,
+                                pinnedApps = syntheticPinned,
+                                batteryMetric = BatteryHudMetric(22, 0.22f, "22%"),
+                                ramMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
+                                onToggleDrop = { dropOn = !dropOn },
+                                onToggleTorch = { torchOn = !torchOn },
+                                onToggleIsland = { islandOn = !islandOn },
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            compose.onNodeWithText("No alarm set").assertIsDisplayed()
+            compose.onNodeWithText("Ready").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-widget-toggle-drop")
+                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assert(hasText("Drop"))
+                .performClick()
+            compose.onNodeWithTag("cockpit-widget-toggle-torch")
+                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assert(hasText("Torch"))
+                .performClick()
+            compose.onNodeWithTag("cockpit-widget-toggle-island")
+                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assert(hasText("Island"))
+                .performClick()
+            pump(8)
+
+            compose.onNodeWithText("Drop 42.0 MB/s").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-widget-toggle-drop").assert(hasText("Drop On"))
+            compose.onNodeWithTag("cockpit-widget-toggle-torch").assert(hasText("Torch On"))
+            compose.onNodeWithTag("cockpit-widget-toggle-island").assert(hasText("Island On"))
+        }
     }
 
     companion object {

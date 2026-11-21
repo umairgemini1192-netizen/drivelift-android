@@ -10,6 +10,7 @@ import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -21,6 +22,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -65,15 +67,20 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
@@ -93,7 +100,10 @@ import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitAccessibilityService
+import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
+import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
+import com.drivelift.app.feature.cockpit.widget.RamHudMetric
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.Tokens
@@ -118,8 +128,13 @@ fun CockpitSetupScreen(
     var nowMs by remember(context) { mutableLongStateOf(Graph.get(context).clock()) }
     var alarmModel by remember { mutableStateOf(NextAlarmFormatter.readFromSystem(context, nowMillis = nowMs)) }
     var freeStorageLabel by remember { mutableStateOf(CockpitGlanceWidget.readFreeStorageLabel()) }
-    var batteryLabel by remember { mutableStateOf(CockpitGlanceWidget.readBatteryLabel(context)) }
+    var batteryMetric by remember { mutableStateOf(CockpitGlanceWidget.readBatteryMetric(context)) }
+    var ramMetric by remember { mutableStateOf(CockpitGlanceWidget.readRamMetric(context)) }
     val launchableApps = remember(cockpit) { cockpit.pinnedAppsRepo.listLaunchableApps() }
+
+    LaunchedEffect(context) {
+        CockpitGlanceWidget.registerGeneratedPreviewsIfSupported(context)
+    }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         val current = Graph.get(context).clock()
@@ -130,7 +145,8 @@ fun CockpitSetupScreen(
         hasBatteryExemption = cockpit.isIgnoringBatteryOptimizations()
         alarmModel = NextAlarmFormatter.readFromSystem(context, nowMillis = current)
         freeStorageLabel = CockpitGlanceWidget.readFreeStorageLabel()
-        batteryLabel = CockpitGlanceWidget.readBatteryLabel(context)
+        batteryMetric = CockpitGlanceWidget.readBatteryMetric(context)
+        ramMetric = CockpitGlanceWidget.readRamMetric(context)
     }
 
     LaunchedEffect(lifecycleOwner, context) {
@@ -161,7 +177,9 @@ fun CockpitSetupScreen(
         clockTimeLabel = clockTimeLabel,
         clockDateLabel = clockDateLabel,
         freeStorageLabel = freeStorageLabel,
-        batteryLabel = batteryLabel,
+        batteryLabel = if (batteryMetric.valueText == "--%") "Batt --" else "${batteryMetric.valueText} batt",
+        batteryMetric = batteryMetric,
+        ramMetric = ramMetric,
         torchOn = torchState.isOn,
         hasAccessibilityOverlay = hasAccessibilityOverlay,
         hasOverlay = hasOverlay,
@@ -227,6 +245,8 @@ fun CockpitSetupContent(
     modifier: Modifier = Modifier,
     hasAccessibilityOverlay: Boolean = false,
     onGrantAccessibilityOverlay: () -> Unit = {},
+    batteryMetric: BatteryHudMetric = BatteryHudMetric(84, 0.84f, "84%"),
+    ramMetric: RamHudMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
 ) {
     var previewExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -507,6 +527,8 @@ fun CockpitSetupContent(
                     onToggleDrop = onToggleDrop,
                     onToggleTorch = onToggleTorch,
                     onToggleIsland = { onToggleMaster(!prefs.masterEnabled) },
+                    batteryMetric = batteryMetric,
+                    ramMetric = ramMetric,
                 )
             }
 
@@ -583,8 +605,9 @@ fun CockpitSetupContent(
 }
 
 /**
- * Shared Compose representation of the All-in-One Home Screen Glass Master Widget, rendered both
- * inside the Cockpit Setup Hub preview and in Roborazzi UI screenshot tests across all variants.
+ * 1:1 in-app Compose parity view of the 4-Zone Cyber-Glass Bento HUD Master Widget, powered by the
+ * exact same [CockpitHudBitmapRenderer] bitmaps used by [CockpitGlanceWidget] over an atmospheric
+ * wallpaper backdrop, rendered both inside Cockpit Hub and in Roborazzi screenshot tests.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -602,156 +625,282 @@ fun CockpitMasterWidgetCard(
     onToggleTorch: () -> Unit = {},
     onToggleIsland: () -> Unit = {},
     modifier: Modifier = Modifier,
+    batteryMetric: BatteryHudMetric = BatteryHudMetric(84, 0.84f, "84%"),
+    ramMetric: RamHudMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
 ) {
+    val density = LocalDensity.current.density.coerceAtLeast(2f)
     val stackTopRow = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
 
-    GlassPanel(
+    val shellBitmap = remember(density) {
+        CockpitHudBitmapRenderer.renderShellBitmap(
+            widthPx = (340f * density).toInt(),
+            heightPx = (220f * density).toInt(),
+            cornerRadiusDp = 26f,
+            density = density,
+        ).asImageBitmap()
+    }
+    val statusPillBitmap = remember(telemetry.isDesktopDropRunning, density) {
+        CockpitHudBitmapRenderer.renderStatusPillBitmap(
+            widthPx = (140f * density).toInt(),
+            heightPx = (28f * density).toInt(),
+            active = telemetry.isDesktopDropRunning,
+            accentColor = if (telemetry.isDesktopDropRunning) GlassPalette.HudElectricCyan else GlassPalette.HudEmerald,
+            density = density,
+        ).asImageBitmap()
+    }
+    val batteryGaugeBitmap = remember(batteryMetric, density) {
+        CockpitHudBitmapRenderer.renderArcGaugeBitmap(
+            sizePx = (58f * density).toInt(),
+            fraction = batteryMetric.fraction,
+            valueText = batteryMetric.valueText,
+            subLabel = batteryMetric.label,
+            accentColor = CockpitHudBitmapRenderer.batteryArcColor(batteryMetric.percent),
+            density = density,
+        ).asImageBitmap()
+    }
+    val ramGaugeBitmap = remember(ramMetric, density) {
+        CockpitHudBitmapRenderer.renderArcGaugeBitmap(
+            sizePx = (58f * density).toInt(),
+            fraction = ramMetric.fraction,
+            valueText = ramMetric.valueText,
+            subLabel = ramMetric.label,
+            accentColor = GlassPalette.HudElectricCyan,
+            density = density,
+        ).asImageBitmap()
+    }
+    val dropTileBitmap = remember(telemetry.isDesktopDropRunning, density) {
+        CockpitHudBitmapRenderer.renderControlTileBitmap(
+            widthPx = (104f * density).toInt(),
+            heightPx = (50f * density).toInt(),
+            active = telemetry.isDesktopDropRunning,
+            accentColor = GlassPalette.HudElectricCyan,
+            density = density,
+        ).asImageBitmap()
+    }
+    val torchTileBitmap = remember(torchOn, density) {
+        CockpitHudBitmapRenderer.renderControlTileBitmap(
+            widthPx = (104f * density).toInt(),
+            heightPx = (50f * density).toInt(),
+            active = torchOn,
+            accentColor = GlassPalette.HudAmber,
+            density = density,
+        ).asImageBitmap()
+    }
+    val islandTileBitmap = remember(islandOn, density) {
+        CockpitHudBitmapRenderer.renderControlTileBitmap(
+            widthPx = (104f * density).toInt(),
+            heightPx = (50f * density).toInt(),
+            active = islandOn,
+            accentColor = GlassPalette.HudVioletBlue,
+            density = density,
+        ).asImageBitmap()
+    }
+    val dockTrayBitmap = remember(density) {
+        CockpitHudBitmapRenderer.renderDockTrayBitmap(
+            widthPx = (312f * density).toInt(),
+            heightPx = (44f * density).toInt(),
+            density = density,
+        ).asImageBitmap()
+    }
+
+    // Subtle simulated wallpaper backdrop surrounding the cyber-glass shell.
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            .testTag("cockpit-master-widget-card"),
-        shape = CockpitTokens.WidgetCardShape,
+            .clip(CockpitTokens.WidgetCardShape)
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(GlassPalette.SkyTop, GlassPalette.SkyMid, GlassPalette.SkyBottom),
+                ),
+            )
+            .padding(CockpitTokens.HudWallpaperPad),
     ) {
-        Column(
+        Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(Tokens.Gutter),
-            verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                .clip(CockpitTokens.HudOuterShape)
+                .testTag("cockpit-master-widget-card"),
         ) {
-            // Top Row: Live Clock + Next Alarm & Live Countdown
-            if (stackTopRow) {
-                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                    ClockHeroBlock(clockTimeLabel, clockDateLabel)
-                    AlarmBadgeBlock(alarm)
-                }
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    ClockHeroBlock(clockTimeLabel, clockDateLabel)
-                    AlarmBadgeBlock(alarm)
-                }
-            }
-
-            // Middle Row: Live DriveLift & Device Telemetry Strip
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            Image(
+                bitmap = shellBitmap,
+                contentDescription = null,
+                contentScale = ContentScale.FillBounds,
+                modifier = Modifier.matchParentSize(),
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Tokens.Gutter),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
             ) {
-                WidgetTelemetryChip(
-                    icon = Icons.Outlined.Devices,
-                    label = telemetry.statusHeadline,
-                    tint = if (telemetry.isDesktopDropRunning) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
-                )
-                WidgetTelemetryChip(
-                    icon = Icons.Outlined.Storage,
-                    label = freeStorageLabel,
-                    tint = MaterialTheme.colorScheme.secondary,
-                )
-                WidgetTelemetryChip(
-                    icon = Icons.Outlined.BatteryChargingFull,
-                    label = batteryLabel,
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
+                // Top Bento Split: Zone 1 (Clock + Alarm Pill) and Zone 2 (Status Pill + Dual Neon Arc Gauges)
+                val zone1Content: @Composable () -> Unit = {
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Snug)) {
+                        ClockHeroBlock(clockTimeLabel, clockDateLabel)
+                        AlarmBadgeBlock(alarm)
+                    }
+                }
+                val zone2Content: @Composable () -> Unit = {
+                    Column(
+                        horizontalAlignment = if (stackTopRow) Alignment.Start else Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                    ) {
+                        Box(
+                            modifier = Modifier.clip(CockpitTokens.HudTileShape),
+                        ) {
+                            Image(
+                                bitmap = statusPillBitmap,
+                                contentDescription = null,
+                                contentScale = ContentScale.FillBounds,
+                                modifier = Modifier.matchParentSize(),
+                            )
+                            Row(
+                                modifier = Modifier.padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(CockpitTokens.StatusDot)
+                                        .clip(Tokens.PillShape)
+                                        .background(
+                                            if (telemetry.isDesktopDropRunning) {
+                                                GlassPalette.HudElectricCyan
+                                            } else {
+                                                GlassPalette.HudEmerald
+                                            },
+                                        ),
+                                )
+                                Text(
+                                    text = telemetry.statusHeadline,
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                                    color = if (telemetry.isDesktopDropRunning) {
+                                        GlassPalette.HudElectricCyan
+                                    } else {
+                                        GlassPalette.HudEmerald
+                                    },
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                            }
+                        }
 
-            // Row 3: Quick Controls Row (strictly separated from Pinned Apps so toggling Island never shifts apps)
-            val controlsContent: @Composable (Modifier) -> Unit = { buttonMod ->
-                OutlinedButton(
-                    onClick = onToggleDrop,
-                    contentPadding = PaddingValues(horizontal = Tokens.Small),
-                    modifier = buttonMod
-                        .defaultMinSize(minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-widget-toggle-drop"),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Devices,
-                        contentDescription = null,
-                        modifier = Modifier.size(Tokens.IconSmall),
-                    )
-                    Spacer(Modifier.width(Tokens.Tiny))
-                    Text(
-                        text = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Image(
+                                bitmap = batteryGaugeBitmap,
+                                contentDescription = "Battery ${batteryMetric.valueText}",
+                                modifier = Modifier.size(CockpitTokens.HudGaugeSize),
+                            )
+                            Image(
+                                bitmap = ramGaugeBitmap,
+                                contentDescription = "Free RAM ${ramMetric.valueText}",
+                                modifier = Modifier.size(CockpitTokens.HudGaugeSize),
+                            )
+                        }
+                    }
                 }
-                OutlinedButton(
-                    onClick = onToggleTorch,
-                    contentPadding = PaddingValues(horizontal = Tokens.Small),
-                    modifier = buttonMod
-                        .defaultMinSize(minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-widget-toggle-torch"),
-                ) {
-                    Icon(
-                        imageVector = if (torchOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                        contentDescription = null,
-                        modifier = Modifier.size(Tokens.IconSmall),
-                    )
-                    Spacer(Modifier.width(Tokens.Tiny))
-                    Text(
-                        text = if (torchOn) "Torch On" else "Torch",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-                OutlinedButton(
-                    onClick = onToggleIsland,
-                    contentPadding = PaddingValues(horizontal = Tokens.Small),
-                    modifier = buttonMod
-                        .defaultMinSize(minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-widget-toggle-island"),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.Layers,
-                        contentDescription = null,
-                        modifier = Modifier.size(Tokens.IconSmall),
-                    )
-                    Spacer(Modifier.width(Tokens.Tiny))
-                    Text(
-                        text = if (islandOn) "Island On" else "Island",
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                }
-            }
 
-            if (stackTopRow) {
-                FlowRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("cockpit-widget-controls-row"),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    controlsContent(Modifier)
+                if (stackTopRow) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                        zone1Content()
+                        zone2Content()
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.Top,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Box(Modifier.weight(1f)) {
+                            zone1Content()
+                        }
+                        Spacer(Modifier.width(Tokens.Small))
+                        zone2Content()
+                    }
                 }
-            } else {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("cockpit-widget-controls-row"),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    controlsContent(Modifier.weight(1f))
-                }
-            }
 
-            // Row 4: Dedicated Pinned Apps Dock Row
-            if (pinnedApps.isNotEmpty()) {
-                FlowRow(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("cockpit-widget-pinned-row"),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    pinnedApps.take(4).forEach { app ->
-                        WidgetPinnedAppChip(app = app)
+                // Zone 3: Middle Control Deck (Sculptural ON/OFF tiles, strictly separate from Pinned Apps)
+                val controlsContent: @Composable (Modifier) -> Unit = { tileMod ->
+                    HudControlTileButton(
+                        icon = Icons.Outlined.Devices,
+                        label = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
+                        active = telemetry.isDesktopDropRunning,
+                        accentColor = GlassPalette.HudElectricCyan,
+                        plateBitmap = dropTileBitmap,
+                        onClick = onToggleDrop,
+                        modifier = tileMod.testTag("cockpit-widget-toggle-drop"),
+                    )
+                    HudControlTileButton(
+                        icon = if (torchOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                        label = if (torchOn) "Torch On" else "Torch",
+                        active = torchOn,
+                        accentColor = GlassPalette.HudAmber,
+                        plateBitmap = torchTileBitmap,
+                        onClick = onToggleTorch,
+                        modifier = tileMod.testTag("cockpit-widget-toggle-torch"),
+                    )
+                    HudControlTileButton(
+                        icon = Icons.Outlined.Layers,
+                        label = if (islandOn) "Island On" else "Island",
+                        active = islandOn,
+                        accentColor = GlassPalette.HudVioletBlue,
+                        plateBitmap = islandTileBitmap,
+                        onClick = onToggleIsland,
+                        modifier = tileMod.testTag("cockpit-widget-toggle-island"),
+                    )
+                }
+
+                if (stackTopRow) {
+                    FlowRow(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("cockpit-widget-controls-row"),
+                        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                        verticalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                    ) {
+                        controlsContent(Modifier.widthIn(min = CockpitTokens.PillMinWidth / 2))
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("cockpit-widget-controls-row"),
+                        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        controlsContent(Modifier.weight(1f))
+                    }
+                }
+
+                // Zone 4: Bottom Recessed App Dock (Strictly separate container)
+                if (pinnedApps.isNotEmpty()) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(CockpitTokens.HudInnerShape)
+                            .testTag("cockpit-widget-pinned-row"),
+                    ) {
+                        Image(
+                            bitmap = dockTrayBitmap,
+                            contentDescription = null,
+                            contentScale = ContentScale.FillBounds,
+                            modifier = Modifier.matchParentSize(),
+                        )
+                        FlowRow(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(horizontal = Tokens.Small, vertical = Tokens.Snug),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                        ) {
+                            pinnedApps.take(4).forEach { app ->
+                                HudPinnedAppDockItem(app = app, density = density)
+                            }
+                        }
                     }
                 }
             }
@@ -760,11 +909,75 @@ fun CockpitMasterWidgetCard(
 }
 
 @Composable
+private fun HudControlTileButton(
+    icon: androidx.compose.ui.graphics.vector.ImageVector,
+    label: String,
+    active: Boolean,
+    accentColor: Color,
+    plateBitmap: androidx.compose.ui.graphics.ImageBitmap,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val fg = if (active) accentColor else MaterialTheme.colorScheme.onSurface
+    Box(
+        modifier = modifier
+            .defaultMinSize(minHeight = CockpitTokens.HudControlHeight)
+            .clip(CockpitTokens.HudTileShape)
+            .clickable(role = Role.Button, onClick = onClick),
+        contentAlignment = Alignment.Center,
+    ) {
+        Image(
+            bitmap = plateBitmap,
+            contentDescription = null,
+            contentScale = ContentScale.FillBounds,
+            modifier = Modifier.matchParentSize(),
+        )
+        Column(
+            modifier = Modifier.padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = fg,
+                modifier = Modifier.size(Tokens.IconSmall),
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
 private fun ClockHeroBlock(timeLabel: String, dateLabel: String) {
+    val parts = timeLabel.trim().split(' ')
+    val mainPart = parts.getOrElse(0) { timeLabel }
+    val amPmPart = parts.getOrNull(1).orEmpty()
+    val formattedClock = buildAnnotatedString {
+        append(mainPart)
+        if (amPmPart.isNotEmpty()) {
+            append(" ")
+            withStyle(
+                SpanStyle(
+                    fontSize = MaterialTheme.typography.labelLarge.fontSize,
+                    color = GlassPalette.HudElectricCyan,
+                    fontWeight = FontWeight.Bold,
+                ),
+            ) {
+                append(amPmPart)
+            }
+        }
+    }
     Column {
         Text(
-            text = timeLabel,
-            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.SemiBold),
+            text = formattedClock,
+            style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
             color = MaterialTheme.colorScheme.onSurface,
         )
         Text(
@@ -780,9 +993,9 @@ private fun AlarmBadgeBlock(alarm: NextAlarmUiModel) {
     Column(
         modifier = Modifier
             .clip(Tokens.ThumbShape)
-            .background(GlassPalette.Well)
-            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.ThumbShape)
-            .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
+            .background(GlassPalette.HudTileRecessed)
+            .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.ThumbShape)
+            .padding(horizontal = Tokens.Small, vertical = Tokens.Snug),
         horizontalAlignment = Alignment.Start,
     ) {
         Row(
@@ -792,77 +1005,66 @@ private fun AlarmBadgeBlock(alarm: NextAlarmUiModel) {
             Icon(
                 imageVector = Icons.Outlined.Alarm,
                 contentDescription = null,
-                tint = if (alarm.hasAlarm) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurfaceVariant,
+                tint = if (alarm.hasAlarm) GlassPalette.HudElectricCyan else MaterialTheme.colorScheme.onSurfaceVariant,
                 modifier = Modifier.size(Tokens.IconSmall),
             )
             Text(
                 text = if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
                 style = MaterialTheme.typography.labelLarge,
                 color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
             )
         }
         if (alarm.hasAlarm) {
             Text(
                 text = alarm.countdownText,
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = MaterialTheme.colorScheme.tertiary,
+                color = GlassPalette.HudElectricCyan,
+                maxLines = 1,
             )
         }
     }
 }
 
 @Composable
-private fun WidgetTelemetryChip(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    label: String,
-    tint: Color,
-) {
-    Row(
-        modifier = Modifier
-            .clip(Tokens.PillShape)
-            .background(GlassPalette.Well)
-            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
-            .padding(horizontal = Tokens.Medium, vertical = Tokens.Snug),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
-    ) {
-        Icon(imageVector = icon, contentDescription = null, tint = tint, modifier = Modifier.size(Tokens.IconSmall))
-        Text(text = label, style = MaterialTheme.typography.labelMedium, color = tint, maxLines = 1)
+private fun HudPinnedAppDockItem(app: PinnedAppInfo, density: Float) {
+    val haloBitmap = remember(app.packageName, app.iconBitmap, density) {
+        CockpitHudBitmapRenderer.renderAppHaloBitmap(
+            sizePx = (28f * density).toInt(),
+            appIcon = app.iconBitmap,
+            accentColor = GlassPalette.HudElectricCyan,
+            density = density,
+        ).asImageBitmap()
     }
-}
-
-@Composable
-private fun WidgetPinnedAppChip(app: PinnedAppInfo) {
-    val bmp = app.iconBitmap?.takeIf { !it.isRecycled }
     Row(
-        modifier = Modifier
-            .clip(Tokens.PillShape)
-            .background(GlassPalette.Well)
-            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
-            .padding(horizontal = Tokens.Medium, vertical = Tokens.Snug),
+        modifier = Modifier.padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
     ) {
-        if (bmp != null) {
-            val imageBmp = remember(bmp) { bmp.asImageBitmap() }
+        Box(
+            modifier = Modifier.size(CockpitTokens.HudDockIconHaloSize),
+            contentAlignment = Alignment.Center,
+        ) {
             Image(
-                bitmap = imageBmp,
+                bitmap = haloBitmap,
                 contentDescription = null,
-                modifier = Modifier.size(Tokens.IconSmall),
+                modifier = Modifier.matchParentSize(),
             )
-        } else {
-            Icon(
-                imageVector = Icons.Outlined.Apps,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.tertiary,
-                modifier = Modifier.size(Tokens.IconSmall),
-            )
+            if (app.iconBitmap == null) {
+                Icon(
+                    imageVector = Icons.Outlined.Apps,
+                    contentDescription = null,
+                    tint = GlassPalette.HudElectricCyan,
+                    modifier = Modifier.size(CockpitTokens.WidgetBadgeIconSize),
+                )
+            }
         }
         Text(
             text = app.label,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
         )
     }
 }
