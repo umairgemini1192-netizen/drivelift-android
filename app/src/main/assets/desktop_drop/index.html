@@ -1,0 +1,731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DriveLift Desktop Drop</title>
+<style>
+  :root {
+    --sky-top: #070A1E;
+    --sky-mid: #15114A;
+    --sky-bottom: #45228C;
+    --glass-top: rgba(255, 255, 255, 0.14);
+    --glass-bottom: rgba(255, 255, 255, 0.05);
+    --edge-top: rgba(255, 255, 255, 0.32);
+    --edge-bottom: rgba(255, 255, 255, 0.08);
+    --well: rgba(255, 255, 255, 0.12);
+    --well-edge: rgba(255, 255, 255, 0.20);
+    --primary: #FF8F70;
+    --on-primary: #2B0F06;
+    --secondary: #A596FF;
+    --tertiary: #62C6FF;
+    --error: #FF6482;
+    --on-error: #3B0614;
+    --text: #F3F1FF;
+    --muted: #BDB9DE;
+    --track: rgba(255, 255, 255, 0.14);
+    --surface-solid: #191C4A;
+    --radius-panel: 20px;
+    --radius-pill: 999px;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0;
+    padding: 0;
+    min-height: 100%;
+    color: var(--text);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background:
+      radial-gradient(circle at 5% 18%, rgba(39, 52, 143, 0.34), transparent 60%),
+      radial-gradient(circle at 95% 98%, rgba(138, 69, 216, 0.40), transparent 65%),
+      linear-gradient(180deg, var(--sky-top) 0%, var(--sky-mid) 55%, var(--sky-bottom) 100%);
+    background-attachment: fixed;
+    font-variant-numeric: tabular-nums;
+  }
+  .wrap {
+    max-width: 1040px;
+    margin: 0 auto;
+    padding: 28px 20px 56px;
+  }
+  header {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 24px;
+  }
+  .brand h1 {
+    margin: 0;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.5px;
+  }
+  .brand p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .hud-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    border-radius: var(--radius-pill);
+    background: var(--well);
+    border: 1px solid var(--well-edge);
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--muted);
+  }
+  .dot.live { background: var(--tertiary); box-shadow: 0 0 10px var(--tertiary); }
+  .dot.err { background: var(--error); }
+  .glass {
+    background: linear-gradient(180deg, var(--glass-top), var(--glass-bottom));
+    border: 1px solid var(--edge-top);
+    border-bottom-color: var(--edge-bottom);
+    border-radius: var(--radius-panel);
+    padding: 20px;
+    margin-bottom: 16px;
+    backdrop-filter: blur(18px);
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+    gap: 16px;
+  }
+  h2 {
+    margin: 0 0 8px;
+    font-size: 18px;
+    font-weight: 600;
+  }
+  .sub {
+    margin: 0 0 16px;
+    font-size: 13px;
+    color: var(--muted);
+  }
+  .btn {
+    appearance: none;
+    border: 1px solid transparent;
+    border-radius: var(--radius-pill);
+    padding: 12px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    text-decoration: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
+    min-height: 44px;
+    transition: opacity 0.15s ease, transform 0.1s ease;
+  }
+  .btn:active { transform: scale(0.98); }
+  .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+  .btn-primary { background: var(--primary); color: var(--on-primary); }
+  .btn-well { background: var(--well); color: var(--text); border-color: var(--well-edge); }
+  .btn-danger { background: rgba(255, 100, 130, 0.18); color: var(--error); border-color: rgba(255, 100, 130, 0.45); }
+  .btn-sm { padding: 8px 14px; min-height: 36px; font-size: 13px; }
+  .row { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; }
+  .spacer { flex: 1; }
+  .dropzone {
+    border: 1.5px dashed rgba(255, 143, 112, 0.55);
+    border-radius: 16px;
+    padding: 28px 16px;
+    text-align: center;
+    background: rgba(8, 11, 34, 0.35);
+    transition: background 0.15s ease, border-color 0.15s ease;
+  }
+  .dropzone.drag {
+    background: rgba(255, 143, 112, 0.14);
+    border-color: var(--primary);
+  }
+  .dropzone strong { display: block; font-size: 16px; margin-bottom: 6px; }
+  .dropzone span { display: block; font-size: 13px; color: var(--muted); margin-bottom: 16px; }
+  .list { display: flex; flex-direction: column; gap: 10px; margin-top: 12px; }
+  .item {
+    background: rgba(8, 11, 34, 0.42);
+    border: 1px solid var(--well-edge);
+    border-radius: 14px;
+    padding: 12px 14px;
+  }
+  .item-top {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .item-meta { min-width: 0; flex: 1; }
+  .item-name {
+    font-weight: 600;
+    font-size: 14px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .item-sub {
+    font-size: 12px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+  .bar-track {
+    height: 6px;
+    border-radius: 999px;
+    background: var(--track);
+    overflow: hidden;
+    margin-top: 10px;
+  }
+  .bar-fill {
+    height: 100%;
+    width: 0%;
+    background: linear-gradient(90deg, var(--tertiary), var(--secondary), var(--primary));
+    transition: width 0.15s linear;
+  }
+  .hidden { display: none !important; }
+  input[type="text"] {
+    width: 100%;
+    max-width: 280px;
+    padding: 12px 14px;
+    border-radius: 12px;
+    border: 1px solid var(--well-edge);
+    background: rgba(8, 11, 34, 0.65);
+    color: var(--text);
+    font-size: 16px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+  }
+  .note-error {
+    color: var(--error);
+    font-size: 13px;
+    margin-top: 10px;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div class="brand">
+      <h1>DriveLift Desktop Drop</h1>
+      <p id="subtitle">Zero-config LAN transfer over standard HTTP</p>
+    </div>
+    <div class="hud-pill">
+      <span class="dot" id="connDot"></span>
+      <span id="hudText">Connecting</span>
+    </div>
+  </header>
+
+  <section id="authCard" class="glass">
+    <h2>Pair this computer</h2>
+    <p class="sub" id="authPrompt">Checking ephemeral session token with your phone...</p>
+    <div id="tokenBox" class="row hidden">
+      <input type="text" id="tokenInput" maxlength="8" placeholder="8-CHAR TOKEN" autocomplete="off">
+      <button class="btn btn-primary" id="connectBtn">Request access</button>
+    </div>
+    <p id="authError" class="note-error hidden"></p>
+  </section>
+
+  <main id="appMain" class="hidden">
+    <div class="glass">
+      <div class="row">
+        <div>
+          <h2 style="margin-bottom:4px;">Live throughput</h2>
+          <p class="sub" id="destLabel" style="margin:0;">Saving to Downloads/DriveLift Drop</p>
+        </div>
+        <div class="spacer"></div>
+        <div class="hud-pill">
+          <span id="speedReadout">0 B/s</span>
+          <span style="color:var(--muted);">|</span>
+          <span id="activeReadout">0 active</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid">
+      <section class="glass">
+        <h2>Send from computer to phone</h2>
+        <p class="sub">Streams raw 8 MB resumable chunks straight to phone storage.</p>
+        <div id="dropzone" class="dropzone">
+          <strong>Drop files or folders here</strong>
+          <span>Supports multi-gigabyte files and nested folder trees</span>
+          <div class="row" style="justify-content:center;">
+            <button type="button" class="btn btn-primary" id="pickFilesBtn">Choose files</button>
+            <button type="button" class="btn btn-well" id="pickFolderBtn">Choose folder</button>
+          </div>
+          <input type="file" id="fileInput" multiple class="hidden">
+          <input type="file" id="folderInput" webkitdirectory multiple class="hidden">
+        </div>
+        <div id="uploadList" class="list"></div>
+      </section>
+
+      <section class="glass">
+        <div class="row" style="margin-bottom:8px;">
+          <h2 style="margin:0;">Shared from phone</h2>
+          <div class="spacer"></div>
+          <button type="button" class="btn btn-well btn-sm" id="refreshFilesBtn">Refresh</button>
+          <a id="zipAllBtn" class="btn btn-primary btn-sm hidden" href="/api/download-zip" download="DriveLift-Drop.zip">Download all ZIP</a>
+        </div>
+        <p class="sub">Standard HTTP Range downloads with native browser pause and resume.</p>
+        <div id="sharedEmpty" class="item-sub">No files shared from the phone right now.</div>
+        <div id="sharedList" class="list"></div>
+      </section>
+    </div>
+  </main>
+</div>
+
+<script>
+(function () {
+  const CHUNK_SIZE = 8 * 1024 * 1024;
+  const urlParams = new URLSearchParams(window.location.search);
+  let activeToken = (urlParams.get("token") || "").trim().toUpperCase();
+  let peerId = null;
+  let pollTimer = null;
+  let ws = null;
+
+  const authCard = document.getElementById("authCard");
+  const authPrompt = document.getElementById("authPrompt");
+  const authError = document.getElementById("authError");
+  const tokenBox = document.getElementById("tokenBox");
+  const tokenInput = document.getElementById("tokenInput");
+  const connectBtn = document.getElementById("connectBtn");
+  const appMain = document.getElementById("appMain");
+  const connDot = document.getElementById("connDot");
+  const hudText = document.getElementById("hudText");
+  const speedReadout = document.getElementById("speedReadout");
+  const activeReadout = document.getElementById("activeReadout");
+  const destLabel = document.getElementById("destLabel");
+  const dropzone = document.getElementById("dropzone");
+  const fileInput = document.getElementById("fileInput");
+  const folderInput = document.getElementById("folderInput");
+  const uploadList = document.getElementById("uploadList");
+  const sharedList = document.getElementById("sharedList");
+  const sharedEmpty = document.getElementById("sharedEmpty");
+  const zipAllBtn = document.getElementById("zipAllBtn");
+
+  const uploadJobs = [];
+  let uploadingLoopRunning = false;
+
+  function formatBytes(bytes) {
+    if (!bytes || bytes <= 0) return "0 B";
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let idx = 0;
+    let v = bytes;
+    while (v >= 1024 && idx < units.length - 1) { v /= 1024; idx++; }
+    return (v >= 100 || idx === 0 ? v.toFixed(0) : v.toFixed(1)) + " " + units[idx];
+  }
+
+  function formatEta(seconds) {
+    if (!seconds || seconds <= 0) return "";
+    if (seconds < 60) return seconds + "s left";
+    const m = Math.floor(seconds / 60);
+    const s = seconds % 60;
+    return m + "m " + s + "s left";
+  }
+
+  function showAuthError(msg) {
+    authError.textContent = msg;
+    authError.classList.remove("hidden");
+  }
+
+  async function requestAccess(token) {
+    authError.classList.add("hidden");
+    activeToken = (token || "").trim().toUpperCase();
+    if (!activeToken) {
+      tokenBox.classList.remove("hidden");
+      authPrompt.textContent = "Enter the 8-character token shown on your phone, or scan the QR link.";
+      return;
+    }
+    try {
+      const resp = await fetch("/api/auth/request", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: activeToken })
+      });
+      const data = await resp.json();
+      if (!resp.ok) {
+        tokenBox.classList.remove("hidden");
+        connDot.className = "dot err";
+        hudText.textContent = "Unauthorized";
+        authPrompt.textContent = "Token was rejected. Check the code on your phone.";
+        showAuthError(data.error || "Invalid token");
+        return;
+      }
+      peerId = data.peerId;
+      if (data.status === "APPROVED") {
+        enterAuthorizedState();
+      } else {
+        tokenBox.classList.add("hidden");
+        hudText.textContent = "Awaiting approval";
+        authPrompt.textContent = "Tap Approve on your phone screen to unlock transfers for " + data.deviceLabel + ".";
+        startApprovalPolling();
+      }
+    } catch (err) {
+      showAuthError("Could not reach phone: " + err.message);
+      tokenBox.classList.remove("hidden");
+    }
+  }
+
+  function startApprovalPolling() {
+    if (pollTimer) clearInterval(pollTimer);
+    pollTimer = setInterval(async () => {
+      if (!peerId || !activeToken) return;
+      try {
+        const resp = await fetch("/api/auth/status?peerId=" + encodeURIComponent(peerId) + "&token=" + encodeURIComponent(activeToken));
+        const data = await resp.json();
+        if (data.status === "APPROVED") {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          enterAuthorizedState();
+        } else if (data.status === "REVOKED" || resp.status === 403) {
+          clearInterval(pollTimer);
+          pollTimer = null;
+          connDot.className = "dot err";
+          hudText.textContent = "Disconnected";
+          authPrompt.textContent = "Access was denied or revoked from your phone.";
+        }
+      } catch (_) {}
+    }, 1200);
+  }
+
+  function enterAuthorizedState() {
+    authCard.classList.add("hidden");
+    appMain.classList.remove("hidden");
+    connDot.className = "dot live";
+    hudText.textContent = "Connected";
+    refreshSharedFiles();
+    connectTelemetryWs();
+  }
+
+  function handleRevoked() {
+    if (ws) { try { ws.close(); } catch (_) {} ws = null; }
+    appMain.classList.add("hidden");
+    authCard.classList.remove("hidden");
+    connDot.className = "dot err";
+    hudText.textContent = "Disconnected";
+    authPrompt.textContent = "This browser session was disconnected from the phone.";
+    tokenBox.classList.remove("hidden");
+  }
+
+  function connectTelemetryWs() {
+    if (ws) { try { ws.close(); } catch (_) {} }
+    const scheme = window.location.protocol === "https:" ? "wss://" : "ws://";
+    ws = new WebSocket(scheme + window.location.host + "/ws/telemetry");
+    ws.onmessage = function (ev) {
+      try {
+        const snap = JSON.parse(ev.data);
+        speedReadout.textContent = formatBytes(snap.speedBytesPerSec || 0) + "/s";
+        const count = snap.activeTransferCount || 0;
+        activeReadout.textContent = count === 1 ? "1 active" : count + " active";
+      } catch (_) {}
+    };
+    ws.onclose = function (ev) {
+      if (ev.code === 1008 || ev.reason === "Peer disconnected") {
+        handleRevoked();
+        return;
+      }
+      setTimeout(() => {
+        if (!appMain.classList.contains("hidden")) connectTelemetryWs();
+      }, 2000);
+    };
+  }
+
+  async function refreshSharedFiles() {
+    try {
+      const resp = await fetch("/api/files");
+      if (resp.status === 401) { handleRevoked(); return; }
+      const data = await resp.json();
+      if (data.destinationLabel) {
+        destLabel.textContent = "Saving uploads to: " + data.destinationLabel;
+      }
+      const files = data.files || [];
+      sharedList.innerHTML = "";
+      if (files.length === 0) {
+        sharedEmpty.classList.remove("hidden");
+        zipAllBtn.classList.add("hidden");
+        return;
+      }
+      sharedEmpty.classList.add("hidden");
+      zipAllBtn.classList.toggle("hidden", files.length < 1);
+      for (const f of files) {
+        const row = document.createElement("div");
+        row.className = "item";
+        const top = document.createElement("div");
+        top.className = "item-top";
+        const meta = document.createElement("div");
+        meta.className = "item-meta";
+        const nameEl = document.createElement("div");
+        nameEl.className = "item-name";
+        nameEl.textContent = f.name;
+        const subEl = document.createElement("div");
+        subEl.className = "item-sub";
+        subEl.textContent = formatBytes(f.sizeBytes) + (f.relativePath ? " - " + f.relativePath : "");
+        meta.appendChild(nameEl);
+        meta.appendChild(subEl);
+        const dl = document.createElement("a");
+        dl.className = "btn btn-well btn-sm";
+        dl.href = "/api/download/" + encodeURIComponent(f.id);
+        dl.setAttribute("download", f.name);
+        dl.textContent = "Download";
+        top.appendChild(meta);
+        top.appendChild(dl);
+        row.appendChild(top);
+        sharedList.appendChild(row);
+      }
+    } catch (_) {}
+  }
+
+  function enqueueFile(file, relativePath) {
+    const job = {
+      id: "job_" + Date.now() + "_" + Math.random().toString(16).slice(2),
+      file: file,
+      relativePath: relativePath || "",
+      uploadId: null,
+      receivedBytes: 0,
+      speedBps: 0,
+      status: "queued",
+      error: null,
+      paused: false,
+      cancelled: false,
+      el: null
+    };
+    uploadJobs.push(job);
+    renderJobRow(job);
+    pumpUploadQueue();
+  }
+
+  function renderJobRow(job) {
+    if (!job.el) {
+      const box = document.createElement("div");
+      box.className = "item";
+      box.innerHTML = `
+        <div class="item-top">
+          <div class="item-meta">
+            <div class="item-name"></div>
+            <div class="item-sub"></div>
+          </div>
+          <button type="button" class="btn btn-well btn-sm toggle-btn">Pause</button>
+          <button type="button" class="btn btn-danger btn-sm cancel-btn">Cancel</button>
+        </div>
+        <div class="bar-track"><div class="bar-fill"></div></div>
+      `;
+      box.querySelector(".item-name").textContent = job.file.name;
+      box.querySelector(".toggle-btn").addEventListener("click", () => {
+        if (job.status === "completed" || job.status === "cancelled") return;
+        job.paused = !job.paused;
+        if (!job.paused) {
+          job.status = "queued";
+          job.error = null;
+          pumpUploadQueue();
+        } else {
+          job.status = "paused";
+        }
+        renderJobRow(job);
+      });
+      box.querySelector(".cancel-btn").addEventListener("click", async () => {
+        job.cancelled = true;
+        job.paused = false;
+        job.status = "cancelled";
+        renderJobRow(job);
+        if (job.uploadId) {
+          try { await fetch("/api/upload/" + encodeURIComponent(job.uploadId), { method: "DELETE" }); } catch (_) {}
+        }
+      });
+      uploadList.prepend(box);
+      job.el = box;
+    }
+    const pct = job.file.size > 0 ? Math.min(100, Math.round((job.receivedBytes / job.file.size) * 100)) : (job.status === "completed" ? 100 : 0);
+    const sub = job.el.querySelector(".item-sub");
+    const toggleBtn = job.el.querySelector(".toggle-btn");
+    const cancelBtn = job.el.querySelector(".cancel-btn");
+    const fill = job.el.querySelector(".bar-fill");
+    fill.style.width = pct + "%";
+
+    if (job.status === "completed") {
+      sub.textContent = "Saved (" + formatBytes(job.file.size) + ")";
+      toggleBtn.classList.add("hidden");
+      cancelBtn.classList.add("hidden");
+    } else if (job.status === "cancelled") {
+      sub.textContent = "Cancelled and partial data removed";
+      toggleBtn.classList.add("hidden");
+      cancelBtn.classList.add("hidden");
+    } else if (job.paused) {
+      sub.textContent = "Paused at " + pct + "% (" + formatBytes(job.receivedBytes) + " of " + formatBytes(job.file.size) + ")";
+      toggleBtn.textContent = "Resume";
+    } else if (job.status === "uploading") {
+      const rem = job.speedBps > 0 ? Math.ceil((job.file.size - job.receivedBytes) / job.speedBps) : 0;
+      const eta = formatEta(rem);
+      sub.textContent = pct + "% - " + formatBytes(job.receivedBytes) + " / " + formatBytes(job.file.size) + " - " + formatBytes(job.speedBps) + "/s" + (eta ? " - " + eta : "");
+      toggleBtn.textContent = "Pause";
+    } else if (job.error) {
+      sub.textContent = job.error;
+      toggleBtn.textContent = "Retry";
+    } else {
+      sub.textContent = "Queued (" + formatBytes(job.file.size) + ")";
+      toggleBtn.textContent = "Pause";
+    }
+  }
+
+  async function pumpUploadQueue() {
+    if (uploadingLoopRunning) return;
+    uploadingLoopRunning = true;
+    try {
+      while (true) {
+        const next = uploadJobs.find((j) => !j.cancelled && !j.paused && (j.status === "queued" || j.status === "retrying"));
+        if (!next) break;
+        await runSingleUpload(next);
+      }
+    } finally {
+      uploadingLoopRunning = false;
+    }
+  }
+
+  async function runSingleUpload(job) {
+    job.status = "uploading";
+    job.error = null;
+    renderJobRow(job);
+
+    let retries = 0;
+    while (!job.cancelled && !job.paused) {
+      try {
+        const initResp = await fetch("/api/upload/init", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            filename: job.file.name,
+            relativePath: job.relativePath,
+            totalSize: job.file.size,
+            mimeType: job.file.type || ""
+          })
+        });
+        if (initResp.status === 401) { handleRevoked(); return; }
+        if (!initResp.ok) throw new Error("Upload init failed (" + initResp.status + ")");
+        const initData = await initResp.json();
+        job.uploadId = initData.uploadId;
+        job.receivedBytes = initData.receivedBytes || 0;
+        renderJobRow(job);
+
+        while (job.receivedBytes < job.file.size && !job.cancelled && !job.paused) {
+          const offset = job.receivedBytes;
+          const end = Math.min(job.file.size, offset + CHUNK_SIZE);
+          const slice = job.file.slice(offset, end);
+          const t0 = performance.now();
+          const patchResp = await fetch("/api/upload/" + encodeURIComponent(job.uploadId), {
+            method: "PATCH",
+            headers: {
+              "Content-Type": "application/octet-stream",
+              "X-Chunk-Offset": String(offset)
+            },
+            body: slice
+          });
+          if (patchResp.status === 401) { handleRevoked(); return; }
+          if (patchResp.status === 409) {
+            const expected = Number(patchResp.headers.get("X-Expected-Offset") || "0");
+            job.receivedBytes = expected;
+            renderJobRow(job);
+            continue;
+          }
+          if (!patchResp.ok) throw new Error("Chunk failed (" + patchResp.status + ")");
+          const patchData = await patchResp.json();
+          const elapsedSec = Math.max(0.05, (performance.now() - t0) / 1000);
+          job.speedBps = Math.round((end - offset) / elapsedSec);
+          job.receivedBytes = patchData.receivedBytes;
+          retries = 0;
+          renderJobRow(job);
+        }
+
+        if (job.cancelled || job.paused) return;
+
+        const doneResp = await fetch("/api/upload/" + encodeURIComponent(job.uploadId) + "/complete", { method: "POST" });
+        if (doneResp.status === 401) { handleRevoked(); return; }
+        if (!doneResp.ok) throw new Error("Commit failed (" + doneResp.status + ")");
+        job.status = "completed";
+        job.speedBps = 0;
+        renderJobRow(job);
+        return;
+      } catch (err) {
+        if (job.cancelled || job.paused) return;
+        retries++;
+        if (retries > 4) {
+          job.status = "failed";
+          job.paused = true;
+          job.error = "Paused after retries: " + err.message;
+          renderJobRow(job);
+          return;
+        }
+        const delayMs = Math.min(8000, 500 * Math.pow(2, retries - 1));
+        job.error = "Reconnecting in " + (delayMs / 1000) + "s...";
+        renderJobRow(job);
+        await new Promise((r) => setTimeout(r, delayMs));
+      }
+    }
+  }
+
+  async function walkEntry(entry, prefix) {
+    if (entry.isFile) {
+      const file = await new Promise((resolve, reject) => entry.file(resolve, reject));
+      enqueueFile(file, prefix);
+    } else if (entry.isDirectory) {
+      const nextPrefix = prefix ? (prefix + "/" + entry.name) : entry.name;
+      const reader = entry.createReader();
+      while (true) {
+        const batch = await new Promise((resolve, reject) => reader.readEntries(resolve, reject));
+        if (!batch || batch.length === 0) break;
+        for (const child of batch) {
+          await walkEntry(child, nextPrefix);
+        }
+      }
+    }
+  }
+
+  dropzone.addEventListener("dragover", (e) => {
+    e.preventDefault();
+    dropzone.classList.add("drag");
+  });
+  dropzone.addEventListener("dragleave", () => dropzone.classList.remove("drag"));
+  dropzone.addEventListener("drop", async (e) => {
+    e.preventDefault();
+    dropzone.classList.remove("drag");
+    const items = e.dataTransfer && e.dataTransfer.items;
+    if (items && items.length > 0 && items[0].webkitGetAsEntry) {
+      const entries = [];
+      for (const item of items) {
+        const entry = item.webkitGetAsEntry();
+        if (entry) entries.push(entry);
+      }
+      for (const entry of entries) {
+        await walkEntry(entry, "");
+      }
+      return;
+    }
+    const files = e.dataTransfer && e.dataTransfer.files;
+    if (files) {
+      for (const f of files) enqueueFile(f, "");
+    }
+  });
+
+  document.getElementById("pickFilesBtn").addEventListener("click", () => fileInput.click());
+  document.getElementById("pickFolderBtn").addEventListener("click", () => folderInput.click());
+  document.getElementById("refreshFilesBtn").addEventListener("click", refreshSharedFiles);
+
+  fileInput.addEventListener("change", () => {
+    for (const f of fileInput.files) enqueueFile(f, "");
+    fileInput.value = "";
+  });
+  folderInput.addEventListener("change", () => {
+    for (const f of folderInput.files) enqueueFile(f, f.webkitRelativePath || "");
+    folderInput.value = "";
+  });
+
+  connectBtn.addEventListener("click", () => requestAccess(tokenInput.value));
+  tokenInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") requestAccess(tokenInput.value);
+  });
+
+  requestAccess(activeToken);
+})();
+</script>
+</body>
+</html>
