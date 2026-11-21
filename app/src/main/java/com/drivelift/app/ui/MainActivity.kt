@@ -185,6 +185,8 @@ fun AppRoot(vm: AppViewModel) {
     var showStorageIntelligence by rememberSaveable { mutableStateOf(false) }
     var showWhatsAppQuickSender by rememberSaveable { mutableStateOf(false) }
     var whatsAppPayload by remember { mutableStateOf<com.drivelift.app.feature.whatsappsender.model.WhatsAppSendPayload?>(null) }
+    // On-Device Intelligence & Automation opens over the Phone tab; Back returns to the folder list.
+    var showIntelligence by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
     val inFavorites = showFavorites && (tab == AppViewModel.TAB_PHONE || tab == AppViewModel.TAB_DRIVE)
@@ -192,6 +194,7 @@ fun AppRoot(vm: AppViewModel) {
     val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
     val inStorageIntelligence = tab == AppViewModel.TAB_PHONE && showStorageIntelligence && openBucket == NO_BUCKET && hasPermission
     val inWhatsAppQuickSender = tab == AppViewModel.TAB_PHONE && showWhatsAppQuickSender && openBucket == NO_BUCKET && hasPermission
+    val inIntelligence = tab == AppViewModel.TAB_PHONE && showIntelligence && openBucket == NO_BUCKET && hasPermission
     val dropRunning by remember(context) { Graph.get(context).desktopDrop.controller.isServerRunning }.collectAsStateWithLifecycle()
 
     LaunchedEffect(selection) {
@@ -217,11 +220,12 @@ fun AppRoot(vm: AppViewModel) {
     // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
     // list. The predictive back gesture previews it (BackPreview.kt).
     val upBack = rememberUpBack(
-        enabled = !pickingDestination && (inSettings || inStorage || inStorageIntelligence || inWhatsAppQuickSender || (inFolder && selection.isEmpty())),
+        enabled = !pickingDestination && (inSettings || inStorage || inStorageIntelligence || inIntelligence || inWhatsAppQuickSender || (inFolder && selection.isEmpty())),
     ) {
         when {
             inSettings -> showSettings = false
             inStorageIntelligence -> showStorageIntelligence = false
+            inIntelligence -> showIntelligence = false
             inWhatsAppQuickSender -> showWhatsAppQuickSender = false
             inStorage -> showStorage = false
             inFolder -> openBucket = NO_BUCKET
@@ -232,8 +236,8 @@ fun AppRoot(vm: AppViewModel) {
 
     // The level shown now and how it arrived: a step down into a folder or a screen opened over
     // a tab, a step back up, or a move across to another tab (Motion.kt).
-    val level = listOf(tab, openBucket, inSettings, inStorage, inStorageIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination, hasPermission)
-    val depth = listOf(inFolder, inSettings, inStorage, inStorageIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination).count { it }
+    val level = listOf(tab, openBucket, inSettings, inStorage, inStorageIntelligence, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination, hasPermission)
+    val depth = listOf(inFolder, inSettings, inStorage, inStorageIntelligence, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination).count { it }
     var lastLevel by remember { mutableStateOf(Pair(tab, depth)) }
     val levelStep = when {
         tab != lastLevel.first -> NavStep.ACROSS
@@ -258,7 +262,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !inWhatsAppQuickSender && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !inIntelligence && !inWhatsAppQuickSender && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -372,6 +376,10 @@ fun AppRoot(vm: AppViewModel) {
                                     vm.openDriveFolder(file)
                                 },
                             )
+                            inIntelligence -> com.drivelift.app.feature.intelligence.ui.IntelligenceHubScreen(
+                                appViewModel = vm,
+                                onBack = { showIntelligence = false },
+                            )
                             inStorage -> StorageScreen(
                                 vm = vm,
                                 onBack = { showStorage = false },
@@ -383,6 +391,7 @@ fun AppRoot(vm: AppViewModel) {
                                 onOpenFavorites = { showFavorites = true },
                                 onOpen = { openBucket = it },
                                 onOpenStorage = { showStorage = true },
+                                onOpenIntelligence = { showIntelligence = true },
                                 onMoveFolder = {
                                     vm.selectFolder(it)
                                     showDestination = true
