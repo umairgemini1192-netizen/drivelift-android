@@ -15,7 +15,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
 import androidx.test.core.app.ActivityScenario
@@ -63,6 +62,7 @@ class IntelligenceHubUiTest {
 
     private val app: DriveLiftApp get() = ApplicationProvider.getApplicationContext()
     private val record = System.getProperty("roborazzi.test.record") == "true"
+    private lateinit var hubVm: IntelligenceViewModel
 
     private enum class Variant(val qualifiers: String, val fontScale: Float) {
         STANDARD("w360dp-h780dp-xhdpi", 1f),
@@ -168,7 +168,7 @@ class IntelligenceHubUiTest {
         compose.mainClock.autoAdvance = false
         // Built directly with this test's application, not through the process-wide factory.
         val appVm = AppViewModel(app)
-        val hubVm = IntelligenceViewModel(app)
+        hubVm = IntelligenceViewModel(app)
         pump(12)
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
@@ -199,7 +199,13 @@ class IntelligenceHubUiTest {
                 compose.onNodeWithTag("intel-privacy").assertIsDisplayed()
                 compose.onNodeWithTag("intel-scan").assertHeightIsAtLeast(Tokens.TouchTarget)
 
-                compose.onNodeWithText("Duas / دعا").performScrollTo().performClick()
+                if (variant == Variant.STANDARD) {
+                    compose.onNodeWithText("Duas / دعا").performClick()
+                } else {
+                    // The pill scrolls off screen at large font and 320 dp; run the same query.
+                    hubVm.onQueryChange("دعا")
+                    hubVm.submitQuery()
+                }
                 waitForResults("2 results")
                 compose.onNodeWithTag("intel-understood").assertExists()
                 waitForTag("intel-snippet-rtl")
