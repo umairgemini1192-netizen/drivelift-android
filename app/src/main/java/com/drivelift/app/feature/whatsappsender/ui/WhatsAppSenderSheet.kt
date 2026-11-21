@@ -1,6 +1,7 @@
 package com.drivelift.app.feature.whatsappsender.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
@@ -118,7 +119,10 @@ fun WhatsAppSenderSheet(
                 .testTag("wa-sender-sheet"),
             verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
         ) {
-            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Tiny)) {
+            Column(
+                modifier = Modifier.focusable(),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+            ) {
                 Text("Send to WhatsApp", style = MaterialTheme.typography.titleLarge)
                 Text(
                     payload.title,
