@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -149,7 +150,7 @@ fun WhatsAppSenderSheet(
                                 enabled = !state.isZipping,
                                 label = { Text(target.label) },
                                 modifier = Modifier
-                                    .defaultMinSize(minHeight = Tokens.TouchTarget)
+                                    .heightIn(min = Tokens.TouchTarget)
                                     .testTag("wa-target-${target.name.lowercase()}"),
                             )
                         }
@@ -369,7 +370,7 @@ fun WhatsAppSenderSheet(
                                 enabled = !state.isZipping,
                                 label = { Text("Zip into 1 archive") },
                                 modifier = Modifier
-                                    .defaultMinSize(minHeight = Tokens.TouchTarget)
+                                    .heightIn(min = Tokens.TouchTarget)
                                     .testTag("wa-strategy-zip"),
                             )
                             FilterChip(
@@ -378,7 +379,7 @@ fun WhatsAppSenderSheet(
                                 enabled = !state.isZipping,
                                 label = { Text("Split into batches of $MAX_WHATSAPP_BATCH_FILES") },
                                 modifier = Modifier
-                                    .defaultMinSize(minHeight = Tokens.TouchTarget)
+                                    .heightIn(min = Tokens.TouchTarget)
                                     .testTag("wa-strategy-split"),
                             )
                         }

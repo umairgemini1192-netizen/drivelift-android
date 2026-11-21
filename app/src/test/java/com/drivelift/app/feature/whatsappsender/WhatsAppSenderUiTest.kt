@@ -13,6 +13,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
@@ -22,7 +23,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.lifecycle.ViewModelProvider
+import androidx.compose.ui.test.performSemanticsAction
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -39,6 +40,7 @@ import com.drivelift.app.feature.whatsappsender.model.WhatsAppSendPayload
 import com.drivelift.app.feature.whatsappsender.model.WhatsAppTarget
 import com.drivelift.app.feature.whatsappsender.ui.WhatsAppQuickSenderScreen
 import com.drivelift.app.feature.whatsappsender.ui.WhatsAppSenderSheet
+import com.drivelift.app.feature.whatsappsender.ui.WhatsAppSenderViewModel
 import com.drivelift.app.ui.AppViewModel
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
@@ -46,6 +48,7 @@ import com.drivelift.app.ui.Tokens
 import com.github.takahirom.roborazzi.ExperimentalRoborazziApi
 import com.github.takahirom.roborazzi.captureRoboImage
 import com.github.takahirom.roborazzi.captureScreenRoboImage
+import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -77,6 +80,8 @@ class WhatsAppSenderUiTest {
 
     @Before
     fun setUp() {
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        RuntimeEnvironment.setFontScale(1f)
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
         Coil.setImageLoader(
             ImageLoader.Builder(app)
@@ -92,6 +97,14 @@ class WhatsAppSenderUiTest {
         graph.whatsAppSender.availabilityChecker = object : WhatsAppAvailabilityChecker {
             override fun check(): WhatsAppAvailability = WhatsAppAvailability.BOTH
         }
+    }
+
+    @After
+    fun tearDown() {
+        Graph.get(app).clock = System::currentTimeMillis
+        RuntimeEnvironment.setFontScale(1f)
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        pump(10)
     }
 
     private fun pump(times: Int = 10) = repeat(times) {
@@ -167,6 +180,7 @@ class WhatsAppSenderUiTest {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             RuntimeEnvironment.setFontScale(variant.fontScale)
             compose.mainClock.autoAdvance = false
+            val senderVm = WhatsAppSenderViewModel(app)
 
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
@@ -181,12 +195,14 @@ class WhatsAppSenderUiTest {
                                     onSent = {},
                                     onHandoffToDrive = {},
                                     onHandoffToDesktopDrop = {},
+                                    senderVm = senderVm,
                                 )
                             }
                         }
                     }
                 }
                 waitForTag("wa-sender-sheet")
+                waitForTag("wa-oversized-warning")
                 pump(40)
 
                 compose.onNodeWithText("Send to WhatsApp").assertIsDisplayed()
@@ -205,13 +221,13 @@ class WhatsAppSenderUiTest {
                 }
 
                 if (variant == Variant.STANDARD) {
-                    compose.onNodeWithTag("wa-target-business").performClick()
+                    compose.onNodeWithTag("wa-target-business").performSemanticsAction(SemanticsActions.OnClick)
                     waitForText("to WhatsApp Business", substring = true)
 
-                    compose.onNodeWithTag("wa-toggle-exclude-oversized").performClick()
+                    compose.onNodeWithTag("wa-toggle-exclude-oversized").performSemanticsAction(SemanticsActions.OnClick)
                     waitForText("31 files ready")
 
-                    compose.onNodeWithTag("wa-strategy-split").performClick()
+                    compose.onNodeWithTag("wa-strategy-split").performSemanticsAction(SemanticsActions.OnClick)
                     waitForText("Send batch 1 of 2 (30 files) to WhatsApp Business")
                 }
             }
@@ -231,19 +247,22 @@ class WhatsAppSenderUiTest {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             RuntimeEnvironment.setFontScale(variant.fontScale)
             compose.mainClock.autoAdvance = false
+            val appVm = AppViewModel(app)
+            val senderVm = WhatsAppSenderViewModel(app)
+            pump(12)
+            appVm.refreshMedia()
 
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
                     activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-                    val appVm = ViewModelProvider(activity)[AppViewModel::class.java]
-                    appVm.refreshMedia()
                     activity.setContent {
                         DriveLiftTheme {
                             GlassBackdrop {
                                 WhatsAppQuickSenderScreen(
                                     vm = appVm,
                                     onBack = {},
+                                    senderVm = senderVm,
                                 )
                             }
                         }
@@ -254,6 +273,7 @@ class WhatsAppSenderUiTest {
                 pump(10)
 
                 compose.onNodeWithText("WhatsApp Quick Sender").assertIsDisplayed()
+                compose.onNodeWithText("WhatsApp and WhatsApp Business installed").assertIsDisplayed()
                 compose.onNodeWithTag("wa-pick-saf-folder").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("wa-pick-saf-files").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithText("Screenshots").assertExists()
