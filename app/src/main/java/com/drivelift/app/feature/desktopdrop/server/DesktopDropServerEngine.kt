@@ -55,13 +55,12 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
-import kotlinx.coroutines.channels.BufferOverflow
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
-import kotlinx.coroutines.flow.map
-import kotlinx.coroutines.flow.merge
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withContext
 import java.io.FileInputStream
 import java.net.BindException
@@ -91,14 +90,7 @@ class DesktopDropServerEngine(
     private var sharedItemsMap: Map<String, SharedDropItem> = emptyMap()
     private val activeTransfers = ConcurrentHashMap<String, DropTransferProgress>()
     private val progressTrackers = ConcurrentHashMap<String, TransferProgressTracker>()
-    private val telemetryEvents = MutableSharedFlow<Unit>(
-        extraBufferCapacity = 1,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
-    private val queueEvents = MutableSharedFlow<Int>(
-        extraBufferCapacity = 64,
-        onBufferOverflow = BufferOverflow.DROP_OLDEST,
-    )
+    private val wsClients = ConcurrentHashMap.newKeySet<WsClient>()
     private val lastProgressEmitMs = AtomicLong(Long.MIN_VALUE)
     private var speedTickerJob: Job? = null
 
@@ -119,6 +111,16 @@ class DesktopDropServerEngine(
         data class QueueUpdated(val sharedFilesCount: Int) : WsFrameEvent
     }
 
+    private class WsClient {
+        val queueChannel = Channel<Int>(Channel.CONFLATED)
+        val telemetryChannel = Channel<Unit>(Channel.CONFLATED)
+
+        fun close() {
+            queueChannel.close()
+            telemetryChannel.close()
+        }
+    }
+
     private class TransferProgressTracker(
         @Volatile var totalBytes: Long,
         var lastWindowStartMs: Long,
@@ -132,7 +134,7 @@ class DesktopDropServerEngine(
         val next = LinkedHashMap<String, SharedDropItem>(items.size)
         items.forEach { next[it.id] = it }
         sharedItemsMap = next
-        queueEvents.tryEmit(next.size)
+        broadcastQueueUpdated(next.size)
         notifyChanged()
     }
 
@@ -196,6 +198,8 @@ class DesktopDropServerEngine(
     fun stop() {
         speedTickerJob?.cancel()
         speedTickerJob = null
+        wsClients.forEach { it.close() }
+        wsClients.clear()
         val existing = server
         server = null
         boundPort = null
@@ -207,8 +211,20 @@ class DesktopDropServerEngine(
     }
 
     fun notifyChanged() {
-        telemetryEvents.tryEmit(Unit)
+        broadcastTelemetry()
         onStateChanged()
+    }
+
+    private fun broadcastQueueUpdated(sharedCount: Int) {
+        for (client in wsClients) {
+            client.queueChannel.trySend(sharedCount)
+        }
+    }
+
+    private fun broadcastTelemetry() {
+        for (client in wsClients) {
+            client.telemetryChannel.trySend(Unit)
+        }
     }
 
     fun touchActivity() {
@@ -547,32 +563,42 @@ class DesktopDropServerEngine(
                         close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Unauthorized"))
                         return@webSocket
                     }
-                    send(Frame.Text(buildTelemetryJson()))
-                    val pushJob = launch {
-                        merge(
-                            telemetryEvents.map { WsFrameEvent.Telemetry },
-                            queueEvents.map { WsFrameEvent.QueueUpdated(it) },
-                        ).collect { event ->
-                            val livePeer = authManager.verifyCookie(cookieVal)
-                            if (livePeer == null) {
-                                close(CloseReason(CloseReason.Codes.NORMAL, "Peer disconnected"))
-                                return@collect
-                            }
-                            val payload = when (event) {
-                                WsFrameEvent.Telemetry -> buildTelemetryJson()
-                                is WsFrameEvent.QueueUpdated ->
-                                    """{"type":"queue_updated","sharedFilesCount":${event.sharedFilesCount}}"""
-                            }
-                            runCatching { send(Frame.Text(payload)) }
-                        }
-                    }
+                    val client = WsClient()
+                    wsClients.add(client)
+                    var pushJob: Job? = null
                     try {
+                        send(Frame.Text(buildTelemetryJson()))
+                        pushJob = launch {
+                            try {
+                                while (isActive) {
+                                    val event: WsFrameEvent = select {
+                                        client.queueChannel.onReceive { count -> WsFrameEvent.QueueUpdated(count) }
+                                        client.telemetryChannel.onReceive { WsFrameEvent.Telemetry }
+                                    }
+                                    val livePeer = authManager.verifyCookie(cookieVal)
+                                    if (livePeer == null) {
+                                        close(CloseReason(CloseReason.Codes.NORMAL, "Peer disconnected"))
+                                        break
+                                    }
+                                    val payload = when (event) {
+                                        WsFrameEvent.Telemetry -> buildTelemetryJson()
+                                        is WsFrameEvent.QueueUpdated ->
+                                            """{"type":"queue_updated","sharedFilesCount":${event.sharedFilesCount}}"""
+                                    }
+                                    runCatching { send(Frame.Text(payload)) }
+                                }
+                            } catch (_: ClosedReceiveChannelException) {
+                                // Channel closed when server stops or session disconnects.
+                            }
+                        }
                         for (frame in incoming) {
                             touchActivity()
                             if (frame is Frame.Close) break
                         }
                     } finally {
-                        pushJob.cancel()
+                        pushJob?.cancel()
+                        wsClients.remove(client)
+                        client.close()
                     }
                 }
             }
@@ -723,7 +749,7 @@ class DesktopDropServerEngine(
                 return
             }
             if (lastProgressEmitMs.compareAndSet(prev, now)) {
-                telemetryEvents.tryEmit(Unit)
+                broadcastTelemetry()
                 onStateChanged()
                 return
             }

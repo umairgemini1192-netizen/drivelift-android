@@ -41,6 +41,7 @@ import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import java.util.concurrent.atomic.AtomicReference
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 
@@ -350,8 +351,9 @@ class DesktopDropServerEngineTest {
     private fun openTelemetryWebSocket(
         client: OkHttpClient,
         port: Int,
-    ): Pair<WebSocket, LinkedBlockingQueue<String>> {
+    ): Triple<WebSocket, LinkedBlockingQueue<String>, AtomicReference<String?>> {
         val frames = LinkedBlockingQueue<String>()
+        val statusNote = AtomicReference<String?>(null)
         val opened = CountDownLatch(1)
         val ws = client.newWebSocket(
             Request.Builder().url("ws://127.0.0.1:$port/ws/telemetry").build(),
@@ -363,25 +365,42 @@ class DesktopDropServerEngineTest {
                 override fun onMessage(webSocket: WebSocket, text: String) {
                     frames.offer(text)
                 }
+
+                override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
+                    statusNote.compareAndSet(null, "closing($code:$reason)")
+                }
+
+                override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                    statusNote.compareAndSet(null, "closed($code:$reason)")
+                }
+
+                override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                    statusNote.compareAndSet(null, "failure(${t::class.java.simpleName}:${t.message},http=${response?.code})")
+                    opened.countDown()
+                }
             },
         )
-        assertTrue("WebSocket did not open within 5s", opened.await(5, TimeUnit.SECONDS))
-        return ws to frames
+        assertTrue("WebSocket did not open within 5s (${statusNote.get()})", opened.await(5, TimeUnit.SECONDS))
+        assertEquals("WebSocket failed on open: ${statusNote.get()}", null, statusNote.get())
+        return Triple(ws, frames, statusNote)
     }
 
     private fun pollMatchingFrame(
         frames: LinkedBlockingQueue<String>,
+        statusNote: AtomicReference<String?>,
         timeoutMs: Long = 5_000L,
         predicate: (Map<String, Any?>) -> Boolean,
     ): Map<String, Any?> {
+        val seen = ArrayList<String>()
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
         while (System.nanoTime() < deadline) {
             val remainingMs = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime()).coerceAtLeast(1L)
             val raw = frames.poll(remainingMs, TimeUnit.MILLISECONDS) ?: break
+            seen += raw
             val parsed = DropJson.parseObject(raw)
             if (predicate(parsed)) return parsed
         }
-        throw AssertionError("Timed out waiting for matching WebSocket frame")
+        throw AssertionError("Timed out waiting for matching WebSocket frame; note=${statusNote.get()}, seen=$seen")
     }
 
     @Test
@@ -394,9 +413,9 @@ class DesktopDropServerEngineTest {
             Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
         ).execute().use { assertEquals(200, it.code) }
 
-        val (ws, frames) = openTelemetryWebSocket(client, port)
+        val (ws, frames, wsNote) = openTelemetryWebSocket(client, port)
         try {
-            val initial = pollMatchingFrame(frames) { it["type"] == "telemetry" }
+            val initial = pollMatchingFrame(frames, wsNote) { it["type"] == "telemetry" }
             assertEquals(0L, (initial["sharedFilesCount"] as Number).toLong())
 
             val sampleFile = File(shareDir, "PXL_20261120_180255203.mp4").apply {
@@ -416,7 +435,7 @@ class DesktopDropServerEngineTest {
                 ),
             )
 
-            val addedEvent = pollMatchingFrame(frames) { it["type"] == "queue_updated" }
+            val addedEvent = pollMatchingFrame(frames, wsNote) { it["type"] == "queue_updated" }
             assertEquals(1L, (addedEvent["sharedFilesCount"] as Number).toLong())
 
             client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { filesResp ->
@@ -426,12 +445,14 @@ class DesktopDropServerEngineTest {
             }
 
             engine.setSharedItems(emptyList())
-            val clearedEvent = pollMatchingFrame(frames) {
+            val clearedEvent = pollMatchingFrame(frames, wsNote) {
                 it["type"] == "queue_updated" && (it["sharedFilesCount"] as? Number)?.toLong() == 0L
             }
             assertEquals(0L, (clearedEvent["sharedFilesCount"] as Number).toLong())
         } finally {
             ws.close(1000, "done")
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
         }
     }
 
@@ -583,9 +604,9 @@ class DesktopDropServerEngineTest {
             onStateChanged = { stateChangedCount.incrementAndGet() },
         )
         var ws: WebSocket? = null
+        val (client, _) = clientWithJar()
         try {
             val port = runBlocking { throttledEngine.start("127.0.0.1", 0) }
-            val (client, _) = clientWithJar()
             client.newCall(
                 Request.Builder()
                     .url("http://127.0.0.1:$port/api/auth/request")
@@ -593,9 +614,9 @@ class DesktopDropServerEngineTest {
                     .build(),
             ).execute().use { assertEquals(200, it.code) }
 
-            val (socket, frames) = openTelemetryWebSocket(client, port)
+            val (socket, frames, wsNote) = openTelemetryWebSocket(client, port)
             ws = socket
-            pollMatchingFrame(frames) { it["type"] == "telemetry" }
+            pollMatchingFrame(frames, wsNote) { it["type"] == "telemetry" }
 
             val transferId = throttledEngine.registerTransferStart(
                 filename = "PXL_20261120_180255203.mp4",
@@ -603,7 +624,7 @@ class DesktopDropServerEngineTest {
                 direction = TransferDirection.PHONE_TO_PC,
                 totalBytes = 20L * 1024L * 1024L,
             )
-            pollMatchingFrame(frames) {
+            pollMatchingFrame(frames, wsNote) {
                 it["type"] == "telemetry" && (it["activeTransferCount"] as? Number)?.toInt() == 1
             }
             frames.clear()
@@ -642,6 +663,8 @@ class DesktopDropServerEngineTest {
             assertEquals(250L * 65_536L, completed.transferredBytes)
         } finally {
             ws?.close(1000, "done")
+            client.dispatcher.executorService.shutdown()
+            client.connectionPool.evictAll()
             throttledEngine.stop()
         }
     }
