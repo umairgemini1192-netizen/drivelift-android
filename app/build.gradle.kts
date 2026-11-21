@@ -13,8 +13,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 34
-        versionName = "1.0.0-preview.35"
+        versionCode = 35
+        versionName = "1.0.0-preview.36"
     }
 
     signingConfigs {
@@ -120,6 +120,12 @@ dependencies {
     implementation("io.ktor:ktor-server-websockets:3.0.3")
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.documentfile:documentfile:1.0.1")
+
+    // On-Device Intelligence: bundled ML Kit Latin OCR, Tesseract (Arabic + Urdu, standard
+    // non-OpenMP build) and PdfBox for digital PDF text layers. All run offline on the phone.
+    implementation("com.google.mlkit:text-recognition:16.0.1")
+    implementation("cz.adaptech.tesseract4android:tesseract4android:4.9.0")
+    implementation("com.tom-roush:pdfbox-android:2.0.27.0")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation(composeBom)
