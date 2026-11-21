@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -35,6 +36,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
@@ -46,6 +48,8 @@ import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -115,6 +119,8 @@ fun PhoneScreen(
     onMoveFolder: (Long) -> Unit,
     onOpenFavorites: () -> Unit = {},
     onOpenStorage: () -> Unit = {},
+    onOpenWhatsAppQuickSender: () -> Unit = {},
+    onSendFolderToWhatsApp: (Long) -> Unit = {},
     /** Offline OCR search and Smart rules; the row is hidden when null. */
     onOpenIntelligence: (() -> Unit)? = null,
 ) {
@@ -179,11 +185,32 @@ fun PhoneScreen(
             }
         }
         item(key = "heading") {
-            Text(
-                "Folders",
-                style = MaterialTheme.typography.titleMedium,
-                modifier = Modifier.padding(start = Tokens.Edge, top = Tokens.Gutter, bottom = Tokens.Tiny),
-            )
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(start = Tokens.Edge, end = Tokens.Small, top = Tokens.Small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "Folders",
+                    style = MaterialTheme.typography.titleMedium,
+                    modifier = Modifier.weight(1f),
+                )
+                TextButton(
+                    onClick = onOpenWhatsAppQuickSender,
+                    modifier = Modifier
+                        .defaultMinSize(minHeight = Tokens.TouchTarget)
+                        .testTag("whatsapp-quick-sender-entry"),
+                ) {
+                    Icon(
+                        Icons.AutoMirrored.Outlined.Send,
+                        contentDescription = null,
+                        modifier = Modifier.size(Tokens.IconSmall),
+                    )
+                    Spacer(Modifier.width(Tokens.Tiny))
+                    Text("WhatsApp")
+                }
+            }
         }
         if (!loaded) {
             item(key = "loading") {
@@ -208,6 +235,7 @@ fun PhoneScreen(
                 onToggleFavorite = { vm.toggleFavorite(folder) },
                 onOpen = { onOpen(folder.bucketId) },
                 onMove = { onMoveFolder(folder.bucketId) },
+                onSendWhatsApp = { onSendFolderToWhatsApp(folder.bucketId) },
             )
         }
         // After the folders, so the folder list keeps its place on screen.
@@ -356,45 +384,73 @@ private fun FolderRow(
     onToggleFavorite: () -> Unit,
     onOpen: () -> Unit,
     onMove: () -> Unit,
+    onSendWhatsApp: () -> Unit = {},
 ) {
     val context = LocalContext.current
-    GlassPanel(
-        modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
-        onClick = onOpen,
-    ) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        AsyncImage(
-            model = ImageRequest.Builder(context).data(folder.cover).size(192).build(),
-            contentDescription = null,
-            contentScale = ContentScale.Crop,
-            modifier = Modifier.size(Tokens.FolderThumb).clip(Tokens.ThumbShape)
-                .background(GlassPalette.Thumb),
-        )
-        Column(Modifier.weight(1f).padding(horizontal = Tokens.Gutter)) {
-            Text(folder.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            Text(
-                "${folder.count} items  ·  ${formatBytes(context, folder.bytes)}",
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+    var menuOpen by remember { mutableStateOf(false) }
+    Box(Modifier.fillMaxWidth()) {
+        GlassPanel(
+            modifier = Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+            onClick = onOpen,
+            onLongClick = { menuOpen = true },
+            onLongClickLabel = "More actions for ${folder.name}",
+        ) {
+        Row(
+            Modifier.fillMaxWidth().padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(context).data(folder.cover).size(192).build(),
+                contentDescription = null,
+                contentScale = ContentScale.Crop,
+                modifier = Modifier.size(Tokens.FolderThumb).clip(Tokens.ThumbShape)
+                    .background(GlassPalette.Thumb),
             )
-            if (folder.path.isNotEmpty()) Text(
-                folder.path, style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1, overflow = TextOverflow.Ellipsis,
+            Column(Modifier.weight(1f).padding(horizontal = Tokens.Gutter)) {
+                Text(folder.name, style = MaterialTheme.typography.titleMedium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Text(
+                    "${folder.count} items  ·  ${formatBytes(context, folder.bytes)}",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (folder.path.isNotEmpty()) Text(
+                    folder.path, style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1, overflow = TextOverflow.Ellipsis,
+                )
+            }
+            FavoriteStar(favorite = favorite, name = folder.name, onToggle = onToggleFavorite)
+            IconButton(onClick = onMove) {
+                Icon(
+                    Icons.Outlined.CloudUpload,
+                    contentDescription = "Move the whole ${folder.name} folder to Drive",
+                    tint = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+        }
+        DropdownMenu(
+            expanded = menuOpen,
+            onDismissRequest = { menuOpen = false },
+            containerColor = MaterialTheme.colorScheme.surfaceContainer,
+        ) {
+            DropdownMenuItem(
+                text = { Text("Send to WhatsApp") },
+                leadingIcon = { Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    onSendWhatsApp()
+                },
+            )
+            DropdownMenuItem(
+                text = { Text("Move folder to Drive") },
+                leadingIcon = { Icon(Icons.Outlined.CloudUpload, contentDescription = null) },
+                onClick = {
+                    menuOpen = false
+                    onMove()
+                },
             )
         }
-        FavoriteStar(favorite = favorite, name = folder.name, onToggle = onToggleFavorite)
-        IconButton(onClick = onMove) {
-            Icon(
-                Icons.Outlined.CloudUpload,
-                contentDescription = "Move the whole ${folder.name} folder to Drive",
-                tint = MaterialTheme.colorScheme.primary,
-            )
-        }
-    }
     }
 }
 
@@ -411,7 +467,13 @@ private val DAY_FORMAT: DateTimeFormatter = DateTimeFormatter.ofPattern("EEE, d 
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: () -> Unit) {
+fun FolderScreen(
+    vm: AppViewModel,
+    bucketId: Long,
+    onBack: () -> Unit,
+    onMove: () -> Unit,
+    onSendWhatsApp: (List<MediaItem>, String) -> Unit = { _, _ -> },
+) {
     val context = LocalContext.current
     val media by vm.media.collectAsStateWithLifecycle()
     val selection by vm.selection.collectAsStateWithLifecycle()
@@ -661,6 +723,22 @@ fun FolderScreen(vm: AppViewModel, bucketId: Long, onBack: () -> Unit, onMove: (
                                 )
                             }
                             Button(onClick = onMove, modifier = Modifier.weight(1f)) { Text("Move to Drive") }
+                        }
+                        OutlinedButton(
+                            onClick = { onSendWhatsApp(items.filter { it.id in barSelection }, title) },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .padding(top = Tokens.Small)
+                                .defaultMinSize(minHeight = Tokens.TouchTarget)
+                                .testTag("folder-send-whatsapp"),
+                        ) {
+                            Icon(
+                                Icons.AutoMirrored.Outlined.Send,
+                                contentDescription = null,
+                                modifier = Modifier.size(Tokens.IconSmall),
+                            )
+                            Spacer(Modifier.width(Tokens.Small))
+                            Text("Send to WhatsApp")
                         }
                     }
                 }
