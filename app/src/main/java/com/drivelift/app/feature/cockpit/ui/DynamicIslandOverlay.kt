@@ -21,6 +21,8 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -79,6 +81,8 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
@@ -319,6 +323,7 @@ fun CollapsedSplitIslandRow(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExpandedCockpitCard(
     slotState: CockpitSlotState,
@@ -342,6 +347,8 @@ fun ExpandedCockpitCard(
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
+    val stackCompact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
     var verticalDrag by remember { mutableFloatStateOf(0f) }
@@ -468,10 +475,10 @@ fun ExpandedCockpitCard(
 
         // Queue switcher & soft-dismiss restore strip when multiple or hidden items exist.
         if (slotState.visibleQueue.size > 1 || slotState.dismissedCount > 0) {
-            Row(
+            FlowRow(
                 modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
                 if (slotState.visibleQueue.size > 1) {
                     OutlinedButton(
@@ -480,7 +487,7 @@ fun ExpandedCockpitCard(
                             .defaultMinSize(minHeight = Tokens.TouchTarget)
                             .testTag("cockpit-cycle-next"),
                     ) {
-                        Text("Next activity (${slotState.visibleQueue.size})")
+                        Text("Next activity (${slotState.visibleQueue.size})", maxLines = 1)
                     }
                 }
                 if (slotState.dismissedCount > 0) {
@@ -496,7 +503,7 @@ fun ExpandedCockpitCard(
                             modifier = Modifier.size(Tokens.IconSmall),
                         )
                         Spacer(Modifier.width(Tokens.Tiny))
-                        Text("Restore (${slotState.dismissedCount})")
+                        Text("Restore (${slotState.dismissedCount})", maxLines = 1)
                     }
                 }
             }
@@ -516,17 +523,16 @@ fun ExpandedCockpitCard(
                         trackColor = GlassPalette.Dim,
                     )
                 }
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
                 ) {
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
                     ) {
-                        Text(if (primary.isDesktopDrop) "Open Drop" else "Open Transfers")
+                        Text(if (primary.isDesktopDrop) "Open Drop" else "Open Transfers", maxLines = 1)
                     }
                     if (primary.canStop) {
                         OutlinedButton(
@@ -540,24 +546,23 @@ fun ExpandedCockpitCard(
                         ) {
                             Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
                             Spacer(Modifier.width(Tokens.Tiny))
-                            Text("Stop")
+                            Text("Stop", maxLines = 1)
                         }
                     }
                 }
             }
 
             is CockpitLiveActivity.WhatsAppAlertActivity -> {
-                Row(
+                FlowRow(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
                 ) {
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
                     ) {
-                        Text("Open Chat")
+                        Text("Open Chat", maxLines = 1)
                     }
                     if (primary.canInlineReply) {
                         OutlinedButton(
@@ -568,7 +573,7 @@ fun ExpandedCockpitCard(
                         ) {
                             Icon(Icons.Outlined.Sms, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
                             Spacer(Modifier.width(Tokens.Tiny))
-                            Text(if (slotState.inlineReplyOpen) "Hide Reply" else "Reply")
+                            Text(if (slotState.inlineReplyOpen) "Hide Reply" else "Reply", maxLines = 1)
                         }
                     }
                 }
@@ -682,24 +687,8 @@ fun ExpandedCockpitCard(
                 .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
             verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
         ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-            ) {
-                IconButton(
-                    onClick = onToggleTorch,
-                    modifier = Modifier
-                        .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-torch-toggle"),
-                ) {
-                    Icon(
-                        imageVector = if (torchState.isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                        contentDescription = if (torchState.isOn) "Turn flashlight off" else "Turn flashlight on",
-                        tint = if (torchState.isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Column(Modifier.weight(1f)) {
+            val torchLabelBlock: @Composable (Modifier) -> Unit = { colMod ->
+                Column(colMod) {
                     Text(
                         text = if (torchState.sosActive) "Flashlight SOS" else if (torchState.isOn) "Flashlight on" else "Flashlight off",
                         style = MaterialTheme.typography.labelLarge,
@@ -716,6 +705,8 @@ fun ExpandedCockpitCard(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
+            }
+            val sosButton: @Composable () -> Unit = {
                 OutlinedButton(
                     onClick = onToggleTorchSos,
                     enabled = torchState.available,
@@ -725,7 +716,50 @@ fun ExpandedCockpitCard(
                 ) {
                     Icon(Icons.Outlined.Bolt, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
                     Spacer(Modifier.width(Tokens.Tiny))
-                    Text(if (torchState.sosActive) "SOS On" else "SOS")
+                    Text(if (torchState.sosActive) "SOS On" else "SOS", maxLines = 1)
+                }
+            }
+            if (stackCompact) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    IconButton(
+                        onClick = onToggleTorch,
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-torch-toggle"),
+                    ) {
+                        Icon(
+                            imageVector = if (torchState.isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                            contentDescription = if (torchState.isOn) "Turn flashlight off" else "Turn flashlight on",
+                            tint = if (torchState.isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    torchLabelBlock(Modifier.weight(1f))
+                }
+                sosButton()
+            } else {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    IconButton(
+                        onClick = onToggleTorch,
+                        modifier = Modifier
+                            .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-torch-toggle"),
+                    ) {
+                        Icon(
+                            imageVector = if (torchState.isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                            contentDescription = if (torchState.isOn) "Turn flashlight off" else "Turn flashlight on",
+                            tint = if (torchState.isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    torchLabelBlock(Modifier.weight(1f))
+                    sosButton()
                 }
             }
             if (torchState.supportsBrightnessSlider && torchState.maxLevel > 1) {

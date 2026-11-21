@@ -35,7 +35,6 @@ import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.FlashlightOff
 import androidx.compose.material.icons.outlined.FlashlightOn
-import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.Pin
 import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Button
@@ -750,7 +749,7 @@ private fun PermissionRow(
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
             ) {
                 Icon(
-                    imageVector = Icons.Outlined.NotificationsActive,
+                    imageVector = Icons.Outlined.Check,
                     contentDescription = null,
                     tint = MaterialTheme.colorScheme.onTertiaryContainer,
                     modifier = Modifier.size(Tokens.IconSmall),
