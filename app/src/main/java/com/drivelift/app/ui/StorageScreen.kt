@@ -19,6 +19,7 @@ import androidx.compose.foundation.selection.toggleable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
@@ -101,6 +102,7 @@ fun StorageScreen(
     vm: AppViewModel,
     onBack: () -> Unit,
     onOpenIntelligence: (() -> Unit)? = null,
+    onOpenWhatsAppQuickSender: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val media by vm.media.collectAsStateWithLifecycle()
@@ -152,6 +154,14 @@ fun StorageScreen(
                     }
                 },
                 actions = {
+                    if (onOpenWhatsAppQuickSender != null) {
+                        IconButton(
+                            onClick = onOpenWhatsAppQuickSender,
+                            modifier = Modifier.testTag("storage-whatsapp-entry"),
+                        ) {
+                            Icon(Icons.AutoMirrored.Outlined.Send, contentDescription = "Open WhatsApp Quick Sender")
+                        }
+                    }
                     if (onOpenIntelligence != null) {
                         IconButton(
                             onClick = onOpenIntelligence,

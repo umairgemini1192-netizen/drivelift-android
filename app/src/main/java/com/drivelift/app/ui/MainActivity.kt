@@ -183,12 +183,15 @@ fun AppRoot(vm: AppViewModel) {
     var showFavorites by rememberSaveable { mutableStateOf(false) }
     var showStorage by rememberSaveable { mutableStateOf(false) }
     var showStorageIntelligence by rememberSaveable { mutableStateOf(false) }
+    var showWhatsAppQuickSender by rememberSaveable { mutableStateOf(false) }
+    var whatsAppPayload by remember { mutableStateOf<com.drivelift.app.feature.whatsappsender.model.WhatsAppSendPayload?>(null) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
     val inFavorites = showFavorites && (tab == AppViewModel.TAB_PHONE || tab == AppViewModel.TAB_DRIVE)
     // Storage insights (issue #42) opens over the Phone tab; Back returns to the folder list.
     val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
     val inStorageIntelligence = tab == AppViewModel.TAB_PHONE && showStorageIntelligence && openBucket == NO_BUCKET && hasPermission
+    val inWhatsAppQuickSender = tab == AppViewModel.TAB_PHONE && showWhatsAppQuickSender && openBucket == NO_BUCKET && hasPermission
     val dropRunning by remember(context) { Graph.get(context).desktopDrop.controller.isServerRunning }.collectAsStateWithLifecycle()
 
     LaunchedEffect(selection) {
@@ -214,11 +217,12 @@ fun AppRoot(vm: AppViewModel) {
     // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
     // list. The predictive back gesture previews it (BackPreview.kt).
     val upBack = rememberUpBack(
-        enabled = !pickingDestination && (inSettings || inStorage || inStorageIntelligence || (inFolder && selection.isEmpty())),
+        enabled = !pickingDestination && (inSettings || inStorage || inStorageIntelligence || inWhatsAppQuickSender || (inFolder && selection.isEmpty())),
     ) {
         when {
             inSettings -> showSettings = false
             inStorageIntelligence -> showStorageIntelligence = false
+            inWhatsAppQuickSender -> showWhatsAppQuickSender = false
             inStorage -> showStorage = false
             inFolder -> openBucket = NO_BUCKET
         }
@@ -228,8 +232,8 @@ fun AppRoot(vm: AppViewModel) {
 
     // The level shown now and how it arrived: a step down into a folder or a screen opened over
     // a tab, a step back up, or a move across to another tab (Motion.kt).
-    val level = listOf(tab, openBucket, inSettings, inStorage, inStorageIntelligence, inFavorites, pickingDestination, hasPermission)
-    val depth = listOf(inFolder, inSettings, inStorage, inStorageIntelligence, inFavorites, pickingDestination).count { it }
+    val level = listOf(tab, openBucket, inSettings, inStorage, inStorageIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination, hasPermission)
+    val depth = listOf(inFolder, inSettings, inStorage, inStorageIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination).count { it }
     var lastLevel by remember { mutableStateOf(Pair(tab, depth)) }
     val levelStep = when {
         tab != lastLevel.first -> NavStep.ACROSS
@@ -254,7 +258,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !inWhatsAppQuickSender && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -339,6 +343,20 @@ fun AppRoot(vm: AppViewModel) {
                                     openBucket = NO_BUCKET
                                 },
                                 onMove = { showDestination = true },
+                                onSendWhatsApp = { selectedItems, folderTitle ->
+                                    whatsAppPayload = com.drivelift.app.feature.whatsappsender.model.WhatsAppSendPayload(
+                                        title = folderTitle,
+                                        items = com.drivelift.app.feature.whatsappsender.data.LocalMediaAdapter.fromMediaItems(selectedItems),
+                                        isFolderSource = false,
+                                        sourceBucketId = openBucket,
+                                        mediaItemIds = selectedItems.map { it.id },
+                                    )
+                                },
+                            )
+                            inWhatsAppQuickSender -> com.drivelift.app.feature.whatsappsender.ui.WhatsAppQuickSenderScreen(
+                                vm = vm,
+                                onBack = { showWhatsAppQuickSender = false },
+                                onOpenPayload = { whatsAppPayload = it },
                             )
                             inStorageIntelligence -> com.drivelift.app.feature.storageintelligence.ui.StorageIntelligenceHubScreen(
                                 appViewModel = vm,
@@ -358,6 +376,7 @@ fun AppRoot(vm: AppViewModel) {
                                 vm = vm,
                                 onBack = { showStorage = false },
                                 onOpenIntelligence = { showStorageIntelligence = true },
+                                onOpenWhatsAppQuickSender = { showWhatsAppQuickSender = true },
                             )
                             else -> PhoneScreen(
                                 vm = vm,
@@ -367,6 +386,16 @@ fun AppRoot(vm: AppViewModel) {
                                 onMoveFolder = {
                                     vm.selectFolder(it)
                                     showDestination = true
+                                },
+                                onOpenWhatsAppQuickSender = { showWhatsAppQuickSender = true },
+                                onSendFolderToWhatsApp = { bucketId ->
+                                    val folder = vm.folders.value.firstOrNull { it.bucketId == bucketId }
+                                    if (folder != null) {
+                                        whatsAppPayload = com.drivelift.app.feature.whatsappsender.data.LocalMediaAdapter.fromFolder(
+                                            folder,
+                                            vm.media.value,
+                                        )
+                                    }
                                 },
                             )
                         }
@@ -414,6 +443,49 @@ fun AppRoot(vm: AppViewModel) {
                 showDestination = false
                 openBucket = NO_BUCKET
                 vm.startTransfer(dest)
+            },
+        )
+    }
+
+    whatsAppPayload?.let { payload ->
+        com.drivelift.app.feature.whatsappsender.ui.WhatsAppSenderSheet(
+            payload = payload,
+            onDismiss = { whatsAppPayload = null },
+            onSent = { message ->
+                whatsAppPayload = null
+                vm.clearSelection()
+                vm.messages.tryEmit(message)
+            },
+            onHandoffToDrive = { mediaIds ->
+                whatsAppPayload = null
+                showWhatsAppQuickSender = false
+                vm.clearSelection()
+                vm.setSelected(mediaIds, true)
+                showDestination = true
+            },
+            onHandoffToDesktopDrop = { items ->
+                val dropItems = items.map { item ->
+                    com.drivelift.app.feature.desktopdrop.model.SharedDropItem(
+                        id = item.id,
+                        name = item.name,
+                        relativePath = item.relativeFolderPath,
+                        sizeBytes = item.sizeBytes,
+                        mimeType = item.mimeType,
+                        sourceUri = item.uriString,
+                        localFilePath = item.filePath,
+                        addedAtMs = Graph.get(context).clock(),
+                    )
+                }
+                Graph.get(context).desktopDrop.controller.addSharedMediaFiles(dropItems)
+                whatsAppPayload = null
+                showWhatsAppQuickSender = false
+                openBucket = NO_BUCKET
+                vm.clearSelection()
+                vm.tab.value = TAB_DESKTOP_DROP
+                vm.messages.tryEmit(
+                    if (dropItems.size == 1) "Added ${dropItems.first().name} to Desktop Drop"
+                    else "Added ${dropItems.size} files to Desktop Drop",
+                )
             },
         )
     }

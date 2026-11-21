@@ -96,6 +96,11 @@ class Graph(app: Application) {
         com.drivelift.app.feature.desktopdrop.di.DesktopDropModule(app, this)
     }
 
+    /** Self-contained WhatsApp Quick Sender module. */
+    val whatsAppSender: com.drivelift.app.feature.whatsappsender.di.WhatsAppSenderModule by lazy {
+        com.drivelift.app.feature.whatsappsender.di.WhatsAppSenderModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
