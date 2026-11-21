@@ -43,6 +43,7 @@ import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.PieChart
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.ManageSearch
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -114,6 +115,8 @@ fun PhoneScreen(
     onMoveFolder: (Long) -> Unit,
     onOpenFavorites: () -> Unit = {},
     onOpenStorage: () -> Unit = {},
+    /** Offline OCR search and Smart rules; the row is hidden when null. */
+    onOpenIntelligence: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val favoriteCounts by vm.favoriteCounts.collectAsStateWithLifecycle()
@@ -207,6 +210,12 @@ fun PhoneScreen(
                 onMove = { onMoveFolder(folder.bucketId) },
             )
         }
+        // After the folders, so the folder list keeps its place on screen.
+        if (onOpenIntelligence != null) {
+            item(key = "intelligence") {
+                IntelligenceEntryRow(onOpenIntelligence, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Small))
+            }
+        }
     }
     // Phone files waiting to be moved: the list is not a folder, so the pill asks to open one.
     PhoneMovePillBar(vm = vm, visible = true, hereBucketId = null, hereName = "", enabled = true, onMoveHere = {})
@@ -260,6 +269,27 @@ private fun StorageEntryRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
                 Text("Storage", style = MaterialTheme.typography.titleSmall)
                 Text(
                     "Sizes, largest files, duplicates",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+@Composable
+private fun IntelligenceEntryRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
+    GlassPanel(modifier = modifier.fillMaxWidth().testTag("intelligence-entry"), onClick = onOpen, onClickLabel = "Open search and rules") {
+        Row(
+            Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.AutoMirrored.Outlined.ManageSearch, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f).padding(start = Tokens.Medium)) {
+                Text("Search and rules", style = MaterialTheme.typography.titleSmall)
+                Text(
+                    "Find text in photos and PDFs offline, sort files automatically",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )

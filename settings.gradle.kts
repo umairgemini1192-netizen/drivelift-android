@@ -11,6 +11,8 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Tesseract4Android (offline Arabic and Urdu OCR) is published on JitPack only.
+        maven { url = uri("https://jitpack.io") }
     }
 }
 
