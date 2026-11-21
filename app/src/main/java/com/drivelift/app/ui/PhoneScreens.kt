@@ -168,11 +168,6 @@ fun PhoneScreen(
         item(key = "storage") {
             StorageEntryRow(onOpenStorage, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny))
         }
-        if (onOpenIntelligence != null) {
-            item(key = "intelligence") {
-                IntelligenceEntryRow(onOpenIntelligence, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny))
-            }
-        }
         if (MediaAccess.isPartial(context)) {
             item(key = "partial") {
                 Text(
@@ -214,6 +209,12 @@ fun PhoneScreen(
                 onOpen = { onOpen(folder.bucketId) },
                 onMove = { onMoveFolder(folder.bucketId) },
             )
+        }
+        // After the folders, so the folder list keeps its place on screen.
+        if (onOpenIntelligence != null) {
+            item(key = "intelligence") {
+                IntelligenceEntryRow(onOpenIntelligence, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Small))
+            }
         }
     }
     // Phone files waiting to be moved: the list is not a folder, so the pill asks to open one.

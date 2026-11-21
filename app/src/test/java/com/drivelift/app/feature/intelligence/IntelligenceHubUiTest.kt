@@ -133,9 +133,9 @@ class IntelligenceHubUiTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             pump(2)
-            if (compose.onAllNodesWithTag(tag).fetchSemanticsNodes().isNotEmpty()) return
+            if (compose.onAllNodesWithTag(tag, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()) return
         }
-        compose.onNodeWithTag(tag).assertExists()
+        compose.onAllNodesWithTag(tag, useUnmergedTree = true).onFirst().assertExists()
     }
 
     private fun launch(variant: Variant, block: () -> Unit) {
@@ -176,7 +176,7 @@ class IntelligenceHubUiTest {
                 waitForText("2 results")
                 compose.onNodeWithTag("intel-understood").assertExists()
                 waitForTag("intel-snippet-rtl")
-                compose.onAllNodesWithTag("intel-snippet-rtl").onFirst().assertExists()
+                compose.onAllNodesWithTag("intel-snippet-rtl", useUnmergedTree = true).onFirst().assertExists()
                 compose.onNodeWithText("SYNTH_DUA_CARD.jpg").assertExists()
                 compose.onNodeWithTag("intel-search-list").performScrollToKey("count")
                 pump(6)
@@ -196,6 +196,9 @@ class IntelligenceHubUiTest {
                 compose.onNodeWithTag("intel-rules-list").performScrollToKey("log-header")
                 pump(4)
                 compose.onNodeWithTag("intel-log").performClick()
+                pump(6)
+                // Log rows sit below the fold; ids 1 and 2 are the seeded entries.
+                compose.onNodeWithTag("intel-rules-list").performScrollToKey("log-1")
                 waitForText("SYNTH_CLIP_4K.mp4")
                 compose.onNodeWithTag("intel-rules-list").performScrollToIndex(0)
                 pump(6)
