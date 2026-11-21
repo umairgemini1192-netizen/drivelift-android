@@ -13,8 +13,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 33
-        versionName = "1.0.0-preview.34"
+        versionCode = 34
+        versionName = "1.0.0-preview.35"
     }
 
     signingConfigs {
@@ -47,6 +47,17 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    packaging {
+        resources {
+            excludes += setOf(
+                "META-INF/INDEX.LIST",
+                "META-INF/io.netty.versions.properties",
+                "META-INF/AL2.0",
+                "META-INF/LGPL2.1",
+            )
+        }
     }
 
     testOptions {
@@ -101,6 +112,14 @@ dependencies {
 
     implementation("androidx.media3:media3-exoplayer:1.4.1")
     implementation("androidx.media3:media3-datasource-okhttp:1.4.1")
+
+    implementation("io.ktor:ktor-server-core:3.0.3")
+    implementation("io.ktor:ktor-server-cio:3.0.3")
+    implementation("io.ktor:ktor-server-partial-content:3.0.3")
+    implementation("io.ktor:ktor-server-auto-head-response:3.0.3")
+    implementation("io.ktor:ktor-server-websockets:3.0.3")
+    implementation("com.google.zxing:core:3.5.3")
+    implementation("androidx.documentfile:documentfile:1.0.1")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation(composeBom)

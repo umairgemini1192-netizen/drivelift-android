@@ -25,8 +25,10 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Cloud
+import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.PhoneAndroid
 import androidx.compose.material.icons.outlined.SwapVert
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.Button
@@ -128,8 +130,14 @@ class MainActivity : FragmentActivity() {
     }
 
     private fun routeIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra(Notifications.EXTRA_OPEN_TRANSFERS, false) == true) {
-            vm.tab.value = AppViewModel.TAB_TRANSFERS
+        when {
+            intent?.getBooleanExtra(Notifications.EXTRA_OPEN_TRANSFERS, false) == true ->
+                vm.tab.value = AppViewModel.TAB_TRANSFERS
+            intent?.getBooleanExtra(
+                com.drivelift.app.feature.desktopdrop.service.DesktopDropService.EXTRA_OPEN_DESKTOP_DROP,
+                false,
+            ) == true ->
+                vm.tab.value = TAB_DESKTOP_DROP
         }
     }
 }
@@ -177,10 +185,11 @@ fun AppRoot(vm: AppViewModel) {
     var showStorageIntelligence by rememberSaveable { mutableStateOf(false) }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings
-    val inFavorites = showFavorites && tab != AppViewModel.TAB_TRANSFERS
+    val inFavorites = showFavorites && (tab == AppViewModel.TAB_PHONE || tab == AppViewModel.TAB_DRIVE)
     // Storage insights (issue #42) opens over the Phone tab; Back returns to the folder list.
     val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
     val inStorageIntelligence = tab == AppViewModel.TAB_PHONE && showStorageIntelligence && openBucket == NO_BUCKET && hasPermission
+    val dropRunning by remember(context) { Graph.get(context).desktopDrop.controller.isServerRunning }.collectAsStateWithLifecycle()
 
     LaunchedEffect(selection) {
         if (!selectionSynced) {
@@ -197,9 +206,10 @@ fun AppRoot(vm: AppViewModel) {
         }
     }
 
-    // Favorites belongs to the Phone and Drive tabs; leaving for Transfers (for example from a
-    // notification) closes it.
-    LaunchedEffect(tab) { if (tab == AppViewModel.TAB_TRANSFERS) showFavorites = false }
+    // Favorites belongs to the Phone and Drive tabs; leaving for Transfers or Drop closes it.
+    LaunchedEffect(tab) {
+        if (tab == AppViewModel.TAB_TRANSFERS || tab == TAB_DESKTOP_DROP) showFavorites = false
+    }
 
     // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
     // list. The predictive back gesture previews it (BackPreview.kt).
@@ -256,7 +266,17 @@ fun AppRoot(vm: AppViewModel) {
                                 selected = tab == AppViewModel.TAB_DRIVE,
                                 onClick = { vm.tab.value = AppViewModel.TAB_DRIVE },
                                 icon = { Icon(Icons.Outlined.Cloud, contentDescription = null) },
-                                label = { Text("Drive") },
+                                label = { Text("Drive", maxLines = 1, overflow = TextOverflow.Ellipsis) },
+                            )
+                            NavigationBarItem(
+                                selected = tab == TAB_DESKTOP_DROP,
+                                onClick = { vm.tab.value = TAB_DESKTOP_DROP },
+                                icon = {
+                                    BadgedBox(badge = { if (dropRunning) Badge() }) {
+                                        Icon(Icons.Outlined.Devices, contentDescription = null)
+                                    }
+                                },
+                                label = { Text("Drop", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_TRANSFERS,
@@ -266,7 +286,7 @@ fun AppRoot(vm: AppViewModel) {
                                         Icon(Icons.Outlined.SwapVert, contentDescription = null)
                                     }
                                 },
-                                label = { Text("Transfers") },
+                                label = { Text("Transfers", maxLines = 1, overflow = TextOverflow.Ellipsis) },
                             )
                         }
                     }
@@ -357,6 +377,9 @@ fun AppRoot(vm: AppViewModel) {
                             onViewingFileChange = { viewingDriveFile = it },
                             onOpenFavorites = { showFavorites = true },
                         )
+                        tab == TAB_DESKTOP_DROP -> com.drivelift.app.feature.desktopdrop.ui.DesktopDropScreen(
+                            appViewModel = vm,
+                        )
                         else -> TransfersScreen(vm, onOpenSettings = { showSettings = true })
                     }
                 }
@@ -397,6 +420,7 @@ fun AppRoot(vm: AppViewModel) {
 }
 
 private const val NO_BUCKET = Long.MIN_VALUE
+private const val TAB_DESKTOP_DROP = 3
 
 @Composable
 private fun PermissionGate(onGrant: () -> Unit) {

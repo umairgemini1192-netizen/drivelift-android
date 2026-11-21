@@ -91,6 +91,11 @@ class Graph(app: Application) {
         com.drivelift.app.feature.storageintelligence.di.StorageIntelligenceModule(app, this)
     }
 
+    /** Self-contained Zero-Config Peer & Desktop Drop module (LAN + Hotspot file drop). */
+    val desktopDrop: com.drivelift.app.feature.desktopdrop.di.DesktopDropModule by lazy {
+        com.drivelift.app.feature.desktopdrop.di.DesktopDropModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
