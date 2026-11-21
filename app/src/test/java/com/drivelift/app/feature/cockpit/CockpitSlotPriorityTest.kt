@@ -4,7 +4,9 @@ import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
+import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -142,5 +144,33 @@ class CockpitSlotPriorityTest {
         state = coordinator.slotState.value
         assertEquals(whatsappActivity.id, state.primary.id)
         assertNull(state.secondary)
+    }
+
+    @Test
+    fun disablingDynamicIslandBlocksOverlayMountOnIncomingNotifications() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(whatsappActivity)
+
+        assertFalse(
+            CockpitOverlayService.shouldMountFallbackOverlay(
+                masterEnabled = false,
+                hasOverlayPermission = true,
+                accessibilityOverlayActive = false,
+            ),
+        )
+        assertFalse(
+            CockpitOverlayService.shouldMountFallbackOverlay(
+                masterEnabled = true,
+                hasOverlayPermission = true,
+                accessibilityOverlayActive = true,
+            ),
+        )
+        assertTrue(
+            CockpitOverlayService.shouldMountFallbackOverlay(
+                masterEnabled = true,
+                hasOverlayPermission = true,
+                accessibilityOverlayActive = false,
+            ),
+        )
     }
 }

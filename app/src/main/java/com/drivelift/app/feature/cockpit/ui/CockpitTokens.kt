@@ -18,6 +18,8 @@ object CockpitTokens {
     val PreviewBackdropHeight = 96.dp
     val StatusDot = 8.dp
     val AppShortcutTile = 44.dp
+    val WidgetBadgeIconSize = 14.dp
+    val WidgetAppIconSize = 16.dp
     val IslandBadgeShape = RoundedCornerShape(18.dp)
     val ExpandedCardShape = RoundedCornerShape(28.dp)
     val WidgetCardShape = RoundedCornerShape(24.dp)

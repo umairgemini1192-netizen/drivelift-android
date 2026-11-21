@@ -2,6 +2,7 @@
 <resources>
     <!-- Colours matched to ui/Theme.kt Night & GlassPalette tokens. -->
     <color name="cockpit_sky_top">#FF070A1E</color>
+    <color name="cockpit_sky_mid">#FF15114A</color>
     <color name="cockpit_surface">#FF0D1030</color>
     <color name="cockpit_surface_container">#FF191C4A</color>
     <color name="cockpit_surface_container_high">#FF202358</color>
@@ -13,4 +14,12 @@
     <color name="cockpit_error">#FFFF6482</color>
     <color name="cockpit_outline_variant">#FF373A72</color>
     <color name="cockpit_scrim">#FF000000</color>
+
+    <!-- Translucent glass strokes and tinted pill fills matching GlassPalette. -->
+    <color name="cockpit_glass_card_stroke">#52FFFFFF</color>
+    <color name="cockpit_glass_well_fill">#FF151842</color>
+    <color name="cockpit_glass_well_stroke">#38FFFFFF</color>
+    <color name="cockpit_pill_cyan_fill">#FF123E5C</color>
+    <color name="cockpit_pill_coral_fill">#FF5A2A22</color>
+    <color name="cockpit_pill_violet_fill">#FF2F2876</color>
 </resources>

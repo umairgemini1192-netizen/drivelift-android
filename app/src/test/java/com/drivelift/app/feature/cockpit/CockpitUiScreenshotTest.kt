@@ -1,5 +1,6 @@
 package com.drivelift.app.feature.cockpit
 
+import android.content.Context
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -42,6 +43,7 @@ import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
+import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
 import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
 import com.drivelift.app.feature.cockpit.ui.CockpitTokens
@@ -51,8 +53,12 @@ import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
+import com.drivelift.app.ui.appVersionLabel
 import com.github.takahirom.roborazzi.captureRoboImage
+import kotlinx.coroutines.runBlocking
 import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -365,6 +371,8 @@ class CockpitUiScreenshotTest {
                     hasOverlay = true,
                     hasNotifications = false,
                     hasBatteryExemption = true,
+                    hasAccessibilityOverlay = false,
+                    onGrantAccessibilityOverlay = {},
                     launchableApps = syntheticPinned,
                     pinnedApps = syntheticPinned,
                     onBack = {},
@@ -384,6 +392,9 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithTag("cockpit-setup-screen").assertIsDisplayed()
                 compose.onNodeWithText("Cockpit Hub").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-master-toggle").assertHeightIsAtLeast(Tokens.TouchTarget)
+                if (compose.onAllNodesWithTag("cockpit-perm-accessibility").fetchSemanticsNodes().isNotEmpty()) {
+                    compose.onNodeWithTag("cockpit-perm-accessibility").assertHeightIsAtLeast(Tokens.TouchTarget)
+                }
                 if (compose.onAllNodesWithTag("cockpit-perm-notifications").fetchSemanticsNodes().isNotEmpty()) {
                     compose.onNodeWithTag("cockpit-perm-notifications").assertHeightIsAtLeast(Tokens.TouchTarget)
                 }
@@ -528,6 +539,50 @@ class CockpitUiScreenshotTest {
                 ).fetchSemanticsNodes().isEmpty(),
             )
         }
+    }
+
+    @Test
+    fun persistedIslandDisabledBlocksNotificationRemountAndStampsBuildVersion() {
+        val cockpit = Graph.get(app).cockpit
+        runBlocking {
+            cockpit.prefsRepo.setMasterEnabled(true)
+            cockpit.prefsRepo.setMasterEnabled(false)
+        }
+
+        assertFalse(cockpit.prefsRepo.state.value.masterEnabled)
+        assertFalse(cockpit.prefsRepo.isMasterEnabledMirrored())
+        assertFalse(
+            app.getSharedPreferences("cockpit_prefs_sync", Context.MODE_PRIVATE)
+                .getBoolean("master_enabled", true),
+        )
+        runBlocking {
+            assertFalse(cockpit.prefsRepo.readCurrentMasterEnabled())
+        }
+
+        cockpit.coordinator.upsertActivity(
+            CockpitLiveActivity.WhatsAppAlertActivity(
+                id = "wa_blocked",
+                senderName = "Amina",
+                messageSnippet = "Arrived",
+                notificationKey = "k_blocked",
+            ),
+        )
+        assertFalse(
+            CockpitOverlayService.shouldMountFallbackOverlay(
+                masterEnabled = cockpit.prefsRepo.isMasterEnabledMirrored(),
+                hasOverlayPermission = true,
+                accessibilityOverlayActive = false,
+            ),
+        )
+
+        assertEquals(
+            "DriveLift 1.0.0-preview.37 (build 36)",
+            appVersionLabel(app, buildStamp = ""),
+        )
+        assertEquals(
+            "DriveLift 1.0.0-preview.37 (build 36 \u00B7 PR #78 @ a1d8b31)",
+            appVersionLabel(app, buildStamp = "PR #78 @ a1d8b31"),
+        )
     }
 
     companion object {

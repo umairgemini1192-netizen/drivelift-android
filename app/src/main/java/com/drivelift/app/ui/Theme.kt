@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.drivelift.app.BuildConfig
 
 /*
  * The single source of colour for the app, and the only file that holds raw colour values.
@@ -165,7 +166,7 @@ fun formatDuration(ms: Long): String {
 }
 
 /** Human-readable app version and numeric build code for diagnostics and preview verification. */
-fun appVersionLabel(context: Context): String {
+fun appVersionLabel(context: Context, buildStamp: String = BuildConfig.BUILD_STAMP): String {
     val info = runCatching {
         if (Build.VERSION.SDK_INT >= 33) {
             context.packageManager.getPackageInfo(
@@ -179,5 +180,7 @@ fun appVersionLabel(context: Context): String {
     }.getOrNull()
     val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.10"
     val code = info?.longVersionCode ?: 9L
-    return "DriveLift $name (build $code)"
+    val cleanStamp = buildStamp.trim()
+    val suffix = if (cleanStamp.isNotEmpty()) " \u00B7 $cleanStamp" else ""
+    return "DriveLift $name (build $code$suffix)"
 }

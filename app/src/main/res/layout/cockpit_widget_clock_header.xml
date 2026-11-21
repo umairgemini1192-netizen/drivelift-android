@@ -9,9 +9,11 @@
         android:layout_width="wrap_content"
         android:layout_height="wrap_content"
         android:fontFeatureSettings="tnum"
-        android:format12Hour="h:mm a"
+        android:format12Hour="hh:mm a"
         android:format24Hour="HH:mm"
         android:includeFontPadding="false"
+        android:singleLine="true"
+        android:textAllCaps="true"
         android:textColor="@color/cockpit_on_surface"
         android:textSize="26sp"
         android:textStyle="bold" />
@@ -24,6 +26,7 @@
         android:format12Hour="EEE, MMM d"
         android:format24Hour="EEE, MMM d"
         android:includeFontPadding="false"
+        android:singleLine="true"
         android:textColor="@color/cockpit_on_surface_variant"
         android:textSize="12sp" />
 </LinearLayout>

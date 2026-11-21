@@ -86,4 +86,24 @@ class NextAlarmFormatterTest {
         assertEquals("Rings in 06:40:45", t0.countdownText)
         assertEquals("Rings in 06:40:44", t1.countdownText)
     }
+
+    @Test
+    fun chronometerBaseMatchesElapsedRealtimePlusRemainingTriggerDelta() {
+        val nowMs = 1_795_280_000_000L
+        val elapsedMs = 450_000L
+        val deltaMs = 5_400_000L // 1h 30m
+        val triggerMs = nowMs + deltaMs
+
+        val model = NextAlarmFormatter.formatNextAlarm(
+            triggerAtMillis = triggerMs,
+            nowMillis = nowMs,
+            elapsedRealtimeMillis = elapsedMs,
+            is24Hour = false,
+            zoneId = zone,
+            locale = Locale.US,
+        )
+
+        assertEquals(AlarmCountdownMode.CHRONOMETER_UNDER_24H, model.countdownMode)
+        assertEquals(elapsedMs + deltaMs, model.chronometerBaseElapsedMs)
+    }
 }

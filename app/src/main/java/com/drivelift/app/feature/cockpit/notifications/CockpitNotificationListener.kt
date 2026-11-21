@@ -57,7 +57,11 @@ class CockpitNotificationListener : NotificationListenerService() {
     private fun handlePosted(sbn: StatusBarNotification) {
         val snapshot = LiveNotificationParser.fromStatusBarNotification(sbn)
         val parsed = LiveNotificationParser.parse(snapshot)
-        val coordinator = runCatching { Graph.get(applicationContext).cockpit.coordinator }.getOrNull() ?: return
+        val cockpit = runCatching { Graph.get(applicationContext).cockpit }.getOrNull() ?: return
+        val coordinator = cockpit.coordinator
+        if (!cockpit.prefsRepo.isMasterEnabledMirrored()) {
+            coordinator.setExpanded(false)
+        }
         if (parsed == null) {
             cachedActions.remove(sbn.key)
             coordinator.removeByNotificationKey(sbn.key)
