@@ -45,7 +45,8 @@ import io.ktor.server.routing.routing
 import io.ktor.server.websocket.WebSockets
 import io.ktor.server.websocket.webSocket
 import io.ktor.utils.io.ByteReadChannel
-import io.ktor.utils.io.jvm.javaio.toByteReadChannel
+import io.ktor.utils.io.writeFully
+import io.ktor.utils.io.writer
 import io.ktor.websocket.CloseReason
 import io.ktor.websocket.Frame
 import io.ktor.websocket.close
@@ -54,16 +55,19 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.channels.ClosedReceiveChannelException
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
-import java.io.BufferedInputStream
-import java.io.FilterInputStream
-import java.io.InputStream
+import kotlinx.coroutines.selects.select
+import kotlinx.coroutines.withContext
+import java.io.FileInputStream
 import java.net.BindException
+import java.nio.ByteBuffer
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicLong
 import kotlin.coroutines.cancellation.CancellationException
 
 /**
@@ -82,10 +86,12 @@ class DesktopDropServerEngine(
     private var serverScope: CoroutineScope? = null
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
 
-    private val sharedItems = ConcurrentHashMap<String, SharedDropItem>()
+    @Volatile
+    private var sharedItemsMap: Map<String, SharedDropItem> = emptyMap()
     private val activeTransfers = ConcurrentHashMap<String, DropTransferProgress>()
-    private val speedSamples = ConcurrentHashMap<String, SpeedWindow>()
-    private val telemetryEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 32)
+    private val progressTrackers = ConcurrentHashMap<String, TransferProgressTracker>()
+    private val wsClients = ConcurrentHashMap.newKeySet<WsClient>()
+    private val lastProgressEmitMs = AtomicLong(Long.MIN_VALUE)
     private var speedTickerJob: Job? = null
 
     @Volatile
@@ -100,20 +106,40 @@ class DesktopDropServerEngine(
     var lastActivityMs: Long = clock()
         private set
 
-    private data class SpeedWindow(
+    private sealed interface WsFrameEvent {
+        data object Telemetry : WsFrameEvent
+        data class QueueUpdated(val sharedFilesCount: Int) : WsFrameEvent
+    }
+
+    private class WsClient {
+        val queueChannel = Channel<Int>(Channel.CONFLATED)
+        val telemetryChannel = Channel<Unit>(Channel.CONFLATED)
+
+        fun close() {
+            queueChannel.close()
+            telemetryChannel.close()
+        }
+    }
+
+    private class TransferProgressTracker(
+        @Volatile var totalBytes: Long,
         var lastWindowStartMs: Long,
-        var bytesInWindow: Long,
-        var currentSpeedBps: Long,
+        var lastEmitMs: Long,
+        var bytesInWindow: Long = 0L,
+        var transferredBytes: Long = 0L,
+        var currentSpeedBps: Long = 0L,
     )
 
     fun setSharedItems(items: List<SharedDropItem>) {
-        sharedItems.clear()
-        items.forEach { sharedItems[it.id] = it }
+        val next = LinkedHashMap<String, SharedDropItem>(items.size)
+        items.forEach { next[it.id] = it }
+        sharedItemsMap = next
+        broadcastQueueUpdated(next.size)
         notifyChanged()
     }
 
     fun sharedItemsSnapshot(): List<SharedDropItem> =
-        sharedItems.values.sortedBy { it.addedAtMs }
+        sharedItemsMap.values.sortedBy { it.addedAtMs }
 
     fun transfersSnapshot(): List<DropTransferProgress> =
         activeTransfers.values.sortedByDescending { it.updatedAtMs }
@@ -131,12 +157,13 @@ class DesktopDropServerEngine(
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
         serverScope = scope
         lastActivityMs = clock()
+        lastProgressEmitMs.set(Long.MIN_VALUE)
 
         val candidates = buildPortCandidates(preferredPort)
         var startedServer: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
         var lastError: Throwable? = null
         for (candidate in candidates) {
-            val attempt = createEmbeddedServer(bindHost, candidate)
+            val attempt = createEmbeddedServer(bindHost, candidate, scope)
             try {
                 attempt.start(wait = false)
                 startedServer = attempt
@@ -171,6 +198,8 @@ class DesktopDropServerEngine(
     fun stop() {
         speedTickerJob?.cancel()
         speedTickerJob = null
+        wsClients.forEach { it.close() }
+        wsClients.clear()
         val existing = server
         server = null
         boundPort = null
@@ -182,8 +211,20 @@ class DesktopDropServerEngine(
     }
 
     fun notifyChanged() {
-        telemetryEvents.tryEmit(Unit)
+        broadcastTelemetry()
         onStateChanged()
+    }
+
+    private fun broadcastQueueUpdated(sharedCount: Int) {
+        for (client in wsClients) {
+            client.queueChannel.trySend(sharedCount)
+        }
+    }
+
+    private fun broadcastTelemetry() {
+        for (client in wsClients) {
+            client.telemetryChannel.trySend(Unit)
+        }
     }
 
     fun touchActivity() {
@@ -212,6 +253,7 @@ class DesktopDropServerEngine(
     private fun createEmbeddedServer(
         bindHost: String,
         port: Int,
+        scope: CoroutineScope,
     ): EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration> =
         embeddedServer(CIO, port = port, host = bindHost) {
             install(AutoHeadResponse)
@@ -313,6 +355,7 @@ class DesktopDropServerEngine(
                             append('}')
                         }
                     }
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
                     call.respondText(
                         """{"files":[$itemsJson],"destinationLabel":${DropJson.quoted(destinationLabelProvider())}}""",
                         ContentType.Application.Json,
@@ -322,34 +365,41 @@ class DesktopDropServerEngine(
                 get("/api/download/{fileId}") {
                     requireAuthorizedPeer(call) ?: return@get
                     val fileId = call.parameters["fileId"].orEmpty()
-                    val item = sharedItems[fileId]
+                    val item = sharedItemsMap[fileId]
                     if (item == null) {
                         call.respondText("""{"error":"File not found"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
                         return@get
                     }
                     val safeName = DropPathSanitizer.sanitizeFilename(item.name)
                     val isHead = call.request.httpMethod == HttpMethod.Head
-                    val transferId = if (isHead) null else registerTransferStart(
-                        filename = item.name,
-                        relativePath = item.relativePath,
-                        direction = TransferDirection.PHONE_TO_PC,
-                        totalBytes = item.sizeBytes,
-                    )
                     val content = SharedItemRangeContent(
+                        scope = scope,
                         item = item,
                         safeName = safeName,
                         source = itemSource,
-                        onBytesSent = { delta ->
-                            if (transferId != null && delta > 0L) {
-                                addTransferProgress(transferId, delta)
+                        onStreamStarted = { expectedBytes ->
+                            if (isHead) {
+                                null
+                            } else {
+                                registerTransferStart(
+                                    filename = item.name,
+                                    relativePath = item.relativePath,
+                                    direction = TransferDirection.PHONE_TO_PC,
+                                    totalBytes = if (expectedBytes > 0L) expectedBytes else item.sizeBytes,
+                                )
                             }
                         },
-                        onStreamFinished = { ok ->
+                        onBytesSent = { transferId, delta ->
+                            if (delta > 0L) {
+                                recordTransferProgress(transferId, delta)
+                            }
+                        },
+                        onStreamFinished = { transferId, ok, cancelled, bytesSent ->
                             if (transferId != null) {
-                                if (ok) {
-                                    markTransferCompleted(transferId)
-                                } else {
-                                    markTransferStatus(transferId, DropTransferStatus.FAILED, "Download interrupted")
+                                when {
+                                    ok -> markTransferCompleted(transferId, actualSizeOverride = bytesSent)
+                                    cancelled -> markTransferStatus(transferId, DropTransferStatus.CANCELLED, "Download cancelled")
+                                    else -> markTransferStatus(transferId, DropTransferStatus.FAILED, "Download interrupted")
                                 }
                             }
                         },
@@ -385,15 +435,17 @@ class DesktopDropServerEngine(
                     )
                     try {
                         call.respondOutputStream(ContentType.Application.Zip) {
-                            StreamingZipWriter.writeStoredZip(
-                                items = selected,
-                                source = itemSource,
-                                outputStream = this,
-                            ) { delta ->
-                                addTransferProgress(transferId, delta)
+                            withContext(Dispatchers.IO) {
+                                StreamingZipWriter.writeStoredZip(
+                                    items = selected,
+                                    source = itemSource,
+                                    outputStream = this@respondOutputStream,
+                                ) { delta ->
+                                    recordTransferProgress(transferId, delta)
+                                }
                             }
                         }
-                        markTransferCompleted(transferId, actualSizeOverride = activeTransfers[transferId]?.transferredBytes)
+                        markTransferCompleted(transferId)
                     } catch (e: CancellationException) {
                         markTransferStatus(transferId, DropTransferStatus.CANCELLED, "Cancelled")
                         throw e
@@ -445,7 +497,7 @@ class DesktopDropServerEngine(
                     }
                     val result = try {
                         uploadStore.appendChunk(uploadId, offsetHeader, call.receiveChannel()) { received, delta ->
-                            setUploadProgress(uploadId, received, delta)
+                            recordTransferProgress(uploadId, deltaBytes = delta, absoluteTransferredBytes = received)
                         }
                     } catch (e: IllegalArgumentException) {
                         call.respondText("""{"error":${DropJson.quoted(e.message ?: "Bad chunk")}}""", ContentType.Application.Json, HttpStatusCode.BadRequest)
@@ -511,24 +563,42 @@ class DesktopDropServerEngine(
                         close(CloseReason(CloseReason.Codes.VIOLATED_POLICY, "Unauthorized"))
                         return@webSocket
                     }
-                    send(Frame.Text(buildTelemetryJson()))
-                    val pushJob = launch {
-                        telemetryEvents.collect {
-                            val livePeer = authManager.verifyCookie(cookieVal)
-                            if (livePeer == null) {
-                                close(CloseReason(CloseReason.Codes.NORMAL, "Peer disconnected"))
-                                return@collect
-                            }
-                            runCatching { send(Frame.Text(buildTelemetryJson())) }
-                        }
-                    }
+                    val client = WsClient()
+                    wsClients.add(client)
+                    var pushJob: Job? = null
                     try {
+                        send(Frame.Text(buildTelemetryJson()))
+                        pushJob = launch {
+                            try {
+                                while (isActive) {
+                                    val event: WsFrameEvent = select {
+                                        client.queueChannel.onReceive { count -> WsFrameEvent.QueueUpdated(count) }
+                                        client.telemetryChannel.onReceive { WsFrameEvent.Telemetry }
+                                    }
+                                    val livePeer = authManager.verifyCookie(cookieVal)
+                                    if (livePeer == null) {
+                                        close(CloseReason(CloseReason.Codes.NORMAL, "Peer disconnected"))
+                                        break
+                                    }
+                                    val payload = when (event) {
+                                        WsFrameEvent.Telemetry -> buildTelemetryJson()
+                                        is WsFrameEvent.QueueUpdated ->
+                                            """{"type":"queue_updated","sharedFilesCount":${event.sharedFilesCount}}"""
+                                    }
+                                    runCatching { send(Frame.Text(payload)) }
+                                }
+                            } catch (_: ClosedReceiveChannelException) {
+                                // Channel closed when server stops or session disconnects.
+                            }
+                        }
                         for (frame in incoming) {
                             touchActivity()
                             if (frame is Frame.Close) break
                         }
                     } finally {
-                        pushJob.cancel()
+                        pushJob?.cancel()
+                        wsClients.remove(client)
+                        client.close()
                     }
                 }
             }
@@ -560,7 +630,7 @@ class DesktopDropServerEngine(
         )
     }
 
-    private fun registerTransferStart(
+    internal fun registerTransferStart(
         filename: String,
         relativePath: String,
         direction: TransferDirection,
@@ -568,7 +638,11 @@ class DesktopDropServerEngine(
     ): String {
         val id = UUID.randomUUID().toString()
         val now = clock()
-        speedSamples[id] = SpeedWindow(now, 0L, 0L)
+        progressTrackers[id] = TransferProgressTracker(
+            totalBytes = totalBytes,
+            lastWindowStartMs = now,
+            lastEmitMs = now,
+        )
         activeTransfers[id] = DropTransferProgress(
             transferId = id,
             filename = filename,
@@ -593,7 +667,16 @@ class DesktopDropServerEngine(
         receivedBytes: Long,
     ) {
         val now = clock()
-        speedSamples.putIfAbsent(uploadId, SpeedWindow(now, 0L, 0L))
+        progressTrackers.compute(uploadId) { _, existing ->
+            (existing ?: TransferProgressTracker(totalSize, now, now, transferredBytes = receivedBytes)).apply {
+                totalBytes = totalSize
+                transferredBytes = maxOf(transferredBytes, receivedBytes)
+                lastWindowStartMs = now
+                lastEmitMs = now
+                bytesInWindow = 0L
+                currentSpeedBps = 0L
+            }
+        }
         activeTransfers[uploadId] = DropTransferProgress(
             transferId = uploadId,
             filename = filename,
@@ -609,45 +692,68 @@ class DesktopDropServerEngine(
         notifyChanged()
     }
 
-    private fun addTransferProgress(transferId: String, delta: Long) {
-        val existing = activeTransfers[transferId] ?: return
-        val newTotal = existing.transferredBytes + delta
-        updateTransferBytes(transferId, existing, newTotal, delta)
-    }
-
-    private fun setUploadProgress(uploadId: String, totalReceived: Long, delta: Long) {
-        val existing = activeTransfers[uploadId] ?: return
-        updateTransferBytes(uploadId, existing, totalReceived, delta)
-    }
-
-    private fun updateTransferBytes(
+    internal fun recordTransferProgress(
         id: String,
-        existing: DropTransferProgress,
-        newTransferredBytes: Long,
         deltaBytes: Long,
+        absoluteTransferredBytes: Long? = null,
     ) {
+        val tracker = progressTrackers[id] ?: return
         val now = clock()
-        touchActivity()
-        val win = speedSamples.getOrPut(id) { SpeedWindow(now, 0L, 0L) }
-        win.bytesInWindow += deltaBytes
-        val elapsedMs = now - win.lastWindowStartMs
-        var emitted = false
-        if (elapsedMs >= 500L) {
-            win.currentSpeedBps = (win.bytesInWindow * 1000L) / elapsedMs.coerceAtLeast(1L)
-            win.bytesInWindow = 0L
-            win.lastWindowStartMs = now
-            emitted = true
+        lastActivityMs = now
+
+        var shouldEmit = false
+        var snapshotTransferred = 0L
+        var snapshotSpeed = 0L
+        var snapshotEta = 0L
+
+        synchronized(tracker) {
+            tracker.transferredBytes = if (absoluteTransferredBytes != null) {
+                maxOf(tracker.transferredBytes, absoluteTransferredBytes)
+            } else {
+                tracker.transferredBytes + deltaBytes
+            }
+            tracker.bytesInWindow += deltaBytes
+            if (now - tracker.lastEmitMs >= TELEMETRY_THROTTLE_MS) {
+                val windowMs = (now - tracker.lastWindowStartMs).coerceAtLeast(1L)
+                tracker.currentSpeedBps = (tracker.bytesInWindow * 1000L) / windowMs
+                tracker.bytesInWindow = 0L
+                tracker.lastWindowStartMs = now
+                tracker.lastEmitMs = now
+
+                snapshotTransferred = tracker.transferredBytes
+                snapshotSpeed = tracker.currentSpeedBps
+                val remaining = (tracker.totalBytes - snapshotTransferred).coerceAtLeast(0L)
+                snapshotEta = if (snapshotSpeed > 0L) remaining / snapshotSpeed else 0L
+                shouldEmit = true
+            }
         }
-        val remaining = (existing.totalBytes - newTransferredBytes).coerceAtLeast(0L)
-        val eta = if (win.currentSpeedBps > 0L) remaining / win.currentSpeedBps else 0L
-        activeTransfers[id] = existing.copy(
-            transferredBytes = newTransferredBytes,
-            speedBytesPerSec = win.currentSpeedBps,
-            etaSeconds = eta,
-            status = DropTransferStatus.ACTIVE,
-            updatedAtMs = now,
-        )
-        if (emitted) notifyChanged()
+
+        if (shouldEmit) {
+            val existing = activeTransfers[id]
+            if (existing != null && existing.status == DropTransferStatus.ACTIVE) {
+                activeTransfers[id] = existing.copy(
+                    transferredBytes = snapshotTransferred,
+                    speedBytesPerSec = snapshotSpeed,
+                    etaSeconds = snapshotEta,
+                    updatedAtMs = now,
+                )
+            }
+            emitThrottledProgress(now)
+        }
+    }
+
+    private fun emitThrottledProgress(now: Long) {
+        while (true) {
+            val prev = lastProgressEmitMs.get()
+            if (prev != Long.MIN_VALUE && now - prev < TELEMETRY_THROTTLE_MS) {
+                return
+            }
+            if (lastProgressEmitMs.compareAndSet(prev, now)) {
+                broadcastTelemetry()
+                onStateChanged()
+                return
+            }
+        }
     }
 
     private fun refreshSpeeds() {
@@ -655,12 +761,20 @@ class DesktopDropServerEngine(
         var dirty = false
         for ((id, item) in activeTransfers) {
             if (item.status != DropTransferStatus.ACTIVE) continue
-            val win = speedSamples[id] ?: continue
-            val elapsed = now - win.lastWindowStartMs
-            if (elapsed >= 1200L && item.speedBytesPerSec > 0L) {
-                win.currentSpeedBps = 0L
-                win.bytesInWindow = 0L
-                win.lastWindowStartMs = now
+            val tracker = progressTrackers[id] ?: continue
+            val stale = synchronized(tracker) {
+                val elapsed = now - tracker.lastWindowStartMs
+                if (elapsed >= 1200L && tracker.currentSpeedBps > 0L) {
+                    tracker.currentSpeedBps = 0L
+                    tracker.bytesInWindow = 0L
+                    tracker.lastWindowStartMs = now
+                    tracker.lastEmitMs = now
+                    true
+                } else {
+                    false
+                }
+            }
+            if (stale) {
                 activeTransfers[id] = item.copy(speedBytesPerSec = 0L, updatedAtMs = now)
                 dirty = true
             }
@@ -668,9 +782,11 @@ class DesktopDropServerEngine(
         if (dirty) notifyChanged()
     }
 
-    private fun markTransferCompleted(id: String, actualSizeOverride: Long? = null) {
+    internal fun markTransferCompleted(id: String, actualSizeOverride: Long? = null) {
         val existing = activeTransfers[id] ?: return
-        val finalBytes = actualSizeOverride ?: existing.totalBytes
+        val tracker = progressTrackers.remove(id)
+        val trackedBytes = tracker?.let { synchronized(it) { it.transferredBytes } }
+        val finalBytes = actualSizeOverride ?: trackedBytes ?: existing.totalBytes
         activeTransfers[id] = existing.copy(
             totalBytes = maxOf(existing.totalBytes, finalBytes),
             transferredBytes = finalBytes,
@@ -680,19 +796,18 @@ class DesktopDropServerEngine(
             errorMessage = null,
             updatedAtMs = clock(),
         )
-        speedSamples.remove(id)
         notifyChanged()
     }
 
-    private fun markTransferStatus(id: String, status: DropTransferStatus, message: String? = null) {
+    internal fun markTransferStatus(id: String, status: DropTransferStatus, message: String? = null) {
         val existing = activeTransfers[id] ?: return
+        progressTrackers.remove(id)
         activeTransfers[id] = existing.copy(
             speedBytesPerSec = 0L,
             status = status,
             errorMessage = message,
             updatedAtMs = clock(),
         )
-        speedSamples.remove(id)
         notifyChanged()
     }
 
@@ -713,15 +828,17 @@ class DesktopDropServerEngine(
                 append('}')
             }
         }
-        return """{"speedBytesPerSec":$speed,"activeTransferCount":$activeCount,"sharedFilesCount":${sharedItems.size},"transfers":[$transfersJson]}"""
+        return """{"type":"telemetry","speedBytesPerSec":$speed,"activeTransferCount":$activeCount,"sharedFilesCount":${sharedItemsMap.size},"transfers":[$transfersJson]}"""
     }
 
     private class SharedItemRangeContent(
+        private val scope: CoroutineScope,
         private val item: SharedDropItem,
         safeName: String,
         private val source: SharedItemSource,
-        private val onBytesSent: (Long) -> Unit,
-        private val onStreamFinished: (Boolean) -> Unit,
+        private val onStreamStarted: (expectedBytes: Long) -> String?,
+        private val onBytesSent: (transferId: String, delta: Long) -> Unit,
+        private val onStreamFinished: (transferId: String?, ok: Boolean, cancelled: Boolean, bytesSent: Long) -> Unit,
     ) : OutgoingContent.ReadChannelContent() {
 
         override val contentLength: Long = item.sizeBytes.coerceAtLeast(0L)
@@ -738,63 +855,79 @@ class DesktopDropServerEngine(
             )
         }
 
-        override fun readFrom(): ByteReadChannel {
-            val raw = source.openInputStream(item)
-            return TrackingInputStream(BufferedInputStream(raw, 64 * 1024), onBytesSent, onStreamFinished)
-                .toByteReadChannel(context = Dispatchers.IO)
-        }
+        override fun readFrom(): ByteReadChannel =
+            streamRange(startOffset = 0L, expectedLength = contentLength, ranged = false)
 
         override fun readFrom(range: LongRange): ByteReadChannel {
-            val len = (range.last - range.first + 1L).coerceAtLeast(0L)
-            val raw = source.openRangedInputStream(item, range.first, len)
-            return TrackingInputStream(BufferedInputStream(raw, 64 * 1024), onBytesSent, onStreamFinished)
-                .toByteReadChannel(context = Dispatchers.IO)
-        }
-    }
-
-    private class TrackingInputStream(
-        delegate: InputStream,
-        private val onBytesRead: (Long) -> Unit,
-        private val onFinished: (Boolean) -> Unit,
-    ) : FilterInputStream(delegate) {
-        private var failed = false
-        private var notified = false
-
-        override fun read(): Int = try {
-            val b = super.read()
-            if (b >= 0) onBytesRead(1L)
-            b
-        } catch (t: Throwable) {
-            failed = true
-            throw t
+            val start = range.first.coerceAtLeast(0L)
+            val len = (range.last - start + 1L).coerceAtLeast(0L)
+            return streamRange(startOffset = start, expectedLength = len, ranged = true)
         }
 
-        override fun read(b: ByteArray, off: Int, len: Int): Int = try {
-            val count = super.read(b, off, len)
-            if (count > 0) onBytesRead(count.toLong())
-            count
-        } catch (t: Throwable) {
-            failed = true
-            throw t
-        }
-
-        override fun close() {
-            try {
-                super.close()
-            } catch (t: Throwable) {
-                failed = true
-                throw t
-            } finally {
-                if (!notified) {
-                    notified = true
-                    onFinished(!failed)
+        private fun streamRange(startOffset: Long, expectedLength: Long, ranged: Boolean): ByteReadChannel =
+            scope.writer(Dispatchers.IO, autoFlush = false) {
+                var ok = false
+                var cancelled = false
+                var bytesSent = 0L
+                var transferId: String? = null
+                try {
+                    transferId = onStreamStarted(expectedLength)
+                    val localFile = source.localFileOrNull(item)
+                    if (localFile != null) {
+                        FileInputStream(localFile).use { fis ->
+                            val fileChannel = fis.channel
+                            if (startOffset > 0L) {
+                                fileChannel.position(startOffset)
+                            }
+                            val byteBuffer = ByteBuffer.allocate(STREAM_BUFFER_BYTES)
+                            var remaining = expectedLength
+                            while (!ranged || remaining > 0L) {
+                                byteBuffer.clear()
+                                if (ranged && remaining < byteBuffer.capacity()) {
+                                    byteBuffer.limit(remaining.toInt())
+                                }
+                                val read = fileChannel.read(byteBuffer)
+                                if (read < 0) break
+                                if (read == 0) continue
+                                byteBuffer.flip()
+                                channel.writeFully(byteBuffer)
+                                bytesSent += read
+                                if (ranged) remaining -= read
+                                transferId?.let { onBytesSent(it, read.toLong()) }
+                            }
+                        }
+                    } else {
+                        val stream = if (ranged) {
+                            source.openRangedInputStream(item, startOffset, expectedLength)
+                        } else {
+                            source.openInputStream(item)
+                        }
+                        stream.use { input ->
+                            val buffer = ByteArray(STREAM_BUFFER_BYTES)
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                if (read == 0) continue
+                                channel.writeFully(buffer, startIndex = 0, endIndex = read)
+                                bytesSent += read
+                                transferId?.let { onBytesSent(it, read.toLong()) }
+                            }
+                        }
+                    }
+                    ok = true
+                } catch (e: CancellationException) {
+                    cancelled = true
+                    throw e
+                } finally {
+                    onStreamFinished(transferId, ok, cancelled, bytesSent)
                 }
-            }
-        }
+            }.channel
     }
 
     companion object {
         const val DEFAULT_PORT = 8080
         val PORT_FALLBACKS = listOf(8080, 8081, 8888)
+        const val STREAM_BUFFER_BYTES = 512 * 1024
+        const val TELEMETRY_THROTTLE_MS = 300L
     }
 }

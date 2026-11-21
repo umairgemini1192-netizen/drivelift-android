@@ -28,6 +28,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.updateAndGet
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.File
@@ -80,8 +81,12 @@ class DesktopDropController(
     val isServerRunning: StateFlow<Boolean> = _isServerRunning.asStateFlow()
 
     private fun setSnapshot(next: DesktopDropSnapshot) {
-        _snapshot.value = next
-        _isServerRunning.value = next.status == ServerStatus.RUNNING || next.status == ServerStatus.STARTING
+        updateSnapshot { next }
+    }
+
+    private fun updateSnapshot(transform: (DesktopDropSnapshot) -> DesktopDropSnapshot) {
+        val updated = _snapshot.updateAndGet(transform)
+        _isServerRunning.value = updated.status == ServerStatus.RUNNING || updated.status == ServerStatus.STARTING
     }
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -104,7 +109,7 @@ class DesktopDropController(
                 startServerInternal(newMode)
             }
         } else {
-            setSnapshot(current.copy(mode = newMode, errorMessage = null))
+            updateSnapshot { it.copy(mode = newMode, errorMessage = null) }
         }
     }
 
@@ -118,15 +123,15 @@ class DesktopDropController(
         if (_snapshot.value.status == ServerStatus.STARTING) return
         authManager.requireApproval = prefs.current.requireApproval
         val token = authManager.rotateToken()
-        setSnapshot(
-            _snapshot.value.copy(
+        updateSnapshot {
+            it.copy(
                 status = ServerStatus.STARTING,
                 mode = mode,
                 sessionToken = token,
                 errorMessage = null,
                 statusNote = "Starting server...",
-            ),
-        )
+            )
+        }
         DesktopDropService.startService(app)
 
         try {
@@ -150,8 +155,8 @@ class DesktopDropController(
                 lanMonitor.registerMdns(actualPort)
             }
             val url = "http://$bindIp:$actualPort/?token=$token"
-            setSnapshot(
-                _snapshot.value.copy(
+            updateSnapshot {
+                it.copy(
                     status = ServerStatus.RUNNING,
                     mode = mode,
                     bindIp = bindIp,
@@ -164,8 +169,8 @@ class DesktopDropController(
                     prefs = prefs.current,
                     errorMessage = null,
                     statusNote = null,
-                ),
-            )
+                )
+            }
             syncSnapshot()
         } catch (e: Exception) {
             hotspotController.stopHotspot()
@@ -173,8 +178,8 @@ class DesktopDropController(
             engine.stop()
             DesktopDropService.stopService(app)
             val msg = e.message ?: "Could not start Desktop Drop server"
-            setSnapshot(
-                _snapshot.value.copy(
+            updateSnapshot {
+                it.copy(
                     status = ServerStatus.ERROR,
                     bindIp = null,
                     port = null,
@@ -182,8 +187,8 @@ class DesktopDropController(
                     hotspotCredentials = null,
                     errorMessage = msg,
                     statusNote = null,
-                ),
-            )
+                )
+            }
             _messages.tryEmit(msg)
         }
     }
@@ -204,8 +209,8 @@ class DesktopDropController(
         authManager.resetSessions()
         uploadStore.cleanupAllParts()
         DesktopDropService.stopService(app)
-        setSnapshot(
-            _snapshot.value.copy(
+        updateSnapshot {
+            it.copy(
                 status = ServerStatus.STOPPED,
                 bindIp = null,
                 port = null,
@@ -215,8 +220,8 @@ class DesktopDropController(
                 pendingApproval = null,
                 errorMessage = null,
                 statusNote = note,
-            ),
-        )
+            )
+        }
     }
 
     fun checkIdleAutoStop(): Boolean {
@@ -389,8 +394,7 @@ class DesktopDropController(
     }
 
     private fun syncSnapshot() {
-        val current = _snapshot.value
-        setSnapshot(
+        updateSnapshot { current ->
             current.copy(
                 peers = authManager.allPeers(),
                 pendingApproval = authManager.pendingApproval(),
@@ -399,7 +403,7 @@ class DesktopDropController(
                 aggregateSpeedBytesPerSec = engine.aggregateSpeedBytesPerSec(),
                 activeTransferCount = engine.activeTransferCount(),
                 prefs = prefs.current,
-            ),
-        )
+            )
+        }
     }
 }

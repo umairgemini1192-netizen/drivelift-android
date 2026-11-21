@@ -15,7 +15,7 @@ import java.util.zip.ZipOutputStream
  */
 object StreamingZipWriter {
 
-    private const val IO_BUFFER_BYTES = 64 * 1024
+    private const val IO_BUFFER_BYTES = 512 * 1024
 
     fun writeStoredZip(
         items: List<SharedDropItem>,

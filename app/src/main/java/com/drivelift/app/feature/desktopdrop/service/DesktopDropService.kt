@@ -36,8 +36,7 @@ class DesktopDropService : Service() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var observerJob: Job? = null
     private var idleWatchJob: Job? = null
-    private var wifiLock: WifiManager.WifiLock? = null
-    private var wakeLock: PowerManager.WakeLock? = null
+    private val powerLockHolder by lazy { TransferPowerLockHolder(applicationContext ?: this) }
     private var lastNotifyMs = 0L
 
     override fun onBind(intent: Intent?): IBinder? = null
@@ -50,14 +49,16 @@ class DesktopDropService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val controller = Graph.get(this).desktopDrop.controller
         if (intent?.action == ACTION_STOP) {
-            releasePowerLocks()
+            powerLockHolder.release()
             controller.stopServer("Stopped from notification")
             stopForeground(STOP_FOREGROUND_REMOVE)
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val initial = buildNotification(controller.snapshot.value)
+        val initialSnapshot = controller.snapshot.value
+        powerLockHolder.update(initialSnapshot.activeTransferCount > 0)
+        val initial = buildNotification(initialSnapshot)
         if (Build.VERSION.SDK_INT >= 34) {
             startForeground(NOTIFICATION_ID, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
         } else {
@@ -67,7 +68,7 @@ class DesktopDropService : Service() {
         if (observerJob == null) {
             observerJob = serviceScope.launch {
                 controller.snapshot.collect { snap ->
-                    updatePowerLocks(snap.activeTransferCount > 0)
+                    powerLockHolder.update(snap.activeTransferCount > 0)
                     val now = System.currentTimeMillis()
                     if (snap.status == ServerStatus.RUNNING || snap.status == ServerStatus.STARTING) {
                         if (now - lastNotifyMs >= 500L || snap.activeTransferCount == 0) {
@@ -76,7 +77,7 @@ class DesktopDropService : Service() {
                                 ?.notify(NOTIFICATION_ID, buildNotification(snap))
                         }
                     } else if (snap.status == ServerStatus.STOPPED || snap.status == ServerStatus.ERROR) {
-                        releasePowerLocks()
+                        powerLockHolder.release()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
                     }
@@ -89,7 +90,7 @@ class DesktopDropService : Service() {
                 while (isActive) {
                     delay(15_000L)
                     if (controller.checkIdleAutoStop()) {
-                        releasePowerLocks()
+                        powerLockHolder.release()
                         stopForeground(STOP_FOREGROUND_REMOVE)
                         stopSelf()
                         break
@@ -102,7 +103,7 @@ class DesktopDropService : Service() {
     }
 
     override fun onTimeout(startId: Int, fgsType: Int) {
-        releasePowerLocks()
+        powerLockHolder.release()
         runCatching {
             Graph.get(this).desktopDrop.controller.stopServer("Stopped by Android foreground timeout")
         }
@@ -114,51 +115,9 @@ class DesktopDropService : Service() {
     override fun onDestroy() {
         observerJob?.cancel()
         idleWatchJob?.cancel()
-        releasePowerLocks()
+        powerLockHolder.release()
         serviceScope.cancel()
         super.onDestroy()
-    }
-
-    private fun updatePowerLocks(transferActive: Boolean) {
-        if (transferActive) {
-            acquirePowerLocks()
-        } else {
-            releasePowerLocks()
-        }
-    }
-
-    private fun acquirePowerLocks() {
-        if (wifiLock == null) {
-            val wm = applicationContext.getSystemService(WifiManager::class.java)
-            if (wm != null) {
-                val mode = if (Build.VERSION.SDK_INT >= 29) {
-                    WifiManager.WIFI_MODE_FULL_LOW_LATENCY
-                } else {
-                    @Suppress("DEPRECATION")
-                    WifiManager.WIFI_MODE_FULL_HIGH_PERF
-                }
-                wifiLock = wm.createWifiLock(mode, "DriveLift:DesktopDropWifi").apply {
-                    setReferenceCounted(false)
-                    runCatching { acquire() }
-                }
-            }
-        }
-        if (wakeLock == null) {
-            val pm = getSystemService(PowerManager::class.java)
-            if (pm != null) {
-                wakeLock = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DriveLift:DesktopDropCpu").apply {
-                    setReferenceCounted(false)
-                    runCatching { acquire(30L * 60L * 1000L) }
-                }
-            }
-        }
-    }
-
-    private fun releasePowerLocks() {
-        wifiLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
-        wifiLock = null
-        wakeLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
-        wakeLock = null
     }
 
     private fun buildNotification(snapshot: DesktopDropSnapshot): Notification {
@@ -228,5 +187,67 @@ class DesktopDropService : Service() {
             val intent = Intent(context, DesktopDropService::class.java).setAction(ACTION_STOP)
             runCatching { context.startService(intent) }
         }
+    }
+}
+
+internal class TransferPowerLockHolder(context: Context) {
+    private val appContext = context.applicationContext ?: context
+    private var wifiLock: WifiManager.WifiLock? = null
+    private var wakeLock: PowerManager.WakeLock? = null
+
+    val isWifiLockHeld: Boolean
+        get() = wifiLock?.isHeld == true
+
+    val isWakeLockHeld: Boolean
+        get() = wakeLock?.isHeld == true
+
+    @Synchronized
+    fun update(transferActive: Boolean) {
+        if (transferActive) {
+            acquire()
+        } else {
+            release()
+        }
+    }
+
+    @Synchronized
+    fun acquire() {
+        val currentWifi = wifiLock ?: run {
+            val wm = appContext.getSystemService(WifiManager::class.java) ?: return@run null
+            val mode = if (Build.VERSION.SDK_INT >= 29) {
+                WifiManager.WIFI_MODE_FULL_LOW_LATENCY
+            } else {
+                @Suppress("DEPRECATION")
+                WifiManager.WIFI_MODE_FULL_HIGH_PERF
+            }
+            wm.createWifiLock(mode, "DriveLift:DesktopDropWifi").apply {
+                setReferenceCounted(false)
+            }.also { wifiLock = it }
+        }
+        if (currentWifi != null && !currentWifi.isHeld) {
+            runCatching { currentWifi.acquire() }
+        }
+
+        val currentWake = wakeLock ?: run {
+            val pm = appContext.getSystemService(PowerManager::class.java) ?: return@run null
+            pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "DriveLift:DesktopDropCpu").apply {
+                setReferenceCounted(false)
+            }.also { wakeLock = it }
+        }
+        if (currentWake != null && !currentWake.isHeld) {
+            runCatching { currentWake.acquire(WAKE_LOCK_TIMEOUT_MS) }
+        }
+    }
+
+    @Synchronized
+    fun release() {
+        wifiLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
+        wifiLock = null
+        wakeLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
+        wakeLock = null
+    }
+
+    private companion object {
+        const val WAKE_LOCK_TIMEOUT_MS = 60L * 60L * 1000L
     }
 }

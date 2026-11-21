@@ -77,6 +77,7 @@ class ResumableUploadStore(
         val key = UploadKey(cleanName, cleanSubdir, totalSize, cleanSha)
 
         val existing = uploads.values.firstOrNull { it.key == key && it.partFile.exists() }
+        val recommendedChunk = recommendedChunkSizeBytes(totalSize)
         if (existing != null) {
             val onDisk = existing.partFile.length().coerceAtMost(totalSize)
             existing.receivedBytes = onDisk
@@ -84,6 +85,7 @@ class ResumableUploadStore(
                 uploadId = existing.uploadId,
                 receivedBytes = onDisk,
                 totalSize = totalSize,
+                chunkSizeBytes = recommendedChunk,
                 resumed = onDisk > 0L,
             )
         }
@@ -107,6 +109,7 @@ class ResumableUploadStore(
             uploadId = uploadId,
             receivedBytes = 0L,
             totalSize = totalSize,
+            chunkSizeBytes = recommendedChunk,
             resumed = false,
         )
     }
@@ -230,7 +233,12 @@ class ResumableUploadStore(
 
     companion object {
         const val DEFAULT_CHUNK_SIZE_BYTES = 8L * 1024L * 1024L
+        const val LARGE_CHUNK_SIZE_BYTES = 16L * 1024L * 1024L
+        const val LARGE_FILE_THRESHOLD_BYTES = 64L * 1024L * 1024L
         const val PART_SUFFIX = ".drivelift.part"
-        private const val IO_BUFFER_BYTES = 64 * 1024
+        private const val IO_BUFFER_BYTES = 512 * 1024
+
+        fun recommendedChunkSizeBytes(totalSize: Long): Long =
+            if (totalSize > LARGE_FILE_THRESHOLD_BYTES) LARGE_CHUNK_SIZE_BYTES else DEFAULT_CHUNK_SIZE_BYTES
     }
 }
