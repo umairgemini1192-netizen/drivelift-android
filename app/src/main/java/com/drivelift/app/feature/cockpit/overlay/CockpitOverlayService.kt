@@ -13,10 +13,10 @@ import android.os.Build
 import android.os.IBinder
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -143,6 +143,16 @@ class CockpitOverlayService :
             setViewTreeLifecycleOwner(this@CockpitOverlayService)
             setViewTreeSavedStateRegistryOwner(this@CockpitOverlayService)
             setViewTreeViewModelStoreOwner(this@CockpitOverlayService)
+            setOnTouchListener { _, event ->
+                if (event.actionMasked == MotionEvent.ACTION_OUTSIDE &&
+                    cockpit.coordinator.slotState.value.isExpanded
+                ) {
+                    cockpit.coordinator.setExpanded(false)
+                    true
+                } else {
+                    false
+                }
+            }
             setContent {
                 val prefs by cockpit.prefsRepo.state.collectAsStateWithLifecycle()
                 val slotState by cockpit.coordinator.slotState.collectAsStateWithLifecycle()
@@ -169,17 +179,21 @@ class CockpitOverlayService :
 
                 if (!isLandscapeFullscreen.value && prefs.masterEnabled) {
                     DriveLiftTheme {
-                        Box(
-                            modifier = Modifier.padding(top = com.drivelift.app.ui.Tokens.Snug),
-                        ) {
+                        Box {
                             DynamicIslandOverlay(
                                 slotState = slotState,
                                 telemetry = telemetry,
                                 torchState = torchState,
                                 pinnedApps = pinnedApps,
                                 widthDeltaDp = prefs.cutoutWidthDelta,
-                                onTapPrimary = { activity -> launchActivityTarget(activity) },
-                                onTapSecondary = { activity -> cockpit.coordinator.focusActivity(activity.id) },
+                                onTapPrimary = { activity ->
+                                    launchActivityTarget(activity)
+                                    cockpit.coordinator.setExpanded(false)
+                                },
+                                onTapSecondary = { activity ->
+                                    cockpit.coordinator.focusActivity(activity.id)
+                                    cockpit.coordinator.setExpanded(true)
+                                },
                                 onExpand = { cockpit.coordinator.setExpanded(true) },
                                 onCollapse = { cockpit.coordinator.setExpanded(false) },
                                 onCycleNext = { cockpit.coordinator.cycleNext() },
@@ -252,6 +266,9 @@ class CockpitOverlayService :
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN or
             WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS
 
+        if (isExpanded) {
+            flags = flags or WindowManager.LayoutParams.FLAG_WATCH_OUTSIDE_TOUCH
+        }
         if (!isExpanded || !inlineReplyOpen) {
             flags = flags or WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
         }
@@ -263,6 +280,7 @@ class CockpitOverlayService :
         }
 
         params.flags = flags
+        params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
         params.x = (offsetX * density).toInt()
         params.y = cutoutTopPx.intValue + (offsetY * density).toInt()
         runCatching { wm.updateViewLayout(view, params) }
@@ -286,17 +304,17 @@ class CockpitOverlayService :
             is CockpitLiveActivity.WhatsAppAlertActivity -> {
                 if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
                     val pkg = if (activity.isBusiness) "com.whatsapp.w4b" else "com.whatsapp"
-                    cockpit.pinnedAppsRepo.launchApp(pkg)
+                    if (!cockpit.pinnedAppsRepo.launchApp(pkg)) openDriveLiftApp()
                 }
             }
             is CockpitLiveActivity.MapsNavActivity -> {
                 if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
-                    cockpit.pinnedAppsRepo.launchApp(activity.packageName)
+                    if (!cockpit.pinnedAppsRepo.launchApp(activity.packageName)) openDriveLiftApp()
                 }
             }
             is CockpitLiveActivity.TimerRecordingActivity -> {
                 if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
-                    cockpit.pinnedAppsRepo.launchApp(activity.packageName)
+                    if (!cockpit.pinnedAppsRepo.launchApp(activity.packageName)) openDriveLiftApp()
                 }
             }
             is CockpitLiveActivity.IdleQuickDockActivity -> openCockpitHubActivity()

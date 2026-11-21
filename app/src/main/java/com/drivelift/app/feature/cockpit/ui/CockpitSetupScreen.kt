@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,7 +18,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -51,9 +51,12 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -69,7 +72,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.repeatOnLifecycle
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
@@ -80,11 +85,13 @@ import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
+import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.Tokens
+import kotlinx.coroutines.delay
 
 @Composable
 fun CockpitSetupScreen(
@@ -92,6 +99,7 @@ fun CockpitSetupScreen(
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
+    val lifecycleOwner = LocalLifecycleOwner.current
     val cockpit = remember(context) { Graph.get(context).cockpit }
     val prefs by cockpit.prefsRepo.state.collectAsStateWithLifecycle()
     val telemetry by cockpit.telemetryAdapter.summary.collectAsStateWithLifecycle()
@@ -100,24 +108,37 @@ fun CockpitSetupScreen(
     var hasOverlay by remember { mutableStateOf(cockpit.hasOverlayPermission()) }
     var hasNotifications by remember { mutableStateOf(cockpit.hasNotificationAccess()) }
     var hasBatteryExemption by remember { mutableStateOf(cockpit.isIgnoringBatteryOptimizations()) }
-    var alarmModel by remember { mutableStateOf(NextAlarmFormatter.readFromSystem(context)) }
+    var nowMs by remember(context) { mutableLongStateOf(Graph.get(context).clock()) }
+    var alarmModel by remember { mutableStateOf(NextAlarmFormatter.readFromSystem(context, nowMillis = nowMs)) }
     var freeStorageLabel by remember { mutableStateOf(CockpitGlanceWidget.readFreeStorageLabel()) }
     var batteryLabel by remember { mutableStateOf(CockpitGlanceWidget.readBatteryLabel(context)) }
     val launchableApps = remember(cockpit) { cockpit.pinnedAppsRepo.listLaunchableApps() }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        val current = Graph.get(context).clock()
+        nowMs = current
         hasOverlay = cockpit.hasOverlayPermission()
         hasNotifications = cockpit.hasNotificationAccess()
         hasBatteryExemption = cockpit.isIgnoringBatteryOptimizations()
-        alarmModel = NextAlarmFormatter.readFromSystem(context)
+        alarmModel = NextAlarmFormatter.readFromSystem(context, nowMillis = current)
         freeStorageLabel = CockpitGlanceWidget.readFreeStorageLabel()
         batteryLabel = CockpitGlanceWidget.readBatteryLabel(context)
+    }
+
+    LaunchedEffect(lifecycleOwner, context) {
+        lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
+            while (true) {
+                val current = Graph.get(context).clock()
+                nowMs = current
+                alarmModel = NextAlarmFormatter.readFromSystem(context, nowMillis = current)
+                delay(1_000L)
+            }
+        }
     }
 
     val pinnedApps = remember(prefs.pinnedPackages, launchableApps) {
         cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
     }
-    val nowMs = remember(context) { Graph.get(context).clock() }
     val clockTimeLabel = remember(nowMs) {
         java.text.SimpleDateFormat("hh:mm a", java.util.Locale.US).format(java.util.Date(nowMs))
     }
@@ -195,6 +216,8 @@ fun CockpitSetupContent(
     onToggleDrop: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var previewExpanded by rememberSaveable { mutableStateOf(false) }
+
     Column(modifier = modifier.fillMaxSize().testTag("cockpit-setup-screen")) {
         TopAppBar(
             colors = TopAppBarDefaults.topAppBarColors(
@@ -226,38 +249,79 @@ fun CockpitSetupContent(
             }
 
             item(key = "pill-preview") {
-                GlassPanel(Modifier.fillMaxWidth()) {
+                val previewPrimary = remember(telemetry) {
+                    CockpitLiveActivity.TransferActivity(
+                        title = telemetry.connectedPeerName ?: "Desktop Drop",
+                        subtitle = telemetry.statusHeadline,
+                        speedText = if (telemetry.isDesktopDropRunning) "Live" else "Ready",
+                        progressFraction = null,
+                        isDesktopDrop = true,
+                        canStop = true,
+                    )
+                }
+                val previewSecondary = remember {
+                    CockpitLiveActivity.TimerRecordingActivity(
+                        id = "preview_timer",
+                        label = "Timer",
+                        timeText = "04:12",
+                        isRecording = false,
+                        packageName = "com.google.android.deskclock",
+                    )
+                }
+                var previewPrimaryFirst by rememberSaveable { mutableStateOf(true) }
+                GlassPanel(
+                    modifier = Modifier.fillMaxWidth(),
+                    onClick = if (previewExpanded) {
+                        { previewExpanded = false }
+                    } else {
+                        null
+                    },
+                    onClickLabel = "Collapse preview",
+                ) {
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(CockpitTokens.PreviewBackdropHeight)
+                            .defaultMinSize(minHeight = CockpitTokens.PreviewBackdropHeight)
+                            .animateContentSize()
                             .padding(Tokens.Small),
                         contentAlignment = Alignment.TopCenter,
                     ) {
-                        CollapsedSplitIslandRow(
+                        DynamicIslandOverlay(
                             slotState = CockpitSlotState(
-                                primary = CockpitLiveActivity.TransferActivity(
-                                    title = telemetry.connectedPeerName ?: "Desktop Drop",
-                                    subtitle = telemetry.statusHeadline,
-                                    speedText = if (telemetry.isDesktopDropRunning) "Live" else "Ready",
-                                    progressFraction = null,
-                                    isDesktopDrop = true,
-                                    canStop = true,
-                                ),
-                                secondary = CockpitLiveActivity.TimerRecordingActivity(
-                                    id = "preview_timer",
-                                    label = "Timer",
-                                    timeText = "04:12",
-                                    isRecording = false,
-                                    packageName = "com.google.android.deskclock",
-                                ),
+                                primary = if (previewPrimaryFirst) previewPrimary else previewSecondary,
+                                secondary = if (previewPrimaryFirst) previewSecondary else previewPrimary,
+                                visibleQueue = listOf(previewPrimary, previewSecondary),
+                                isExpanded = previewExpanded,
                             ),
+                            telemetry = telemetry,
+                            torchState = TorchUiState(
+                                available = true,
+                                isOn = torchOn,
+                                brightnessLevel = 3,
+                                maxLevel = 5,
+                                supportsBrightnessSlider = false,
+                            ),
+                            pinnedApps = pinnedApps,
                             widthDeltaDp = prefs.cutoutWidthDelta,
-                            onTapPrimary = {},
-                            onTapSecondary = {},
-                            onLongPressExpand = {},
-                            onCycleNext = {},
-                            onCyclePrevious = {},
+                            onTapPrimary = { previewExpanded = false },
+                            onTapSecondary = {
+                                previewPrimaryFirst = !previewPrimaryFirst
+                                previewExpanded = true
+                            },
+                            onExpand = { previewExpanded = true },
+                            onCollapse = { previewExpanded = false },
+                            onCycleNext = { previewPrimaryFirst = !previewPrimaryFirst },
+                            onCyclePrevious = { previewPrimaryFirst = !previewPrimaryFirst },
+                            onSoftDismiss = { previewExpanded = false },
+                            onRestoreDismissed = {},
+                            onStopDesktopDrop = onToggleDrop,
+                            onOpenDriveLiftCockpit = { previewExpanded = false },
+                            onToggleInlineReply = {},
+                            onSendWhatsAppReply = { _, _ -> },
+                            onToggleTorch = onToggleTorch,
+                            onTorchBrightnessChange = {},
+                            onToggleTorchSos = {},
+                            onLaunchPinnedApp = { previewExpanded = false },
                             modifier = Modifier.offset(
                                 x = prefs.cutoutOffsetX.dp,
                                 y = prefs.cutoutOffsetY.dp,
@@ -575,21 +639,27 @@ fun CockpitMasterWidgetCard(
                 )
             }
 
-            // Bottom Row: Quick Controls + Pinned Apps Dock
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-            ) {
+            // Row 3: Quick Controls Row (strictly separated from Pinned Apps so toggling Island never shifts apps)
+            val controlsContent: @Composable (Modifier) -> Unit = { buttonMod ->
                 OutlinedButton(
                     onClick = onToggleDrop,
-                    modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                    contentPadding = PaddingValues(horizontal = Tokens.Small),
+                    modifier = buttonMod
+                        .defaultMinSize(minHeight = Tokens.TouchTarget)
+                        .testTag("cockpit-widget-toggle-drop"),
                 ) {
-                    Text(if (telemetry.isDesktopDropRunning) "Drop On" else "Drop")
+                    Text(
+                        text = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 OutlinedButton(
                     onClick = onToggleTorch,
-                    modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                    contentPadding = PaddingValues(horizontal = Tokens.Small),
+                    modifier = buttonMod
+                        .defaultMinSize(minHeight = Tokens.TouchTarget)
+                        .testTag("cockpit-widget-toggle-torch"),
                 ) {
                     Icon(
                         imageVector = if (torchOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
@@ -597,20 +667,65 @@ fun CockpitMasterWidgetCard(
                         modifier = Modifier.size(Tokens.IconSmall),
                     )
                     Spacer(Modifier.width(Tokens.Tiny))
-                    Text(if (torchOn) "Torch On" else "Torch")
+                    Text(
+                        text = if (torchOn) "Torch On" else "Torch",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
                 OutlinedButton(
                     onClick = onToggleIsland,
-                    modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                    contentPadding = PaddingValues(horizontal = Tokens.Small),
+                    modifier = buttonMod
+                        .defaultMinSize(minHeight = Tokens.TouchTarget)
+                        .testTag("cockpit-widget-toggle-island"),
                 ) {
-                    Text(if (islandOn) "Island On" else "Island")
-                }
-                pinnedApps.take(3).forEach { app ->
-                    WidgetTelemetryChip(
-                        icon = Icons.Outlined.Apps,
-                        label = app.label,
-                        tint = MaterialTheme.colorScheme.tertiary,
+                    Text(
+                        text = if (islandOn) "Island On" else "Island",
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
                     )
+                }
+            }
+
+            if (stackTopRow) {
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-widget-controls-row"),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    controlsContent(Modifier)
+                }
+            } else {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-widget-controls-row"),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    controlsContent(Modifier.weight(1f))
+                }
+            }
+
+            // Row 4: Dedicated Pinned Apps Dock Row
+            if (pinnedApps.isNotEmpty()) {
+                FlowRow(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-widget-pinned-row"),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    pinnedApps.take(4).forEach { app ->
+                        WidgetTelemetryChip(
+                            icon = Icons.Outlined.Apps,
+                            label = app.label,
+                            tint = MaterialTheme.colorScheme.tertiary,
+                        )
+                    }
                 }
             }
         }

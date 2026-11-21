@@ -1,10 +1,12 @@
 package com.drivelift.app.feature.cockpit.notifications
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
@@ -91,7 +93,16 @@ class CockpitNotificationListener : NotificationListenerService() {
             if (notificationKey.isNullOrBlank()) return false
             val intent = cachedActions[notificationKey]?.contentIntent ?: return false
             return runCatching {
-                intent.send()
+                if (Build.VERSION.SDK_INT >= 34) {
+                    val options = ActivityOptions.makeBasic()
+                        .setPendingIntentBackgroundActivityStartMode(
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
+                        )
+                        .toBundle()
+                    intent.send(options)
+                } else {
+                    intent.send()
+                }
                 true
             }.getOrDefault(false)
         }

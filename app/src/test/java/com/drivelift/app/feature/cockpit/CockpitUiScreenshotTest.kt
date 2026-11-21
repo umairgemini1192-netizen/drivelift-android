@@ -9,15 +9,25 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasTestTag
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
+import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
+import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performTouchInput
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -34,7 +44,9 @@ import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
 import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
+import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
+import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
@@ -377,6 +389,145 @@ class CockpitUiScreenshotTest {
                 }
             },
         )
+    }
+
+    @Test
+    fun collapsedPillTapAndLongPressExpandAndCollapse() {
+        var expanded by mutableStateOf(false)
+        val slot = CockpitSlotState(
+            primary = CockpitLiveActivity.TimerRecordingActivity(
+                id = "sysrec_1",
+                label = "Screen recording",
+                timeText = "Active",
+                isRecording = true,
+                packageName = "com.android.systemui",
+            ),
+            secondary = null,
+            isExpanded = false,
+        )
+
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            DynamicIslandOverlay(
+                                slotState = slot.copy(isExpanded = expanded),
+                                telemetry = syntheticTelemetry,
+                                torchState = TorchUiState(available = true),
+                                pinnedApps = syntheticPinned,
+                                onTapPrimary = {},
+                                onTapSecondary = { expanded = true },
+                                onExpand = { expanded = true },
+                                onCollapse = { expanded = false },
+                                onCycleNext = {},
+                                onCyclePrevious = {},
+                                onSoftDismiss = {},
+                                onRestoreDismissed = {},
+                                onStopDesktopDrop = {},
+                                onOpenDriveLiftCockpit = {},
+                                onToggleInlineReply = {},
+                                onSendWhatsAppReply = { _, _ -> },
+                                onToggleTorch = {},
+                                onTorchBrightnessChange = {},
+                                onToggleTorchSos = {},
+                                onLaunchPinnedApp = {},
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            // Collapsed pill has >= 52dp hit target and expands on single tap.
+            compose.onNodeWithTag("cockpit-primary-pill")
+                .assertHeightIsAtLeast(CockpitTokens.PillTouchTargetHeight)
+                .performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-expanded-open-app").assertIsDisplayed()
+
+            // Collapse returns to collapsed pill.
+            compose.onNodeWithTag("cockpit-collapse").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-primary-pill").assertIsDisplayed()
+
+            // Long-press also expands the card cleanly.
+            compose.onNodeWithTag("cockpit-primary-pill").performTouchInput { longClick() }
+            pump(18)
+            compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
+        }
+    }
+
+    @Test
+    fun masterWidgetKeepsControlsAndPinnedAppsRowsSeparateOnIslandToggle() {
+        var islandOn by mutableStateOf(true)
+        val apps = listOf(
+            PinnedAppInfo("com.alfalah.mobile", "Alfa"),
+            PinnedAppInfo("com.android.chrome", "Chrome"),
+        )
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CockpitMasterWidgetCard(
+                                clockTimeLabel = "11:15 PM",
+                                clockDateLabel = "Sat, Nov 21",
+                                alarm = syntheticAlarm,
+                                telemetry = syntheticTelemetry,
+                                freeStorageLabel = "118 GB free",
+                                batteryLabel = "84% batt",
+                                torchOn = false,
+                                islandOn = islandOn,
+                                pinnedApps = apps,
+                                onToggleIsland = { islandOn = !islandOn },
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            // Verify pinned apps live in cockpit-widget-pinned-row, never cockpit-widget-controls-row.
+            compose.onNodeWithTag("cockpit-widget-controls-row").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-widget-pinned-row").assertIsDisplayed()
+            compose.onNode(
+                hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-pinned-row")),
+                useUnmergedTree = true,
+            ).assertIsDisplayed()
+            org.junit.Assert.assertTrue(
+                compose.onAllNodes(
+                    hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-controls-row")),
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes().isEmpty(),
+            )
+
+            // Toggle Island On -> Island and confirm Alfa stays strictly in cockpit-widget-pinned-row.
+            compose.onNodeWithTag("cockpit-widget-toggle-island").performClick()
+            pump(8)
+            compose.onNodeWithTag("cockpit-widget-toggle-island").assert(hasText("Island"))
+            compose.onNode(
+                hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-pinned-row")),
+                useUnmergedTree = true,
+            ).assertIsDisplayed()
+            org.junit.Assert.assertTrue(
+                compose.onAllNodes(
+                    hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-controls-row")),
+                    useUnmergedTree = true,
+                ).fetchSemanticsNodes().isEmpty(),
+            )
+        }
     }
 
     companion object {

@@ -72,4 +72,18 @@ class NextAlarmFormatterTest {
         assertNull(model.chronometerBaseElapsedMs)
         assertEquals("Rings in 1d 6h", model.countdownText)
     }
+
+    @Test
+    fun advancingClockByOneSecondDecrementsCountdownText() {
+        val nowZdt = ZonedDateTime.of(2026, 11, 21, 0, 0, 0, 0, zone)
+        val nowMs = nowZdt.toInstant().toEpochMilli()
+        val remainingMs = (6L * 3600L + 40L * 60L + 45L) * 1000L
+        val triggerMs = nowMs + remainingMs
+
+        val t0 = NextAlarmFormatter.formatNextAlarm(triggerMs, nowMs, 10_000L, zoneId = zone, locale = Locale.US)
+        val t1 = NextAlarmFormatter.formatNextAlarm(triggerMs, nowMs + 1_000L, 11_000L, zoneId = zone, locale = Locale.US)
+
+        assertEquals("Rings in 06:40:45", t0.countdownText)
+        assertEquals("Rings in 06:40:44", t1.countdownText)
+    }
 }

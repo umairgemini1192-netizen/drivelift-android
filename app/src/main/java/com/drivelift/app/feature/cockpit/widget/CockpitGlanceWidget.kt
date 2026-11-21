@@ -77,15 +77,15 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         val torchOn = cockpit.torchController.state.value.isOn
         val freeStorageLabel = readFreeStorageLabel()
         val batteryLabel = readBatteryLabel(context)
-        val pinnedApps = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages).take(3)
+        val pinnedApps = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages).take(4)
 
         provideContent {
             GlanceTheme {
                 val size = LocalSize.current
-                val compact = size.height < SIZE_EXPANDED_4X3.height
+                val maxPinned = if (size.height < SIZE_EXPANDED_4X3.height) 3 else 4
                 MasterWidgetContent(
                     context = context,
-                    compact = compact,
+                    maxPinned = maxPinned,
                     alarm = alarm,
                     telemetry = telemetry,
                     freeStorageLabel = freeStorageLabel,
@@ -106,7 +106,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     @Composable
     private fun MasterWidgetContent(
         context: Context,
-        compact: Boolean,
+        maxPinned: Int,
         alarm: NextAlarmUiModel,
         telemetry: DriveLiftTelemetrySummary,
         freeStorageLabel: String,
@@ -228,7 +228,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
             Spacer(GlanceModifier.height(Tokens.Small))
 
-            // Bottom Row: Quick Toggles + Pinned Apps Dock
+            // Row 3: Fixed Quick Controls Row
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
@@ -267,13 +267,14 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 )
             }
 
-            if (!compact && pinnedApps.isNotEmpty()) {
-                Spacer(GlanceModifier.height(Tokens.Small))
+            // Row 4: Dedicated Pinned Apps Dock Row (always separated from Quick Controls)
+            if (pinnedApps.isNotEmpty()) {
+                Spacer(GlanceModifier.height(Tokens.Snug))
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Vertical.CenterVertically,
                 ) {
-                    pinnedApps.forEachIndexed { index, app ->
+                    pinnedApps.take(maxPinned).forEachIndexed { index, app ->
                         if (index > 0) Spacer(GlanceModifier.width(Tokens.Snug))
                         QuickActionPill(
                             label = app.label,

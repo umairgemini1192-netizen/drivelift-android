@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
  */
 object CockpitTokens {
     val PillHeight = 36.dp
+    val PillTouchTargetHeight = 52.dp
     val BubbleSize = 36.dp
     val PillMinWidth = 176.dp
     val PillMaxWidth = 272.dp
