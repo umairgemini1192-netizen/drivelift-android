@@ -42,7 +42,12 @@ class AndroidSharedItemSource(private val context: Context) : SharedItemSource {
     override fun openInputStream(item: SharedDropItem): InputStream {
         fileSource.localFileOrNull(item)?.let { return FileInputStream(it) }
         val uriString = item.sourceUri ?: throw FileNotFoundException("No URI for ${item.name}")
-        return context.contentResolver.openInputStream(Uri.parse(uriString))
+        val uri = Uri.parse(uriString)
+        val pfd = runCatching { context.contentResolver.openFileDescriptor(uri, "r") }.getOrNull()
+        if (pfd != null) {
+            return android.os.ParcelFileDescriptor.AutoCloseInputStream(pfd)
+        }
+        return context.contentResolver.openInputStream(uri)
             ?: throw IOException("Could not open ${item.name}")
     }
 
@@ -72,7 +77,7 @@ class AndroidSharedItemSource(private val context: Context) : SharedItemSource {
 
 private fun skipFully(stream: InputStream, bytesToSkip: Long) {
     var remaining = bytesToSkip
-    val discard = ByteArray(16 * 1024)
+    val discard = ByteArray(64 * 1024)
     while (remaining > 0L) {
         val skipped = stream.skip(remaining)
         if (skipped > 0L) {

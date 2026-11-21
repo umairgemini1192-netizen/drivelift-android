@@ -234,7 +234,7 @@ class AndroidDropDestinationWriter(
 }
 
 private fun streamFileToOutput(source: File, destination: OutputStream): Long {
-    val buffer = ByteArray(64 * 1024)
+    val buffer = ByteArray(512 * 1024)
     var total = 0L
     FileInputStream(source).use { input ->
         destination.use { out ->

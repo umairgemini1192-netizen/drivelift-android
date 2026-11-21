@@ -1,11 +1,15 @@
 package com.drivelift.app.feature.desktopdrop
 
+import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import com.drivelift.app.feature.desktopdrop.data.DropPathSanitizer
 import com.drivelift.app.feature.desktopdrop.model.DropJson
 import com.drivelift.app.feature.desktopdrop.network.LanNetworkMonitor
 import com.drivelift.app.feature.desktopdrop.network.LocalHotspotController
 import com.drivelift.app.feature.desktopdrop.qr.QrBitmapGenerator
+import com.drivelift.app.feature.desktopdrop.server.ResumableUploadStore
 import com.drivelift.app.feature.desktopdrop.server.SessionAuthManager
+import com.drivelift.app.feature.desktopdrop.service.TransferPowerLockHolder
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -66,5 +70,30 @@ class DesktopDropHelpersTest {
         assertEquals("""clip "1".mp4""", parsed["filename"])
         assertEquals(1048576L, parsed["totalSize"])
         assertEquals(true, parsed["resumed"])
+    }
+
+    @Test
+    fun uploadChunkSizeScalesTo16MbAbove64MbAndPowerLocksTrackTransferLifecycle() {
+        assertEquals(8L * 1024L * 1024L, ResumableUploadStore.recommendedChunkSizeBytes(64L * 1024L * 1024L))
+        assertEquals(16L * 1024L * 1024L, ResumableUploadStore.recommendedChunkSizeBytes(64L * 1024L * 1024L + 1L))
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val locks = TransferPowerLockHolder(context)
+        assertFalse(locks.isWifiLockHeld)
+        assertFalse(locks.isWakeLockHeld)
+
+        locks.update(transferActive = true)
+        assertTrue(locks.isWifiLockHeld)
+        assertTrue(locks.isWakeLockHeld)
+
+        locks.update(transferActive = false)
+        assertFalse(locks.isWifiLockHeld)
+        assertFalse(locks.isWakeLockHeld)
+
+        val html = context.assets.open("desktop_drop/index.html").bufferedReader(Charsets.UTF_8).use { it.readText() }
+        assertTrue(html.contains("\"queue_updated\""))
+        assertTrue(html.contains("16 * 1024 * 1024"))
+        assertTrue(html.contains("64 * 1024 * 1024"))
+        assertTrue(html.contains("5000"))
     }
 }
