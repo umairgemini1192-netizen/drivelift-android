@@ -15,9 +15,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToKey
-import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
+import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
@@ -31,11 +31,13 @@ import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.feature.desktopdrop.model.SharedDropItem
 import com.drivelift.app.feature.desktopdrop.model.TransferDirection
 import com.drivelift.app.feature.desktopdrop.ui.DesktopDropScreen
+import com.drivelift.app.feature.desktopdrop.ui.DesktopDropViewModel
 import com.drivelift.app.ui.AppViewModel
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
 import com.github.takahirom.roborazzi.captureRoboImage
+import org.junit.After
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
@@ -66,7 +68,19 @@ class DesktopDropUiTest {
 
     @Before
     fun setUp() {
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        RuntimeEnvironment.setFontScale(1f)
+        WorkManagerTestInitHelper.initializeTestWorkManager(app)
         Graph.get(app).clock = { FIXED_TIME_MS }
+    }
+
+    @After
+    fun tearDown() {
+        Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(DesktopDropSnapshot())
+        Graph.get(app).clock = System::currentTimeMillis
+        RuntimeEnvironment.setFontScale(1f)
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        pump(10)
     }
 
     private fun seedWifiRunning(withPendingPeer: Boolean = false) {
@@ -185,16 +199,18 @@ class DesktopDropUiTest {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             RuntimeEnvironment.setFontScale(variant.fontScale)
             compose.mainClock.autoAdvance = false
+            val appVm = AppViewModel(app)
+            val dropVm = DesktopDropViewModel(app)
+            pump(12)
 
             ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
                 scenario.onActivity { activity ->
                     val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
                     activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-                    val appVm = ViewModelProvider(activity)[AppViewModel::class.java]
                     activity.setContent {
                         DriveLiftTheme {
                             GlassBackdrop {
-                                DesktopDropScreen(appViewModel = appVm)
+                                DesktopDropScreen(appViewModel = appVm, vm = dropVm)
                             }
                         }
                     }
