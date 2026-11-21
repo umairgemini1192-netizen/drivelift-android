@@ -37,6 +37,8 @@ class IntelligenceAutomationModule(app: Application, graph: Graph) {
     )
         // A rebuildable index and user rules; a downgrade starts fresh rather than crashing.
         .fallbackToDestructiveMigrationOnDowngrade()
+        // Own threads, so long OCR index writes never queue behind (or block) other databases.
+        .setQueryExecutor(java.util.concurrent.Executors.newFixedThreadPool(2))
         .build()
 
     val prefs = IntelligencePrefs(app)

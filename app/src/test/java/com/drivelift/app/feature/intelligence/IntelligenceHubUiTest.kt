@@ -17,7 +17,6 @@ import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.compose.ui.test.performScrollToKey
-import androidx.lifecycle.ViewModelProvider
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -30,12 +29,14 @@ import com.drivelift.app.feature.intelligence.data.RuleLogStatus
 import com.drivelift.app.feature.intelligence.nlsearch.ArabicUrduTextNormalizer
 import com.drivelift.app.feature.intelligence.rules.RuleTemplates
 import com.drivelift.app.feature.intelligence.ui.IntelligenceHubScreen
+import com.drivelift.app.feature.intelligence.ui.IntelligenceViewModel
 import com.drivelift.app.ui.AppViewModel
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
 import com.github.takahirom.roborazzi.captureRoboImage
 import kotlinx.coroutines.runBlocking
+import org.junit.After
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -70,6 +71,8 @@ class IntelligenceHubUiTest {
 
     @Before
     fun setUp() {
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        RuntimeEnvironment.setFontScale(1f)
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
         Graph.get(app).clock = { FIXED_TIME_MS }
         seed()
@@ -114,6 +117,15 @@ class IntelligenceHubUiTest {
         )
     }
 
+    /** Leaves the device as the next test expects it (see DesktopDropUiTest). */
+    @After
+    fun tearDown() {
+        Graph.get(app).clock = System::currentTimeMillis
+        RuntimeEnvironment.setFontScale(1f)
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        pump(10)
+    }
+
     private fun pump(times: Int = 10) = repeat(times) {
         shadowOf(Looper.getMainLooper()).idle()
         compose.mainClock.advanceTimeBy(64)
@@ -124,6 +136,17 @@ class IntelligenceHubUiTest {
         val deadline = System.currentTimeMillis() + timeoutMs
         while (System.currentTimeMillis() < deadline) {
             pump(2)
+            if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
+        }
+        compose.onNodeWithText(text).assertExists()
+    }
+
+    /** Results sit below the status panel; scroll them into view while the search finishes. */
+    private fun waitForResults(text: String, timeoutMs: Long = 20_000L) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            pump(2)
+            runCatching { compose.onNodeWithTag("intel-search-list").performScrollToKey("count") }
             if (compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()) return
         }
         compose.onNodeWithText(text).assertExists()
@@ -142,15 +165,18 @@ class IntelligenceHubUiTest {
         RuntimeEnvironment.setQualifiers(variant.qualifiers)
         RuntimeEnvironment.setFontScale(variant.fontScale)
         compose.mainClock.autoAdvance = false
+        // Built directly with this test's application, not through the process-wide factory.
+        val appVm = AppViewModel(app)
+        val hubVm = IntelligenceViewModel(app)
+        pump(12)
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
                 val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
                 activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
-                val appVm = ViewModelProvider(activity)[AppViewModel::class.java]
                 activity.setContent {
                     DriveLiftTheme {
                         GlassBackdrop {
-                            IntelligenceHubScreen(appViewModel = appVm, onBack = {})
+                            IntelligenceHubScreen(appViewModel = appVm, onBack = {}, vm = hubVm)
                         }
                     }
                 }
@@ -173,7 +199,7 @@ class IntelligenceHubUiTest {
                 compose.onNodeWithTag("intel-scan").assertHeightIsAtLeast(Tokens.TouchTarget)
 
                 compose.onNodeWithText("Duas / دعا").performClick()
-                waitForText("2 results")
+                waitForResults("2 results")
                 compose.onNodeWithTag("intel-understood").assertExists()
                 waitForTag("intel-snippet-rtl")
                 compose.onAllNodesWithTag("intel-snippet-rtl", useUnmergedTree = true).onFirst().assertExists()
