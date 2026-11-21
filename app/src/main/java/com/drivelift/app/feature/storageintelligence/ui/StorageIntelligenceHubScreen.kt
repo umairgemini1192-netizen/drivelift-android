@@ -152,6 +152,8 @@ fun StorageIntelligenceHubScreen(
                         selectedBytes = state.selectedBytes,
                         busy = state.cleanupBusy,
                         showOffloadCta = state.hasSelectedLocalLargeFiles,
+                        canSelectAll = !state.allVisibleSelected && state.selectableCount > state.selectedCount,
+                        onSelectAll = vm::toggleSelectAll,
                         onClear = vm::clearSelection,
                         onOffload = vm::offloadSelectedLargeFiles,
                         onClean = vm::prepareCleanup,
@@ -244,6 +246,19 @@ fun StorageIntelligenceHubScreen(
                                 onSelectPreset = vm::applyAutoSelectPreset,
                             )
                         }
+                        if (state.selectableCount > 0) {
+                            item(key = "dup-select-bar") {
+                                TabSelectionBar(
+                                    selectedCount = state.selectedCount,
+                                    selectableCount = state.selectableCount,
+                                    allSelected = state.allVisibleSelected,
+                                    unitSingular = "extra copy",
+                                    unitPlural = "extra copies",
+                                    enabled = !state.cleanupBusy,
+                                    onToggleSelectAll = vm::toggleSelectAll,
+                                )
+                            }
+                        }
                         if (state.duplicateGroups.isEmpty()) {
                             item(key = "dup-empty") {
                                 EmptyHubPanel(
@@ -288,6 +303,19 @@ fun StorageIntelligenceHubScreen(
                                 onSelectCategory = vm::selectCategoryFilter,
                             )
                         }
+                        if (state.selectableCount > 0) {
+                            item(key = "large-select-bar") {
+                                TabSelectionBar(
+                                    selectedCount = state.selectedCount,
+                                    selectableCount = state.selectableCount,
+                                    allSelected = state.allVisibleSelected,
+                                    unitSingular = "file",
+                                    unitPlural = "files",
+                                    enabled = !state.cleanupBusy,
+                                    onToggleSelectAll = vm::toggleSelectAll,
+                                )
+                            }
+                        }
                         if (state.largeFiles.isEmpty()) {
                             item(key = "large-empty") {
                                 EmptyHubPanel(
@@ -323,6 +351,19 @@ fun StorageIntelligenceHubScreen(
                     IntelligenceTab.ORPHANS -> {
                         item(key = "orphan-guard") {
                             OrphanSafetyNotePanel()
+                        }
+                        if (state.selectableCount > 0) {
+                            item(key = "orphan-select-bar") {
+                                TabSelectionBar(
+                                    selectedCount = state.selectedCount,
+                                    selectableCount = state.selectableCount,
+                                    allSelected = state.allVisibleSelected,
+                                    unitSingular = "cleanable item",
+                                    unitPlural = "cleanable items",
+                                    enabled = !state.cleanupBusy,
+                                    onToggleSelectAll = vm::toggleSelectAll,
+                                )
+                            }
                         }
                         if (state.orphans.isEmpty()) {
                             item(key = "orphan-empty") {
@@ -720,6 +761,49 @@ private fun AutoSelectPresetRow(
 }
 
 @Composable
+private fun TabSelectionBar(
+    selectedCount: Int,
+    selectableCount: Int,
+    allSelected: Boolean,
+    unitSingular: String,
+    unitPlural: String,
+    enabled: Boolean,
+    onToggleSelectAll: () -> Unit,
+) {
+    val unit = if (selectableCount == 1) unitSingular else unitPlural
+    val summary = if (selectedCount > 0) {
+        "$selectedCount of $selectableCount $unit selected"
+    } else {
+        "$selectableCount $unit"
+    }
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Text(
+            summary,
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.weight(1f),
+            maxLines = 2,
+            overflow = TextOverflow.Ellipsis,
+        )
+        TextButton(
+            onClick = onToggleSelectAll,
+            enabled = enabled && selectableCount > 0,
+            modifier = Modifier
+                .heightIn(min = Tokens.TouchTarget)
+                .testTag("si-select-all"),
+        ) {
+            Text(if (allSelected) "Select none" else "Select all")
+        }
+    }
+}
+
+@Composable
 private fun DuplicateGroupCard(
     group: DuplicateGroupModel,
     selectedIds: Set<String>,
@@ -913,12 +997,18 @@ private fun LargeFileCard(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .toggleable(value = selected, role = Role.Checkbox, onValueChange = { onToggle() }),
+                    .toggleable(
+                        value = selected,
+                        enabled = !protected,
+                        role = Role.Checkbox,
+                        onValueChange = { onToggle() },
+                    ),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Checkbox(
                     checked = selected,
                     onCheckedChange = null,
+                    enabled = !protected,
                     modifier = Modifier.size(Tokens.TouchTarget),
                 )
                 NodeThumbnail(node)
@@ -936,6 +1026,13 @@ private fun LargeFileCard(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (protected) {
+                        Text(
+                            "Locked by active transfer",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             val actionButtons: @Composable () -> Unit = {
@@ -1137,6 +1234,8 @@ private fun StickyActionBar(
     selectedBytes: Long,
     busy: Boolean,
     showOffloadCta: Boolean,
+    canSelectAll: Boolean,
+    onSelectAll: () -> Unit,
     onClear: () -> Unit,
     onOffload: () -> Unit,
     onClean: () -> Unit,
@@ -1146,15 +1245,53 @@ private fun StickyActionBar(
         LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
     Box(Modifier.fillMaxWidth().glassBar()) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-            Text(
-                if (selectedCount == 1) "1 item selected" else "$selectedCount items selected",
-                style = MaterialTheme.typography.titleMedium,
-            )
-            Text(
-                formatBytes(context, selectedBytes),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
+            if (compact) {
+                Text(
+                    if (selectedCount == 1) "1 item selected" else "$selectedCount items selected",
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    formatBytes(context, selectedBytes),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (canSelectAll) {
+                    TextButton(
+                        onClick = onSelectAll,
+                        enabled = !busy,
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).testTag("si-bar-select-all"),
+                    ) {
+                        Text("Select all")
+                    }
+                }
+            } else {
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            if (selectedCount == 1) "1 item selected" else "$selectedCount items selected",
+                            style = MaterialTheme.typography.titleMedium,
+                        )
+                        Text(
+                            formatBytes(context, selectedBytes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    if (canSelectAll) {
+                        TextButton(
+                            onClick = onSelectAll,
+                            enabled = !busy,
+                            modifier = Modifier.heightIn(min = Tokens.TouchTarget).testTag("si-bar-select-all"),
+                        ) {
+                            Text("Select all")
+                        }
+                    }
+                }
+            }
             Spacer(Modifier.height(Tokens.Small))
             if (compact) {
                 Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {

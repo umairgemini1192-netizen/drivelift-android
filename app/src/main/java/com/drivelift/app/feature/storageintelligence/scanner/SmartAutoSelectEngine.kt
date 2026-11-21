@@ -16,10 +16,44 @@ data class AutoSelectResult(
  */
 class SmartAutoSelectEngine {
 
+    fun maxSelectableCopies(
+        groups: List<DuplicateGroupModel>,
+        protectedNodeIds: Set<String> = emptySet(),
+    ): Int {
+        var total = 0
+        for (group in groups) {
+            if (group.items.size < 2) continue
+            val protectedCount = group.items.count { it.id in protectedNodeIds }
+            val unlockedCount = group.items.size - protectedCount
+            total += if (protectedCount >= 1) unlockedCount else (unlockedCount - 1).coerceAtLeast(0)
+        }
+        return total
+    }
+
+    fun selectAllExtraCopies(
+        groups: List<DuplicateGroupModel>,
+        protectedNodeIds: Set<String> = emptySet(),
+    ): AutoSelectResult = selectWithKeeperRule(groups, protectedNodeIds) { group ->
+        val protectedItems = group.items.filter { it.id in protectedNodeIds }
+        if (protectedItems.isNotEmpty()) {
+            protectedItems.map { it.id }
+        } else {
+            chooseKeepers(group, AutoSelectPreset.KEEP_NEWEST, protectedNodeIds)
+        }
+    }
+
     fun selectForPreset(
         groups: List<DuplicateGroupModel>,
         preset: AutoSelectPreset,
         protectedNodeIds: Set<String> = emptySet(),
+    ): AutoSelectResult = selectWithKeeperRule(groups, protectedNodeIds) { group ->
+        chooseKeepers(group, preset, protectedNodeIds)
+    }
+
+    private fun selectWithKeeperRule(
+        groups: List<DuplicateGroupModel>,
+        protectedNodeIds: Set<String>,
+        keeperSelector: (DuplicateGroupModel) -> List<String>,
     ): AutoSelectResult {
         val selected = LinkedHashSet<String>()
         val keptByGroup = LinkedHashMap<String, List<String>>()
@@ -29,7 +63,7 @@ class SmartAutoSelectEngine {
                 keptByGroup[group.groupKey] = group.items.map { it.id }
                 continue
             }
-            val keepers = chooseKeepers(group, preset, protectedNodeIds).toMutableSet()
+            val keepers = keeperSelector(group).toMutableSet()
             // Always protect active transfer files from automatic selection.
             for (item in group.items) {
                 if (item.id in protectedNodeIds) keepers += item.id
