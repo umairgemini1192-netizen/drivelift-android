@@ -20,9 +20,21 @@ object CockpitTokens {
     val AppShortcutTile = 44.dp
     val WidgetBadgeIconSize = 14.dp
     val WidgetAppIconSize = 16.dp
+    val HudOuterRadius = 26.dp
+    val HudInnerRadius = 18.dp
+    val HudTileRadius = 16.dp
+    val HudControlHeight = 48.dp
+    val HudGaugeSize = 58.dp
+    val HudDockIconHaloSize = 28.dp
+    val HudStatusDotSize = 8.dp
+    val HudWallpaperPad = 10.dp
+    val HudPillSpacing = 6.dp
     val IslandBadgeShape = RoundedCornerShape(18.dp)
     val ExpandedCardShape = RoundedCornerShape(28.dp)
     val WidgetCardShape = RoundedCornerShape(24.dp)
+    val HudOuterShape = RoundedCornerShape(26.dp)
+    val HudInnerShape = RoundedCornerShape(18.dp)
+    val HudTileShape = RoundedCornerShape(16.dp)
 
     const val RIM_PULSE_MS = 3_600
     const val EXPAND_SWIPE_COLLAPSE_PX = -44f
