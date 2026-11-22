@@ -714,7 +714,7 @@ fun CockpitMasterWidgetCard(
                     colors = listOf(GlassPalette.SkyTop, GlassPalette.SkyMid, GlassPalette.SkyBottom),
                 ),
             )
-            .padding(CockpitTokens.HudWallpaperPad),
+            .padding(Tokens.Small),
     ) {
         Box(
             modifier = Modifier
@@ -731,7 +731,7 @@ fun CockpitMasterWidgetCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(Tokens.Gutter),
+                    .padding(Tokens.Medium),
                 verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
             ) {
                 // Top Bento Split: Zone 1 (Clock + Alarm Pill) and Zone 2 (Status Pill + Dual Neon Arc Gauges)
@@ -890,15 +890,33 @@ fun CockpitMasterWidgetCard(
                             contentScale = ContentScale.FillBounds,
                             modifier = Modifier.matchParentSize(),
                         )
-                        FlowRow(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .padding(horizontal = Tokens.Small, vertical = Tokens.Snug),
-                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
-                        ) {
-                            pinnedApps.take(4).forEach { app ->
-                                HudPinnedAppDockItem(app = app, density = density)
+                        if (stackTopRow) {
+                            FlowRow(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                                verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                            ) {
+                                pinnedApps.take(4).forEach { app ->
+                                    HudPinnedAppDockItem(app = app, density = density)
+                                }
+                            }
+                        } else {
+                            Row(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                pinnedApps.take(4).forEach { app ->
+                                    HudPinnedAppDockItem(
+                                        app = app,
+                                        density = density,
+                                        modifier = Modifier.weight(1f),
+                                    )
+                                }
                             }
                         }
                     }
@@ -1006,11 +1024,11 @@ private fun AlarmBadgeBlock(alarm: NextAlarmUiModel) {
                 imageVector = Icons.Outlined.Alarm,
                 contentDescription = null,
                 tint = if (alarm.hasAlarm) GlassPalette.HudElectricCyan else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(Tokens.IconSmall),
+                modifier = Modifier.size(CockpitTokens.WidgetBadgeIconSize),
             )
             Text(
                 text = if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
-                style = MaterialTheme.typography.labelLarge,
+                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
             )
@@ -1027,7 +1045,11 @@ private fun AlarmBadgeBlock(alarm: NextAlarmUiModel) {
 }
 
 @Composable
-private fun HudPinnedAppDockItem(app: PinnedAppInfo, density: Float) {
+private fun HudPinnedAppDockItem(
+    app: PinnedAppInfo,
+    density: Float,
+    modifier: Modifier = Modifier,
+) {
     val haloBitmap = remember(app.packageName, app.iconBitmap, density) {
         CockpitHudBitmapRenderer.renderAppHaloBitmap(
             sizePx = (28f * density).toInt(),
@@ -1037,7 +1059,7 @@ private fun HudPinnedAppDockItem(app: PinnedAppInfo, density: Float) {
         ).asImageBitmap()
     }
     Row(
-        modifier = Modifier.padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
+        modifier = modifier.padding(horizontal = Tokens.Stroke, vertical = Tokens.Tiny),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
     ) {
@@ -1061,7 +1083,7 @@ private fun HudPinnedAppDockItem(app: PinnedAppInfo, density: Float) {
         }
         Text(
             text = app.label,
-            style = MaterialTheme.typography.labelMedium,
+            style = MaterialTheme.typography.labelSmall,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
