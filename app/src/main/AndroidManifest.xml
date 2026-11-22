@@ -26,6 +26,8 @@
     <!-- Local LAN and LocalOnlyHotspot discovery without location prompts on Android 13+. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <!-- Held only while the Desktop Drop server runs, so the laptop can find drivelift.local. -->
+    <uses-permission android:name="android.permission.CHANGE_WIFI_MULTICAST_STATE" />
     <uses-permission
         android:name="android.permission.NEARBY_WIFI_DEVICES"
         android:usesPermissionFlags="neverForLocation"

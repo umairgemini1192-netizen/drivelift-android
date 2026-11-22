@@ -1,5 +1,6 @@
 package com.drivelift.app.feature.desktopdrop.ui
 
+import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Bitmap
@@ -36,8 +37,10 @@ import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
+import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.LaptopMac
+import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WifiTethering
@@ -75,8 +78,11 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
 import com.drivelift.app.feature.desktopdrop.model.DropTransferProgress
@@ -95,6 +101,26 @@ import com.drivelift.app.ui.formatBytes
 import com.drivelift.app.ui.formatEta
 
 /**
+ * Uses the caller's Application directly instead of AndroidViewModelFactory.sInstance so Robolectric
+ * test classes that rotate Application instances each read their own Graph's DesktopDropController.
+ */
+@Composable
+private fun defaultDesktopDropViewModel(): DesktopDropViewModel {
+    val app = LocalContext.current.applicationContext as Application
+    val factory = remember(app) {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                DesktopDropViewModel(app) as T
+        }
+    }
+    return viewModel(
+        key = "desktop-drop-${System.identityHashCode(app)}",
+        factory = factory,
+    )
+}
+
+/**
  * Primary Compose UI for Zero-Config Peer & Desktop Drop following DriveLift's Dark Tactile
  * Glass design system.
  */
@@ -102,7 +128,7 @@ import com.drivelift.app.ui.formatEta
 @Composable
 fun DesktopDropScreen(
     @Suppress("UNUSED_PARAMETER") appViewModel: AppViewModel,
-    vm: DesktopDropViewModel = viewModel(),
+    vm: DesktopDropViewModel = defaultDesktopDropViewModel(),
 ) {
     val context = LocalContext.current
     val snapshot by vm.snapshot.collectAsStateWithLifecycle()
@@ -215,12 +241,25 @@ fun DesktopDropScreen(
             }
 
             if (snapshot.status == ServerStatus.RUNNING && snapshot.dropUrl != null) {
-                item(key = "qr-flow") {
-                    ConnectionQrSection(
+                item(key = "address") {
+                    BookmarkAddressCard(
                         snapshot = snapshot,
                         onCopy = ::copyToClipboard,
                     )
                 }
+                item(key = "qr-flow") {
+                    PairAnotherDevicePill(
+                        snapshot = snapshot,
+                        onCopy = ::copyToClipboard,
+                    )
+                }
+            }
+
+            item(key = "gate") {
+                BiometricGatePanel(
+                    mode = snapshot.prefs.gateMode,
+                    onSelect = vm::setGateMode,
+                )
             }
 
             item(key = "troubleshoot") {
@@ -325,7 +364,15 @@ fun DesktopDropScreen(
     snapshot.pendingApproval?.let { peer ->
         PeerApprovalDialog(
             peer = peer,
-            onApprove = { vm.approvePeer(peer.sessionId) },
+            onApprove = {
+                val shown = DropBiometric.prompt(
+                    context = context,
+                    knock = peer,
+                    onApproved = { vm.approveKnockAfterBiometric(peer.sessionId) },
+                    onMessage = vm::notifyMessage,
+                )
+                if (!shown) vm.notifyMessage("The biometric prompt could not be opened here")
+            },
             onDeny = { vm.revokePeer(peer.sessionId) },
         )
     }
@@ -333,8 +380,8 @@ fun DesktopDropScreen(
     if (showSettings) {
         DesktopDropSettingsDialog(
             prefs = snapshot.prefs,
-            onSave = { port, requireApproval, idleMins ->
-                vm.updateSettings(port, requireApproval, idleMins)
+            onSave = { port, idleMins ->
+                vm.updateSettings(port, idleMins)
                 showSettings = false
             },
             onResetDestination = {
@@ -370,7 +417,7 @@ private fun ServerControlHeader(
     val subtitleText = when {
         snapshot.errorMessage != null -> snapshot.errorMessage
         snapshot.status == ServerStatus.RUNNING && snapshot.port != null ->
-            "Port ${snapshot.port} · ${snapshot.mode.label} · ${if (snapshot.prefs.requireApproval) "Approval required" else "Auto-approve"}"
+            "Port ${snapshot.port} · ${snapshot.mode.label} · ${snapshot.prefs.gateMode.label}"
         snapshot.statusNote != null -> snapshot.statusNote
         else -> "LAN and Direct Hotspot HTTP server (port ${snapshot.prefs.preferredPort} default)"
     }
@@ -461,27 +508,147 @@ private fun ServerToggleButton(
 }
 
 @Composable
-private fun ConnectionQrSection(
+private fun BookmarkAddressCard(
+    snapshot: DesktopDropSnapshot,
+    onCopy: (label: String, text: String) -> Unit,
+) {
+    val bookmark = snapshot.bookmarkUrl ?: return
+    val lan = snapshot.dropUrl
+    GlassPanel(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Tokens.Edge, vertical = Tokens.Small)
+            .testTag("dd-address-card"),
+    ) {
+        Column(
+            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            Text("Bookmark this on your laptop", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "The same address every time, with no code in it. Your Pixel asks for your fingerprint or face.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            AddressChip(
+                label = "Bookmark address",
+                value = bookmark,
+                highlighted = true,
+                tag = "dd-bookmark-chip",
+                onCopy = { onCopy("address", bookmark) },
+            )
+            if (lan != null) {
+                AddressChip(
+                    label = "If that does not open, use",
+                    value = lan,
+                    highlighted = false,
+                    tag = "dd-lan-chip",
+                    onCopy = { onCopy("LAN address", lan) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun AddressChip(
+    label: String,
+    value: String,
+    highlighted: Boolean,
+    tag: String,
+    onCopy: () -> Unit,
+) {
+    val edge = if (highlighted) MaterialTheme.colorScheme.primary else GlassPalette.WellEdge
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(Tokens.ThumbShape)
+            .background(GlassPalette.Well, Tokens.ThumbShape)
+            .border(if (highlighted) Tokens.Stroke else Tokens.Hairline, edge, Tokens.ThumbShape)
+            .padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Tiny, bottom = Tokens.Tiny)
+            .testTag(tag),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Column(Modifier.weight(1f)) {
+            Text(label, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Text(
+                value,
+                style = if (highlighted) MaterialTheme.typography.titleSmall else MaterialTheme.typography.bodyMedium,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        IconButton(onClick = onCopy) {
+            Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy $label")
+        }
+    }
+}
+
+@Composable
+private fun PairAnotherDevicePill(
     snapshot: DesktopDropSnapshot,
     onCopy: (label: String, text: String) -> Unit,
 ) {
     val dropUrl = snapshot.dropUrl ?: return
     val hotspot = snapshot.hotspotCredentials
-    Column(
+    // A direct hotspot has to be joined first, so its steps start open; otherwise the QR stays folded.
+    var expanded by rememberSaveable(
+        snapshot.mode,
+        hotspot != null,
+        key = "pair-qr-${snapshot.mode.name}",
+    ) {
+        mutableStateOf(hotspot != null)
+    }
+    GlassPanel(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = Tokens.Edge, vertical = Tokens.Small),
-        verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
     ) {
-        if (hotspot != null) {
-            HotspotStepQrCard(credentials = hotspot, onCopy = onCopy)
+        Column(Modifier.fillMaxWidth()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Tokens.TouchTarget)
+                    .clickable { expanded = !expanded }
+                    .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
+                    .testTag("dd-pair-pill"),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Outlined.QrCode2,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.tertiary,
+                    modifier = Modifier.size(Tokens.Icon),
+                )
+                Spacer(Modifier.width(Tokens.Medium))
+                Text(
+                    "Pair another device (QR)",
+                    style = MaterialTheme.typography.titleSmall,
+                    modifier = Modifier.weight(1f),
+                )
+                Icon(
+                    if (expanded) Icons.Outlined.ExpandLess else Icons.Outlined.ExpandMore,
+                    contentDescription = if (expanded) "Hide pairing QR code" else "Show pairing QR code",
+                )
+            }
+            if (expanded) {
+                Column(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(start = Tokens.Gutter, end = Tokens.Gutter, bottom = Tokens.Medium),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                ) {
+                    if (hotspot != null) {
+                        HotspotStepQrCard(credentials = hotspot, onCopy = onCopy)
+                    }
+                    PairUrlQr(
+                        title = if (hotspot != null) "Step 2: Open in laptop browser" else "Scan to open on another device",
+                        dropUrl = dropUrl,
+                        onCopy = onCopy,
+                    )
+                }
+            }
         }
-        DropUrlQrCard(
-            stepPrefix = if (hotspot != null) "Step 2: Open in laptop browser" else "Open in laptop browser",
-            dropUrl = dropUrl,
-            token = snapshot.sessionToken,
-            onCopy = onCopy,
-        )
     }
 }
 
@@ -493,64 +660,105 @@ private fun HotspotStepQrCard(
     val qrBitmap = remember(credentials.wifiQrPayload) {
         QrBitmapGenerator.generate(credentials.wifiQrPayload, sizePx = 512)
     }
-    GlassPanel(Modifier.fillMaxWidth().testTag("dd-hotspot-qr")) {
-        Column(
-            Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
-            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-        ) {
-            Text("Step 1: Join direct Wi-Fi hotspot", style = MaterialTheme.typography.titleMedium)
-            Text(
-                "Connect your laptop directly to this temporary Wi-Fi network.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            QrPreviewBox(bitmap = qrBitmap, description = "Hotspot Wi-Fi QR code")
-            CopyableFieldRow(
-                label = "Network (SSID)",
-                value = credentials.ssid,
-                onCopy = { onCopy("SSID", credentials.ssid) },
-            )
-            CopyableFieldRow(
-                label = "Passphrase",
-                value = credentials.passphrase,
-                onCopy = { onCopy("passphrase", credentials.passphrase) },
-            )
-        }
+    Column(
+        Modifier.fillMaxWidth().testTag("dd-hotspot-qr"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Text("Step 1: Join direct Wi-Fi hotspot", style = MaterialTheme.typography.titleMedium)
+        Text(
+            "Connect your laptop directly to this temporary Wi-Fi network.",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        QrPreviewBox(bitmap = qrBitmap, description = "Hotspot Wi-Fi QR code")
+        CopyableFieldRow(
+            label = "Network (SSID)",
+            value = credentials.ssid,
+            onCopy = { onCopy("SSID", credentials.ssid) },
+        )
+        CopyableFieldRow(
+            label = "Passphrase",
+            value = credentials.passphrase,
+            onCopy = { onCopy("passphrase", credentials.passphrase) },
+        )
     }
 }
 
 @Composable
-private fun DropUrlQrCard(
-    stepPrefix: String,
+private fun PairUrlQr(
+    title: String,
     dropUrl: String,
-    token: String,
     onCopy: (label: String, text: String) -> Unit,
 ) {
     val qrBitmap = remember(dropUrl) {
         QrBitmapGenerator.generate(dropUrl, sizePx = 512)
     }
-    GlassPanel(Modifier.fillMaxWidth().testTag("dd-url-qr")) {
+    Column(
+        Modifier.fillMaxWidth().testTag("dd-url-qr"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Text(title, style = MaterialTheme.typography.titleMedium)
+        QrPreviewBox(bitmap = qrBitmap, description = "Desktop Drop address QR code")
+        CopyableFieldRow(
+            label = "Address (HTTP only)",
+            value = dropUrl,
+            onCopy = { onCopy("Drop URL", dropUrl) },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun BiometricGatePanel(
+    mode: BiometricGateMode,
+    onSelect: (BiometricGateMode) -> Unit,
+) {
+    GlassPanel(
+        Modifier
+            .fillMaxWidth()
+            .padding(horizontal = Tokens.Edge, vertical = Tokens.Small)
+            .testTag("dd-gate-panel"),
+    ) {
         Column(
             Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
             verticalArrangement = Arrangement.spacedBy(Tokens.Small),
         ) {
-            Text(stepPrefix, style = MaterialTheme.typography.titleMedium)
-            QrPreviewBox(bitmap = qrBitmap, description = "Desktop Drop URL QR code")
-            CopyableFieldRow(
-                label = "Address (HTTP only)",
-                value = dropUrl,
-                onCopy = { onCopy("Drop URL", dropUrl) },
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                Icon(Icons.Outlined.Fingerprint, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                Text("Biometric gate", style = MaterialTheme.typography.titleSmall)
+            }
+            Text(
+                when (mode) {
+                    BiometricGateMode.APPROVE_EVERY_START ->
+                        "Each browser needs your fingerprint or face every time you press Start."
+                    BiometricGateMode.TRUST_7_DAYS ->
+                        "An approved browser stays signed in for 7 days, even after Stop and Start. Disconnect removes it at once."
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (token.isNotBlank()) {
-                Text(
-                    "Session token: $token",
-                    style = MaterialTheme.typography.labelLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+            ) {
+                for (option in BiometricGateMode.entries) {
+                    FilterChip(
+                        selected = mode == option,
+                        onClick = { onSelect(option) },
+                        label = { Text(option.label) },
+                        modifier = Modifier.heightIn(min = Tokens.TouchTarget).testTag("dd-gate-${option.name}"),
+                    )
+                }
             }
         }
     }
 }
+
+private fun peerDetail(peer: PeerSession): String =
+    if (peer.trusted) "${peer.peerIp} · Trusted for 7 days" else peer.peerIp
 
 @Composable
 private fun QrPreviewBox(
@@ -696,7 +904,7 @@ private fun ConnectedPeerRow(
                 verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
                 Text(peer.deviceLabel, style = MaterialTheme.typography.titleSmall)
-                Text(peer.peerIp, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(peerDetail(peer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 OutlinedButton(
                     onClick = onDisconnect,
                     colors = ButtonDefaults.outlinedButtonColors(contentColor = MaterialTheme.colorScheme.error),
@@ -714,7 +922,7 @@ private fun ConnectedPeerRow(
                 Icon(Icons.Outlined.Devices, contentDescription = null, tint = MaterialTheme.colorScheme.tertiary)
                 Column(Modifier.weight(1f)) {
                     Text(peer.deviceLabel, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text(peer.peerIp, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Text(peerDetail(peer), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
                 TextButton(
                     onClick = onDisconnect,

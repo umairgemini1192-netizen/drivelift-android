@@ -9,16 +9,23 @@ import com.drivelift.app.feature.desktopdrop.data.AndroidDropDestinationWriter
 import com.drivelift.app.feature.desktopdrop.data.DesktopDropPrefs
 import com.drivelift.app.feature.desktopdrop.data.DropPathSanitizer
 import com.drivelift.app.feature.desktopdrop.data.SharedItemSource
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
+import com.drivelift.app.feature.desktopdrop.model.PeerSession
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.feature.desktopdrop.model.SharedDropItem
+import com.drivelift.app.feature.desktopdrop.network.AndroidMulticastLock
+import com.drivelift.app.feature.desktopdrop.network.DropMdnsResponder
 import com.drivelift.app.feature.desktopdrop.network.LanNetworkMonitor
 import com.drivelift.app.feature.desktopdrop.network.LocalHotspotController
 import com.drivelift.app.feature.desktopdrop.server.DesktopDropServerEngine
+import com.drivelift.app.feature.desktopdrop.server.KeystoreHmacCookieSigner
+import com.drivelift.app.feature.desktopdrop.server.PrefsTrustStore
 import com.drivelift.app.feature.desktopdrop.server.ResumableUploadStore
 import com.drivelift.app.feature.desktopdrop.server.SessionAuthManager
 import com.drivelift.app.feature.desktopdrop.service.DesktopDropService
+import com.drivelift.app.feature.desktopdrop.service.DropApprovalNotifier
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -50,9 +57,25 @@ class DesktopDropController(
         CoroutineScope(SupervisorJob() + Dispatchers.IO)
     }
     private val partsDir = File(app.cacheDir, "desktop_drop_parts")
-    private val authManager = SessionAuthManager(clock = clock).apply {
-        requireApproval = prefs.current.requireApproval
+    private val authManager = SessionAuthManager(
+        clock = clock,
+        signer = KeystoreHmacCookieSigner(),
+        trustStore = PrefsTrustStore(app),
+    ).apply {
+        gateMode = prefs.current.gateMode
     }
+    private val mdnsResponder = DropMdnsResponder(AndroidMulticastLock(app))
+
+    @Volatile
+    private var appInForeground = false
+
+    @Volatile
+    private var lastNotifiedKnock: String? = null
+
+    private val _knockPromptNonce = MutableStateFlow(0)
+
+    /** Bumped when the owner taps the approval notification, so the biometric prompt opens again. */
+    val knockPromptNonce: StateFlow<Int> = _knockPromptNonce.asStateFlow()
     private val uploadStore = ResumableUploadStore(partsDir, clock = clock)
     private val destinationWriter = AndroidDropDestinationWriter(app, prefs)
     private val cachedHtml: String by lazy {
@@ -121,13 +144,12 @@ class DesktopDropController(
 
     private suspend fun startServerInternal(mode: ConnectivityMode) {
         if (_snapshot.value.status == ServerStatus.STARTING) return
-        authManager.requireApproval = prefs.current.requireApproval
-        val token = authManager.rotateToken()
+        authManager.gateMode = prefs.current.gateMode
+        authManager.resetSessions()
         updateSnapshot {
             it.copy(
                 status = ServerStatus.STARTING,
                 mode = mode,
-                sessionToken = token,
                 errorMessage = null,
                 statusNote = "Starting server...",
             )
@@ -154,26 +176,35 @@ class DesktopDropController(
             if (mode == ConnectivityMode.SAME_WIFI) {
                 lanMonitor.registerMdns(actualPort)
             }
-            val url = "http://$bindIp:$actualPort/?token=$token"
+            val nameResolves = mdnsResponder.start(bindIp)
+            val lanUrl = "http://$bindIp:$actualPort"
+            val bookmarkUrl = "http://${DropMdnsResponder.HOST_NAME}:$actualPort"
+            val notes = buildList {
+                if (actualPort != prefs.current.preferredPort) {
+                    add("Port ${prefs.current.preferredPort} was busy, using $actualPort")
+                }
+                if (!nameResolves) add("${DropMdnsResponder.HOST_NAME} is unavailable, use the IP address")
+            }
             updateSnapshot {
                 it.copy(
                     status = ServerStatus.RUNNING,
                     mode = mode,
                     bindIp = bindIp,
                     port = actualPort,
-                    sessionToken = token,
-                    dropUrl = url,
+                    dropUrl = lanUrl,
+                    bookmarkUrl = bookmarkUrl,
                     hotspotCredentials = hotspotCreds,
                     peers = authManager.allPeers(),
                     pendingApproval = authManager.pendingApproval(),
                     prefs = prefs.current,
                     errorMessage = null,
-                    statusNote = null,
+                    statusNote = notes.joinToString(". ").ifEmpty { null },
                 )
             }
             syncSnapshot()
         } catch (e: Exception) {
             hotspotController.stopHotspot()
+            mdnsResponder.stop()
             lanMonitor.unregisterMdns()
             engine.stop()
             DesktopDropService.stopService(app)
@@ -184,6 +215,7 @@ class DesktopDropController(
                     bindIp = null,
                     port = null,
                     dropUrl = null,
+                    bookmarkUrl = null,
                     hotspotCredentials = null,
                     errorMessage = msg,
                     statusNote = null,
@@ -203,6 +235,7 @@ class DesktopDropController(
     }
 
     private fun stopServerInternal(note: String?) {
+        mdnsResponder.stop()
         lanMonitor.unregisterMdns()
         hotspotController.stopHotspot()
         engine.stop()
@@ -215,6 +248,7 @@ class DesktopDropController(
                 bindIp = null,
                 port = null,
                 dropUrl = null,
+                bookmarkUrl = null,
                 hotspotCredentials = null,
                 peers = emptyList(),
                 pendingApproval = null,
@@ -236,16 +270,35 @@ class DesktopDropController(
         return false
     }
 
-    fun approvePeer(sessionId: String) {
-        authManager.approvePeer(sessionId)
+    /** Call only after the phone's BiometricPrompt succeeded for this knock. */
+    fun approveKnockAfterBiometric(knockId: String) {
+        authManager.approveKnock(knockId)
+        DropApprovalNotifier.cancel(app)
         syncSnapshot()
         engine.notifyChanged()
     }
 
+    /** Denies a pending knock or disconnects an approved browser, trusted or not. */
     fun revokePeer(sessionId: String) {
         authManager.revokePeer(sessionId)
+        DropApprovalNotifier.cancel(app)
         syncSnapshot()
         engine.notifyChanged()
+    }
+
+    fun setGateMode(mode: BiometricGateMode) {
+        prefs.setGateMode(mode)
+        authManager.gateMode = mode
+        syncSnapshot()
+    }
+
+    /** MainActivity reports whether it is on screen, so a knock only posts a notification when it is not. */
+    fun setAppInForeground(foreground: Boolean) {
+        appInForeground = foreground
+    }
+
+    fun requestKnockPrompt() {
+        _knockPromptNonce.value = _knockPromptNonce.value + 1
     }
 
     fun addSharedDocumentUris(uris: List<Uri>) {
@@ -345,12 +398,14 @@ class DesktopDropController(
         syncSnapshot()
     }
 
-    fun updateSettings(preferredPort: Int, requireApproval: Boolean, idleTimeoutMinutes: Int) {
+    fun updateSettings(preferredPort: Int, idleTimeoutMinutes: Int) {
         prefs.setPreferredPort(preferredPort)
-        prefs.setRequireApproval(requireApproval)
         prefs.setIdleTimeoutMinutes(idleTimeoutMinutes)
-        authManager.requireApproval = prefs.current.requireApproval
         syncSnapshot()
+    }
+
+    fun notifyMessage(text: String) {
+        _messages.tryEmit(text)
     }
 
     /** Seeds deterministic synthetic state for Robolectric UI tests without opening sockets. */
@@ -393,11 +448,23 @@ class DesktopDropController(
         )
     }
 
+    private fun maybeNotifyKnock(pending: PeerSession?) {
+        if (pending == null) {
+            lastNotifiedKnock = null
+            return
+        }
+        if (pending.sessionId == lastNotifiedKnock) return
+        lastNotifiedKnock = pending.sessionId
+        if (!appInForeground) DropApprovalNotifier.post(app, pending)
+    }
+
     private fun syncSnapshot() {
+        val pending = authManager.pendingApproval()
+        maybeNotifyKnock(pending)
         updateSnapshot { current ->
             current.copy(
                 peers = authManager.allPeers(),
-                pendingApproval = authManager.pendingApproval(),
+                pendingApproval = pending,
                 sharedItems = engine.sharedItemsSnapshot(),
                 transfers = engine.transfersSnapshot(),
                 aggregateSpeedBytesPerSec = engine.aggregateSpeedBytesPerSec(),

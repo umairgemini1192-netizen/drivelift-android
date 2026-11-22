@@ -31,7 +31,8 @@ import com.drivelift.app.feature.desktopdrop.model.PeerSession
 import com.drivelift.app.ui.Tokens
 
 /**
- * One-tap device approval dialog shown when a new computer presents the valid ephemeral token.
+ * Shown while a browser waits at the Drop address. Approving opens the phone's biometric prompt;
+ * nothing is granted until that prompt succeeds.
  */
 @Composable
 fun PeerApprovalDialog(
@@ -42,7 +43,7 @@ fun PeerApprovalDialog(
     AlertDialog(
         onDismissRequest = onDeny,
         modifier = Modifier.testTag("dd-peer-approval-dialog"),
-        title = { Text("Allow laptop connection?") },
+        title = { Text("Approve laptop with biometrics?") },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                 Text(
@@ -54,13 +55,21 @@ fun PeerApprovalDialog(
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (peer.matchCode.isNotBlank()) {
+                    Text(
+                        "Match code ${peer.matchCode}",
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.testTag("dd-match-code"),
+                    )
+                    Text(
+                        "Approve only if the laptop shows the same code.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
                 Text(
-                    peer.userAgent.ifBlank { "Browser user-agent unavailable" },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-                Text(
-                    "Approving grants an HttpOnly local session cookie to send and receive files until disconnected or stopped.",
+                    "Your fingerprint, face or screen lock unlocks an HttpOnly local session cookie for this browser.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -69,9 +78,9 @@ fun PeerApprovalDialog(
         confirmButton = {
             Button(
                 onClick = onApprove,
-                modifier = Modifier.heightIn(min = Tokens.TouchTarget),
+                modifier = Modifier.heightIn(min = Tokens.TouchTarget).testTag("dd-verify-biometric"),
             ) {
-                Text("Approve")
+                Text("Verify with biometrics")
             }
         },
         dismissButton = {
@@ -87,18 +96,17 @@ fun PeerApprovalDialog(
 }
 
 /**
- * Configuration modal for HTTP port default (8080), one-tap approval, and idle auto-stop timer.
+ * Configuration modal for the HTTP port (8080 by default) and the idle auto-stop timer.
  */
 @Composable
 fun DesktopDropSettingsDialog(
     prefs: DesktopDropPrefsState,
-    onSave: (port: Int, requireApproval: Boolean, idleMinutes: Int) -> Unit,
+    onSave: (port: Int, idleMinutes: Int) -> Unit,
     onResetDestination: () -> Unit,
     onDismiss: () -> Unit,
 ) {
     var portText by remember(prefs.preferredPort) { mutableStateOf(prefs.preferredPort.toString()) }
     var idleText by remember(prefs.idleTimeoutMinutes) { mutableStateOf(prefs.idleTimeoutMinutes.toString()) }
-    var requireApproval by remember(prefs.requireApproval) { mutableStateOf(prefs.requireApproval) }
 
     val parsedPort = portText.trim().toIntOrNull()
     val parsedIdle = idleText.trim().toIntOrNull()
@@ -123,24 +131,6 @@ fun DesktopDropSettingsDialog(
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                     modifier = Modifier.fillMaxWidth(),
                 )
-                Row(
-                    Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text("Tap-to-approve peer", style = MaterialTheme.typography.titleSmall)
-                        Text(
-                            "Require confirmation on phone before granting session cookie",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    Switch(
-                        checked = requireApproval,
-                        onCheckedChange = { requireApproval = it },
-                    )
-                }
                 OutlinedTextField(
                     value = idleText,
                     onValueChange = { idleText = it.filter(Char::isDigit).take(3) },
@@ -163,7 +153,7 @@ fun DesktopDropSettingsDialog(
             Button(
                 onClick = {
                     if (parsedPort != null && parsedIdle != null) {
-                        onSave(parsedPort, requireApproval, parsedIdle)
+                        onSave(parsedPort, parsedIdle)
                     }
                 },
                 enabled = valid,

@@ -198,6 +198,19 @@
     letter-spacing: 2px;
     text-transform: uppercase;
   }
+  .match-code {
+    font-size: 48px;
+    font-weight: 700;
+    letter-spacing: 6px;
+    text-align: center;
+    padding: 18px 12px;
+    margin: 8px 0 14px;
+    border-radius: 18px;
+    color: var(--primary);
+    background: var(--well);
+    border: 1px solid var(--well-edge);
+    font-variant-numeric: tabular-nums;
+  }
   .note-error {
     color: var(--error);
     font-size: 13px;
@@ -219,11 +232,11 @@
   </header>
 
   <section id="authCard" class="glass">
-    <h2>Pair this computer</h2>
-    <p class="sub" id="authPrompt">Checking ephemeral session token with your phone...</p>
-    <div id="tokenBox" class="row hidden">
-      <input type="text" id="tokenInput" maxlength="8" placeholder="8-CHAR TOKEN" autocomplete="off">
-      <button class="btn btn-primary" id="connectBtn">Request access</button>
+    <h2 id="authTitle">Waiting for Pixel approval...</h2>
+    <p class="sub" id="authPrompt">Unlock your Pixel and confirm the match code below.</p>
+    <div id="matchCode" class="match-code" aria-live="polite">--</div>
+    <div class="row">
+      <button type="button" class="btn btn-primary hidden" id="retryBtn">Ask again</button>
     </div>
     <p id="authError" class="note-error hidden"></p>
   </section>
@@ -286,10 +299,8 @@
     return fileSize > LARGE_FILE_THRESHOLD ? LARGE_FILE_CHUNK_SIZE : DEFAULT_CHUNK_SIZE;
   }
 
-  const urlParams = new URLSearchParams(window.location.search);
-  let activeToken = (urlParams.get("token") || "").trim().toUpperCase();
-  let peerId = null;
-  let pollTimer = null;
+  let knockId = null;
+  let decisionStream = null;
   let ws = null;
   let wsConnected = false;
   let wsNeedsResync = false;
@@ -300,10 +311,10 @@
 
   const authCard = document.getElementById("authCard");
   const authPrompt = document.getElementById("authPrompt");
+  const authTitle = document.getElementById("authTitle");
+  const matchCodeEl = document.getElementById("matchCode");
+  const retryBtn = document.getElementById("retryBtn");
   const authError = document.getElementById("authError");
-  const tokenBox = document.getElementById("tokenBox");
-  const tokenInput = document.getElementById("tokenInput");
-  const connectBtn = document.getElementById("connectBtn");
   const appMain = document.getElementById("appMain");
   const connDot = document.getElementById("connDot");
   const hudText = document.getElementById("hudText");
@@ -343,64 +354,88 @@
     authError.classList.remove("hidden");
   }
 
-  async function requestAccess(token) {
-    authError.classList.add("hidden");
-    activeToken = (token || "").trim().toUpperCase();
-    if (!activeToken) {
-      tokenBox.classList.remove("hidden");
-      authPrompt.textContent = "Enter the 8-character token shown on your phone, or scan the QR link.";
-      return;
-    }
+  function stopDecisionStream() {
+    if (decisionStream) { try { decisionStream.close(); } catch (_) {} decisionStream = null; }
+  }
+
+  function showWaiting(message) {
+    authCard.classList.remove("hidden");
+    appMain.classList.add("hidden");
+    authTitle.textContent = "Waiting for Pixel approval...";
+    authPrompt.textContent = message;
+    retryBtn.classList.add("hidden");
+  }
+
+  function showStopped(title, message) {
+    stopDecisionStream();
+    connDot.className = "dot err";
+    hudText.textContent = title;
+    authTitle.textContent = title;
+    authPrompt.textContent = message;
+    retryBtn.classList.remove("hidden");
+  }
+
+  async function checkExistingSession() {
     try {
-      const resp = await fetch("/api/auth/request", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ token: activeToken })
-      });
+      const resp = await fetch("/api/auth/session", { cache: "no-store" });
+      if (resp.ok) { enterAuthorizedState(); return true; }
+    } catch (_) {}
+    return false;
+  }
+
+  async function knock() {
+    authError.classList.add("hidden");
+    stopDecisionStream();
+    hudText.textContent = "Awaiting Pixel";
+    try {
+      const resp = await fetch("/api/auth/knock", { method: "POST", cache: "no-store" });
       const data = await resp.json();
       if (!resp.ok) {
-        tokenBox.classList.remove("hidden");
-        connDot.className = "dot err";
-        hudText.textContent = "Unauthorized";
-        authPrompt.textContent = "Token was rejected. Check the code on your phone.";
-        showAuthError(data.error || "Invalid token");
+        showStopped("Could not ask the phone", data.error || "The phone refused the request.");
         return;
       }
-      peerId = data.peerId;
-      if (data.status === "APPROVED") {
-        enterAuthorizedState();
-      } else {
-        tokenBox.classList.add("hidden");
-        hudText.textContent = "Awaiting approval";
-        authPrompt.textContent = "Tap Approve on your phone screen to unlock transfers for " + data.deviceLabel + ".";
-        startApprovalPolling();
-      }
+      knockId = data.knockId;
+      matchCodeEl.textContent = data.matchCode;
+      showWaiting("Unlock your Pixel and approve " + data.deviceLabel + ". The phone must show the same code.");
+      listenForDecision();
     } catch (err) {
       showAuthError("Could not reach phone: " + err.message);
-      tokenBox.classList.remove("hidden");
+      showStopped("Phone not reachable", "Check that DriveLift is running on your Pixel and on the same Wi-Fi.");
     }
   }
 
-  function startApprovalPolling() {
-    if (pollTimer) clearInterval(pollTimer);
-    pollTimer = setInterval(async () => {
-      if (!peerId || !activeToken) return;
-      try {
-        const resp = await fetch("/api/auth/status?peerId=" + encodeURIComponent(peerId) + "&token=" + encodeURIComponent(activeToken));
-        const data = await resp.json();
-        if (data.status === "APPROVED") {
-          clearInterval(pollTimer);
-          pollTimer = null;
-          enterAuthorizedState();
-        } else if (data.status === "REVOKED" || resp.status === 403) {
-          clearInterval(pollTimer);
-          pollTimer = null;
-          connDot.className = "dot err";
-          hudText.textContent = "Disconnected";
-          authPrompt.textContent = "Access was denied or revoked from your phone.";
-        }
-      } catch (_) {}
-    }, 1200);
+  function listenForDecision() {
+    stopDecisionStream();
+    decisionStream = new EventSource("/api/auth/wait?knockId=" + encodeURIComponent(knockId));
+    decisionStream.addEventListener("status", async (ev) => {
+      let status = "";
+      try { status = JSON.parse(ev.data).status; } catch (_) {}
+      if (status === "APPROVED") {
+        stopDecisionStream();
+        await claimSession();
+      } else if (status === "DENIED") {
+        showStopped("Denied on the phone", "Access was denied from your Pixel.");
+      } else if (status === "EXPIRED") {
+        showStopped("Approval timed out", "Nobody approved in time. Ask again when your Pixel is ready.");
+      }
+    });
+  }
+
+  async function claimSession() {
+    try {
+      const resp = await fetch("/api/auth/claim", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ knockId: knockId })
+      });
+      if (resp.ok) { enterAuthorizedState(); return; }
+      const data = await resp.json();
+      showAuthError(data.error || "Could not unlock this browser.");
+      showStopped("Could not unlock", "Ask again to start a fresh approval.");
+    } catch (err) {
+      showAuthError("Could not reach phone: " + err.message);
+      showStopped("Phone not reachable", "Check that DriveLift is running on your Pixel.");
+    }
   }
 
   function startFallbackFilesPoll() {
@@ -451,8 +486,10 @@
     authCard.classList.remove("hidden");
     connDot.className = "dot err";
     hudText.textContent = "Disconnected";
+    stopDecisionStream();
+    authTitle.textContent = "Disconnected";
     authPrompt.textContent = "This browser session was disconnected from the phone.";
-    tokenBox.classList.remove("hidden");
+    retryBtn.classList.remove("hidden");
   }
 
   function connectTelemetryWs() {
@@ -811,12 +848,9 @@
     folderInput.value = "";
   });
 
-  connectBtn.addEventListener("click", () => requestAccess(tokenInput.value));
-  tokenInput.addEventListener("keydown", (e) => {
-    if (e.key === "Enter") requestAccess(tokenInput.value);
-  });
+  retryBtn.addEventListener("click", () => { knock(); });
 
-  requestAccess(activeToken);
+  checkExistingSession().then((signedIn) => { if (!signedIn) knock(); });
 })();
 </script>
 </body>

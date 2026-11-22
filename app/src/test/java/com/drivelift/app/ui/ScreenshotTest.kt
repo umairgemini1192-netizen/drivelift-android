@@ -213,6 +213,9 @@ class ScreenshotTest {
         FakeMediaStore.gate?.countDown()
         FakeMediaStore.gate = null
         Graph.get(app).prefs.setGridDensity(GridDensity.MEDIUM)
+        Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(
+            com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot(),
+        )
     }
 
     // ------------------------------------------------------------------ scenarios
@@ -2671,7 +2674,7 @@ class ScreenshotTest {
     fun buildIdentifierIsVisibleInSettings() {
         grantMedia()
         eachVariant(
-            "build-id", expect = "DriveLift 1.0.0-preview.37 (build 36)",
+            "build-id", expect = "DriveLift 1.0.0-preview.38 (build 37)",
             tab = AppViewModel.TAB_TRANSFERS, capture = false,
             act = {
                 waitFor("Nothing in transit")
@@ -3809,6 +3812,101 @@ class ScreenshotTest {
         vm.startDuplicateScan()
         compose.waitUntil(10_000) { pump(1); vm.duplicateScan.value is AppViewModel.DuplicateScan.Done }
         Graph.get(app).openOriginalStream = original
+    }
+
+    @Test
+    fun desktopDropBiometricRunning() {
+        grantMedia()
+        eachVariant(
+            "desktop-drop-biometric-running",
+            expect = "http://drivelift.local:8080",
+            connected = true,
+            tab = 3,
+            beforeLaunch = {
+                Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(
+                    com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot(
+                        status = com.drivelift.app.feature.desktopdrop.model.ServerStatus.RUNNING,
+                        mode = com.drivelift.app.feature.desktopdrop.model.ConnectivityMode.SAME_WIFI,
+                        bindIp = "192.168.1.44",
+                        port = 8080,
+                        dropUrl = "http://192.168.1.44:8080",
+                        bookmarkUrl = "http://drivelift.local:8080",
+                        peers = listOf(
+                            com.drivelift.app.feature.desktopdrop.model.PeerSession(
+                                sessionId = "peer-1",
+                                peerIp = "192.168.1.88",
+                                userAgent = "Mozilla/5.0 (Windows NT 10.0) Edg/131.0",
+                                deviceLabel = "Edge on Windows",
+                                connectedAtMs = FIXED_NOW - 30_000L,
+                                lastSeenMs = FIXED_NOW,
+                                status = com.drivelift.app.feature.desktopdrop.model.PeerApprovalStatus.APPROVED,
+                                trusted = true,
+                            ),
+                        ),
+                        sharedItems = listOf(
+                            com.drivelift.app.feature.desktopdrop.model.SharedDropItem(
+                                id = "s-1",
+                                name = "SYNTH_DROP_ARCHIVE.zip",
+                                relativePath = "Exports",
+                                sizeBytes = 420_000_000L,
+                                mimeType = "application/zip",
+                                addedAtMs = FIXED_NOW,
+                            ),
+                        ),
+                        transfers = listOf(
+                            com.drivelift.app.feature.desktopdrop.model.DropTransferProgress(
+                                transferId = "x-1",
+                                filename = "SYNTH_PROJECT_RAW.mkv",
+                                relativePath = "",
+                                direction = com.drivelift.app.feature.desktopdrop.model.TransferDirection.PC_TO_PHONE,
+                                totalBytes = 2_400_000_000L,
+                                transferredBytes = 1_200_000_000L,
+                                speedBytesPerSec = 58_000_000L,
+                                etaSeconds = 21L,
+                                status = com.drivelift.app.feature.desktopdrop.model.DropTransferStatus.ACTIVE,
+                                updatedAtMs = FIXED_NOW,
+                            ),
+                        ),
+                        aggregateSpeedBytesPerSec = 58_000_000L,
+                        activeTransferCount = 1,
+                    ),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
+    }
+
+    @Test
+    fun desktopDropBiometricKnockDialog() {
+        grantMedia()
+        eachVariant(
+            "desktop-drop-biometric-knock-dialog",
+            expect = "Match code 74-29",
+            connected = true,
+            tab = 3,
+            overlay = true,
+            beforeLaunch = {
+                Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(
+                    com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot(
+                        status = com.drivelift.app.feature.desktopdrop.model.ServerStatus.RUNNING,
+                        mode = com.drivelift.app.feature.desktopdrop.model.ConnectivityMode.SAME_WIFI,
+                        bindIp = "192.168.1.44",
+                        port = 8080,
+                        dropUrl = "http://192.168.1.44:8080",
+                        bookmarkUrl = "http://drivelift.local:8080",
+                        pendingApproval = com.drivelift.app.feature.desktopdrop.model.PeerSession(
+                            sessionId = "peer-pending",
+                            peerIp = "192.168.1.104",
+                            userAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/131.0",
+                            deviceLabel = "Chrome on Windows",
+                            connectedAtMs = FIXED_NOW,
+                            lastSeenMs = FIXED_NOW,
+                            status = com.drivelift.app.feature.desktopdrop.model.PeerApprovalStatus.PENDING,
+                            matchCode = "74-29",
+                        ),
+                    ),
+                )
+            },
+        ) { vm -> AppRoot(vm) }
     }
 
     // ------------------------------------------------------------------ steps
