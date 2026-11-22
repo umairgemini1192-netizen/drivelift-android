@@ -112,6 +112,8 @@ import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
+import com.drivelift.app.feature.cockpit.notifications.CallAudioOutput
+import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitAccessibilityService
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
@@ -391,6 +393,18 @@ fun CockpitSetupContent(
     onTapAlarm: () -> Unit = {},
 ) {
     var previewExpanded by rememberSaveable { mutableStateOf(false) }
+    var previewScenario by rememberSaveable { mutableStateOf(CockpitPreviewScenario.DEFAULT) }
+    var previewIndex by rememberSaveable { mutableStateOf(0) }
+    var previewDirection by remember { mutableStateOf(0) }
+    var previewAudio by remember { mutableStateOf(CallAudioUiState()) }
+    val selectPreviewScenario: (CockpitPreviewScenario) -> Unit = { target ->
+        previewScenario = target
+        previewIndex = 0
+        previewDirection = 0
+        previewAudio = CallAudioUiState()
+        // A ringing call opens the island on its own, like a real one does.
+        previewExpanded = target == CockpitPreviewScenario.INCOMING_CALL
+    }
 
     Column(modifier = modifier.fillMaxSize().testTag("cockpit-setup-screen")) {
         TopAppBar(
@@ -442,7 +456,32 @@ fun CockpitSetupContent(
                         packageName = "com.google.android.deskclock",
                     )
                 }
-                var previewPrimaryFirst by rememberSaveable { mutableStateOf(true) }
+                val previewStartMs = remember(previewScenario) { System.currentTimeMillis() }
+                val previewQueue = remember(previewScenario, previewStartMs, previewPrimary, previewSecondary) {
+                    CockpitPreviewActivities.queue(
+                        scenario = previewScenario,
+                        nowMs = previewStartMs,
+                        fallback = listOf(previewPrimary, previewSecondary),
+                    )
+                }
+                val previewActive = previewIndex.coerceIn(0, previewQueue.lastIndex)
+                val previewActions = remember {
+                    CockpitActivityActions(
+                        onAnswerCall = { selectPreviewScenario(CockpitPreviewScenario.ONGOING_CALL) },
+                        onDeclineCall = { selectPreviewScenario(CockpitPreviewScenario.DEFAULT) },
+                        onHangUpCall = { selectPreviewScenario(CockpitPreviewScenario.DEFAULT) },
+                        onToggleMute = { previewAudio = previewAudio.copy(isMuted = !previewAudio.isMuted) },
+                        onCycleAudioOutput = {
+                            val outputs = CallAudioOutput.entries
+                            previewAudio = previewAudio.copy(
+                                output = outputs[(previewAudio.output.ordinal + 1) % outputs.size],
+                            )
+                        },
+                        onOpenCall = { previewExpanded = false },
+                        onStopRecording = { selectPreviewScenario(CockpitPreviewScenario.DEFAULT) },
+                        onOpenNavigation = { previewExpanded = false },
+                    )
+                }
                 GlassPanel(
                     modifier = Modifier.fillMaxWidth(),
                     onClick = if (previewExpanded) {
@@ -462,10 +501,16 @@ fun CockpitSetupContent(
                     ) {
                         DynamicIslandOverlay(
                             slotState = CockpitSlotState(
-                                primary = if (previewPrimaryFirst) previewPrimary else previewSecondary,
-                                secondary = if (previewPrimaryFirst) previewSecondary else previewPrimary,
-                                visibleQueue = listOf(previewPrimary, previewSecondary),
+                                primary = previewQueue[previewActive],
+                                secondary = if (previewQueue.size > 1) {
+                                    previewQueue[(previewActive + 1) % previewQueue.size]
+                                } else {
+                                    null
+                                },
+                                visibleQueue = previewQueue,
                                 isExpanded = previewExpanded,
+                                activeIndex = previewActive,
+                                swapDirection = previewDirection,
                             ),
                             telemetry = telemetry,
                             torchState = torchState.copy(isOn = torchOn, available = torchAvailable),
@@ -474,13 +519,19 @@ fun CockpitSetupContent(
                             widthDeltaDp = prefs.cutoutWidthDelta,
                             onTapPrimary = { previewExpanded = false },
                             onTapSecondary = {
-                                previewPrimaryFirst = !previewPrimaryFirst
-                                previewExpanded = true
+                                previewDirection = 1
+                                previewIndex = (previewActive + 1) % previewQueue.size
                             },
                             onExpand = { previewExpanded = true },
                             onCollapse = { previewExpanded = false },
-                            onCycleNext = { previewPrimaryFirst = !previewPrimaryFirst },
-                            onCyclePrevious = { previewPrimaryFirst = !previewPrimaryFirst },
+                            onCycleNext = {
+                                previewDirection = 1
+                                previewIndex = (previewActive + 1) % previewQueue.size
+                            },
+                            onCyclePrevious = {
+                                previewDirection = -1
+                                previewIndex = (previewActive - 1 + previewQueue.size) % previewQueue.size
+                            },
                             onSoftDismiss = { previewExpanded = false },
                             onRestoreDismissed = {},
                             onStopDesktopDrop = onToggleDrop,
@@ -497,12 +548,28 @@ fun CockpitSetupContent(
                             onTorchBrightnessChange = onTorchBrightnessChange,
                             onToggleTorchSos = onToggleTorchSos,
                             onLaunchPinnedApp = { previewExpanded = false },
+                            callAudio = previewAudio,
+                            activityActions = previewActions,
                             modifier = Modifier.offset(
                                 x = prefs.cutoutOffsetX.dp,
                                 y = prefs.cutoutOffsetY.dp,
                             ),
                         )
                     }
+                }
+            }
+
+            item(key = "preview-scenarios") {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    Text(
+                        text = "Simulate a live activity",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CockpitPreviewScenarioChips(
+                        selected = previewScenario,
+                        onSelect = selectPreviewScenario,
+                    )
                 }
             }
 

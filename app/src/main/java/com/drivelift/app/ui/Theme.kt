@@ -129,6 +129,23 @@ object GlassPalette {
 }
 
 /**
+ * Dynamic Island live activity colours (call, screen recording, navigation). The island sits on a
+ * pure OLED black surface so it melts into the camera cutout, and the call buttons follow the
+ * owner's reference values.
+ */
+object CockpitLivePalette {
+    val Oled = Color(0xFF000000)
+    val Decline = Color(0xFFFF3B30)
+    val Answer = Color(0xFF34C759)
+    val Charcoal = Color(0xFF2C2C2E)
+    val OnLight = Color(0xFF1C1C1E)
+    val Emerald = Color(0xFF34D399)
+    val Cyan = Color(0xFF22D3EE)
+    val Recording = Color(0xFFFF3B30)
+    val White = Color(0xFFFFFFFF)
+}
+
+/**
  * Tabular digits (rule 11 in docs/AI_CONTEXT.md): every digit is the same width, so times,
  * speeds, sizes, percentages and counters do not shift sideways as they change. Set once on
  * every text style, so no screen has to remember it. Letters are unaffected.

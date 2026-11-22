@@ -6,12 +6,16 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
 /**
- * Arbitrates simultaneous live activities into up to 2 Island slots:
- * - Primary Pill ([CockpitSlotState.primary])
- * - Detached Secondary Circular Bubble ([CockpitSlotState.secondary])
+ * Arbitrates simultaneous live activities for the Dynamic Island:
+ * - an ordered queue sorted by priority (Call, Screen recording, Navigation, Transfer, Timer,
+ *   Media, WhatsApp, Idle) with an `activeIndex` pointing at the focused activity;
+ * - the primary pill ([CockpitSlotState.primary]) and the satellite bubble
+ *   ([CockpitSlotState.secondary], the next activity in the queue).
  *
- * Priority order: Transfer/Desktop Drop -> Timer/Stopwatch/Recording -> Google Maps -> WhatsApp -> Idle.
- * Supports non-destructive soft-dismiss & restore and swipe-cycling without touching source notifications.
+ * Swiping left or right cycles the focus with wrap-around. A newly arriving activity that outranks
+ * the one on screen takes focus; when it ends, the activity the user had focused is restored.
+ * An incoming call expands the island on arrival and collapses it again once it connects or ends.
+ * Soft-dismiss never touches the source notification.
  */
 class CockpitStateCoordinator {
     private val lock = Any()
@@ -19,6 +23,9 @@ class CockpitStateCoordinator {
     private val softDismissedIds = LinkedHashSet<String>()
     private var currentPrefs = CockpitPrefsState()
     private var manualFocusId: String? = null
+    private var restoreFocusId: String? = null
+    private var autoFocusedId: String? = null
+    private var pendingSwapDirection = 0
     private var expanded = false
     private var inlineReplyOpen = false
 
@@ -35,11 +42,26 @@ class CockpitStateCoordinator {
     fun upsertActivity(activity: CockpitLiveActivity) {
         if (activity is CockpitLiveActivity.IdleQuickDockActivity) return
         synchronized(lock) {
-            val isNew = activity.id !in activitiesById
+            val previous = activitiesById[activity.id]
+            val isNew = previous == null
             val currentPrimaryPriority = _slotState.value.primary.priority
             activitiesById[activity.id] = activity
             if (isNew && activity.priority < currentPrimaryPriority) {
+                // A higher priority activity takes focus. Remember a focus the user chose by hand
+                // so it comes back when the newcomer ends.
+                if (manualFocusId != null) {
+                    restoreFocusId = manualFocusId
+                    autoFocusedId = activity.id
+                }
                 manualFocusId = null
+            }
+            if (activity is CockpitLiveActivity.CallActivity) {
+                val wasRinging = (previous as? CockpitLiveActivity.CallActivity)?.state == CallState.INCOMING
+                if (activity.state == CallState.INCOMING && !wasRinging) expanded = true
+                if (activity.state == CallState.ONGOING && wasRinging) {
+                    expanded = false
+                    inlineReplyOpen = false
+                }
             }
             recomputeLocked()
         }
@@ -47,9 +69,7 @@ class CockpitStateCoordinator {
 
     fun removeActivity(id: String) {
         synchronized(lock) {
-            activitiesById.remove(id)
-            softDismissedIds.remove(id)
-            if (manualFocusId == id) manualFocusId = null
+            removeIdsLocked(listOf(id))
             recomputeLocked()
         }
     }
@@ -58,19 +78,20 @@ class CockpitStateCoordinator {
         synchronized(lock) {
             val idsToRemove = activitiesById.values.filter { activity ->
                 when (activity) {
+                    is CockpitLiveActivity.CallActivity -> activity.notificationKey == notificationKey
+                    is CockpitLiveActivity.ScreenRecordingActivity -> activity.notificationKey == notificationKey
                     is CockpitLiveActivity.TimerRecordingActivity -> activity.notificationKey == notificationKey
+                    is CockpitLiveActivity.MediaActivity -> activity.notificationKey == notificationKey
                     is CockpitLiveActivity.MapsNavActivity -> activity.notificationKey == notificationKey
                     is CockpitLiveActivity.WhatsAppAlertActivity -> activity.notificationKey == notificationKey
                     is CockpitLiveActivity.TransferActivity,
                     is CockpitLiveActivity.IdleQuickDockActivity -> false
                 }
             }.map { it.id }
-            for (id in idsToRemove) {
-                activitiesById.remove(id)
-                softDismissedIds.remove(id)
-                if (manualFocusId == id) manualFocusId = null
+            if (idsToRemove.isNotEmpty()) {
+                removeIdsLocked(idsToRemove)
+                recomputeLocked()
             }
-            if (idsToRemove.isNotEmpty()) recomputeLocked()
         }
     }
 
@@ -106,28 +127,18 @@ class CockpitStateCoordinator {
         }
     }
 
+    /** Swipe left: focus the next activity in the queue, wrapping from the last back to the first. */
     fun cycleNext() {
         synchronized(lock) {
-            val ordered = sortedVisibleLocked()
-            if (ordered.size <= 1) return
-            val currentIdx = manualFocusId?.let { id -> ordered.indexOfFirst { it.id == id } }
-                ?.takeIf { it >= 0 } ?: 0
-            val nextIdx = (currentIdx + 1) % ordered.size
-            manualFocusId = ordered[nextIdx].id
-            inlineReplyOpen = false
+            if (!cycleLocked(step = 1)) return
             recomputeLocked()
         }
     }
 
+    /** Swipe right: focus the previous activity in the queue, wrapping from the first to the last. */
     fun cyclePrevious() {
         synchronized(lock) {
-            val ordered = sortedVisibleLocked()
-            if (ordered.size <= 1) return
-            val currentIdx = manualFocusId?.let { id -> ordered.indexOfFirst { it.id == id } }
-                ?.takeIf { it >= 0 } ?: 0
-            val prevIdx = (currentIdx - 1 + ordered.size) % ordered.size
-            manualFocusId = ordered[prevIdx].id
-            inlineReplyOpen = false
+            if (!cycleLocked(step = -1)) return
             recomputeLocked()
         }
     }
@@ -135,7 +146,9 @@ class CockpitStateCoordinator {
     fun focusActivity(id: String) {
         synchronized(lock) {
             if (id in activitiesById && id !in softDismissedIds) {
+                clearRestoreLocked()
                 manualFocusId = id
+                pendingSwapDirection = 1
                 recomputeLocked()
             }
         }
@@ -162,11 +175,60 @@ class CockpitStateCoordinator {
             activitiesById.clear()
             softDismissedIds.clear()
             manualFocusId = null
+            clearRestoreLocked()
+            pendingSwapDirection = 0
             expanded = false
             inlineReplyOpen = false
             recomputeLocked()
         }
     }
+
+    private fun clearRestoreLocked() {
+        restoreFocusId = null
+        autoFocusedId = null
+    }
+
+    private fun cycleLocked(step: Int): Boolean {
+        val ordered = sortedVisibleLocked()
+        if (ordered.size <= 1) return false
+        val currentIdx = manualFocusId?.let { id -> ordered.indexOfFirst { it.id == id } }
+            ?.takeIf { it >= 0 } ?: 0
+        val nextIdx = ((currentIdx + step) % ordered.size + ordered.size) % ordered.size
+        clearRestoreLocked()
+        manualFocusId = ordered[nextIdx].id
+        inlineReplyOpen = false
+        pendingSwapDirection = if (step >= 0) 1 else -1
+        return true
+    }
+
+    private fun removeIdsLocked(ids: List<String>) {
+        var removedRingingCall = false
+        for (id in ids) {
+            val removed = activitiesById.remove(id)
+            if ((removed as? CockpitLiveActivity.CallActivity)?.state == CallState.INCOMING) {
+                removedRingingCall = true
+            }
+            softDismissedIds.remove(id)
+            if (manualFocusId == id) manualFocusId = null
+            if (autoFocusedId == id) {
+                // The activity that took focus is gone: go back to what the user was looking at.
+                val restore = restoreFocusId
+                if (restore != null && restore in activitiesById && restore !in softDismissedIds) {
+                    manualFocusId = restore
+                }
+                clearRestoreLocked()
+            } else if (restoreFocusId == id) {
+                clearRestoreLocked()
+            }
+        }
+        if (removedRingingCall && activitiesById.values.none { isRingingCall(it) }) {
+            expanded = false
+            inlineReplyOpen = false
+        }
+    }
+
+    private fun isRingingCall(activity: CockpitLiveActivity): Boolean =
+        (activity as? CockpitLiveActivity.CallActivity)?.state == CallState.INCOMING
 
     private fun sortedVisibleLocked(): List<CockpitLiveActivity> {
         return activitiesById.values
@@ -182,6 +244,8 @@ class CockpitStateCoordinator {
     }
 
     private fun recomputeLocked() {
+        val swapDirection = pendingSwapDirection
+        pendingSwapDirection = 0
         val visible = sortedVisibleLocked()
         val dismissedEnabledCount = activitiesById.values.count { activity ->
             val categoryEnabled = activity.category?.let { currentPrefs.isCategoryEnabled(it) } ?: true
@@ -197,6 +261,8 @@ class CockpitStateCoordinator {
                 dismissedCount = dismissedEnabledCount,
                 isExpanded = expanded,
                 inlineReplyOpen = false,
+                activeIndex = 0,
+                swapDirection = 0,
             )
             return
         }
@@ -206,17 +272,16 @@ class CockpitStateCoordinator {
         if (focusedIndex == 0) {
             manualFocusId = null
         }
-        val rotated = List(visible.size) { offset ->
-            visible[(focusedIndex + offset) % visible.size]
-        }
 
         _slotState.value = CockpitSlotState(
-            primary = rotated[0],
-            secondary = rotated.getOrNull(1),
-            visibleQueue = rotated,
+            primary = visible[focusedIndex],
+            secondary = if (visible.size > 1) visible[(focusedIndex + 1) % visible.size] else null,
+            visibleQueue = visible,
             dismissedCount = dismissedEnabledCount,
             isExpanded = expanded,
             inlineReplyOpen = inlineReplyOpen,
+            activeIndex = focusedIndex,
+            swapDirection = swapDirection,
         )
     }
 }
