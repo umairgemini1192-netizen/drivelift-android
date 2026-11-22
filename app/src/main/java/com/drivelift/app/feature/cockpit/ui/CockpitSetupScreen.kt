@@ -608,23 +608,6 @@ fun CockpitSetupContent(
                 }
             }
 
-            item(key = "preview-alerts") {
-                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                    Text(
-                        text = "Simulate a system alert",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    CockpitPreviewAlertChips(
-                        selected = previewAlertChoice,
-                        onSelect = { choice ->
-                            previewAlertChoice = choice
-                            if (choice != null) previewExpanded = false
-                        },
-                    )
-                }
-            }
-
             item(key = "master-toggle") {
                 GlassPanel(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(horizontal = Tokens.Gutter)) {
@@ -640,6 +623,23 @@ fun CockpitSetupContent(
                             tag = "cockpit-master-toggle",
                         )
                     }
+                }
+            }
+
+            item(key = "preview-alerts") {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    Text(
+                        text = "Simulate a system alert",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CockpitPreviewAlertChips(
+                        selected = previewAlertChoice,
+                        onSelect = { choice ->
+                            previewAlertChoice = choice
+                            if (choice != null) previewExpanded = false
+                        },
+                    )
                 }
             }
 
