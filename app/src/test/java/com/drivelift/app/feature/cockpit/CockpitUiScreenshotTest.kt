@@ -44,7 +44,6 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
-import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeLeft
@@ -1742,11 +1741,23 @@ class CockpitUiScreenshotTest {
             directory = v3Directory,
             content = { V3SetupHub(CockpitPrefsState(masterEnabled = true)) },
             verify = {
-                // Scroll to the section header so the whole panel sits below it in the picture.
-                compose.onNodeWithTag("cockpit-setup-list")
-                    .performScrollToNode(hasText("System Alerts & LED Flash"))
-                pump(8)
-                compose.onNodeWithText("System Alerts & LED Flash").assertIsDisplayed()
+                // Swipe the list up until the last switch is on screen. performScrollToNode waits for
+                // idle, which never returns while the test clock is paused, so the list is swiped by hand.
+                var swipes = 0
+                while (swipes < 16 && runCatching {
+                        compose.onNodeWithTag("cockpit-toggle-led-suppress").assertIsDisplayed()
+                    }.isFailure
+                ) {
+                    compose.onNodeWithTag("cockpit-setup-list").performTouchInput {
+                        swipe(
+                            start = Offset(centerX, height * 0.8f),
+                            end = Offset(centerX, height * 0.3f),
+                            durationMillis = 200,
+                        )
+                    }
+                    pump(8)
+                    swipes += 1
+                }
                 compose.onNodeWithTag("cockpit-toggle-system-alerts").assertIsOn()
                 compose.onNodeWithTag("cockpit-toggle-led-flash").assertIsOff()
                 compose.onNodeWithTag("cockpit-toggle-led-suppress").assertIsOn()
