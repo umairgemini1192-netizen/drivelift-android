@@ -37,12 +37,14 @@ import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -696,8 +698,11 @@ private fun ExpandedCockpitCardContent(
 ) {
     val haptics = LocalHapticFeedback.current
     val reducedMotion = LocalReducedMotion.current
-    val stackCompact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+    val largeFontStack = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+    val compactWidthStack = largeFontStack ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+    val maxCardHeight = (LocalConfiguration.current.screenHeightDp.dp - Tokens.Section)
+        .coerceAtLeast(CockpitTokens.ExpandedDefaultHeight)
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
     var verticalDrag by remember { mutableFloatStateOf(0f) }
@@ -707,6 +712,8 @@ private fun ExpandedCockpitCardContent(
     Column(
         modifier = Modifier
             .fillMaxWidth()
+            .heightIn(max = maxCardHeight)
+            .verticalScroll(rememberScrollState())
             .pointerInput(primary.id) {
                 detectVerticalDragGestures(
                     onDragStart = {
@@ -747,9 +754,9 @@ private fun ExpandedCockpitCardContent(
                     },
                 )
             }
-            .padding(Tokens.Gutter)
+            .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
             .testTag("cockpit-expanded-card"),
-        verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
         // Header row: active badge, title with full weight(1f), hide & collapse controls.
         Row(
@@ -1037,7 +1044,8 @@ private fun ExpandedCockpitCardContent(
         QuickDeckSection(
             torchState = torchState,
             quickControls = quickControls,
-            stackCompact = stackCompact,
+            stackRow1 = largeFontStack,
+            stackRow2 = compactWidthStack,
             reducedMotion = reducedMotion,
             onTapWifi = onTapWifi,
             onLongPressWifi = onLongPressWifi,
@@ -1127,7 +1135,8 @@ private fun ExpandedCockpitCardContent(
 private fun QuickDeckSection(
     torchState: TorchUiState,
     quickControls: CockpitQuickControlsState,
-    stackCompact: Boolean,
+    stackRow1: Boolean,
+    stackRow2: Boolean,
     reducedMotion: Boolean,
     onTapWifi: () -> Unit,
     onLongPressWifi: () -> Unit,
@@ -1176,7 +1185,7 @@ private fun QuickDeckSection(
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
         // Row 1: Wi-Fi (marquee SSID) + Mobile Data (monthly consumption)
-        if (stackCompact) {
+        if (stackRow1) {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                 TactileGlassTile(
                     icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
@@ -1248,7 +1257,7 @@ private fun QuickDeckSection(
         }
 
         // Row 2: Bluetooth + Ringer Mode + Icon-Only Flash Toggle
-        if (stackCompact) {
+        if (stackRow2) {
             FlowRow(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -1469,9 +1478,9 @@ private fun TactileGlassTile(
             .background(fillBrush)
             .border(Tokens.Hairline, borderColor, CockpitTokens.QuickDeckShape)
             .then(interactiveMod)
-            .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
+            .padding(horizontal = Tokens.Row, vertical = Tokens.Tiny),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
     ) {
         Icon(
             imageVector = icon,

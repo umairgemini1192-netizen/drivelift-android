@@ -276,21 +276,21 @@ object CockpitHudBitmapRenderer {
         canvas.drawText(valueText, cx, valueBaseline, valuePaint)
 
         // Sub-label ("CHRG", "LOW", "BATT", or "1.5G FREE") inside bottom arc gap.
-        val labelMaxWidth = size * 0.56f
+        val labelMaxWidth = size * 0.42f
         val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = accentColor.toArgb()
             textAlign = Paint.Align.CENTER
-            textSize = size * 0.138f
+            textSize = size * 0.132f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             fontFeatureSettings = "tnum"
-            letterSpacing = 0.04f
+            letterSpacing = 0.03f
         }
         val measuredLabel = labelPaint.measureText(subLabel)
         if (measuredLabel > labelMaxWidth && measuredLabel > 0f) {
             labelPaint.textSize = (labelPaint.textSize * (labelMaxWidth / measuredLabel))
-                .coerceAtLeast(size * 0.095f)
+                .coerceAtLeast(size * 0.085f)
         }
-        canvas.drawText(subLabel, cx, cy + size * 0.29f, labelPaint)
+        canvas.drawText(subLabel, cx, cy + size * 0.31f, labelPaint)
         return bitmap
     }
 

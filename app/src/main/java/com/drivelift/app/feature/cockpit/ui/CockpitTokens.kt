@@ -19,7 +19,7 @@ object CockpitTokens {
     val PreviewBackdropHeight = 96.dp
     val StatusDot = 8.dp
     val AppShortcutTile = 44.dp
-    val QuickTileMinHeight = 52.dp
+    val QuickTileMinHeight = 48.dp
     val LiquidSliderHeight = 48.dp
     val SosPillMinWidth = 68.dp
     val IconStrokeWidth = 2.dp
