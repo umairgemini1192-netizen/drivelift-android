@@ -295,7 +295,7 @@ class CockpitUiScreenshotTest {
             },
             verify = {
                 compose.onNodeWithText("Workstation").assertIsDisplayed()
-                compose.onNodeWithTag("cockpit-nav-distance").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assertIsDisplayed()
                 compose.onNodeWithText("350 m").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-secondary-bubble").assertIsDisplayed()
             },
@@ -1099,12 +1099,12 @@ class CockpitUiScreenshotTest {
                 }
             },
             verify = {
-                compose.onNodeWithTag("cockpit-call-timer").assert(hasText("02:14"))
-                val timer = compose.onNodeWithTag("cockpit-call-timer").getBoundsInRoot()
-                val waveform = compose.onNodeWithTag("cockpit-call-waveform").assertIsDisplayed().getBoundsInRoot()
+                compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assert(hasText("02:14"))
+                val timer = compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).getBoundsInRoot()
+                val waveform = compose.onNodeWithTag("cockpit-call-waveform", useUnmergedTree = true).assertIsDisplayed().getBoundsInRoot()
                 assertTrue("timer must end before the waveform", timer.right <= waveform.left)
 
-                compose.onAllNodesWithTag("cockpit-call-subtitle")[0].assert(hasText("WhatsApp Audio · 02:14"))
+                compose.onAllNodesWithTag("cockpit-call-subtitle", useUnmergedTree = true)[0].assert(hasText("WhatsApp Audio · 02:14"))
                 compose.onAllNodesWithTag("cockpit-call-info")[0].assertHeightIsAtLeast(Tokens.TouchTarget)
 
                 for (cardIndex in 0..1) {
@@ -1171,10 +1171,10 @@ class CockpitUiScreenshotTest {
                 }
             },
             verify = {
-                compose.onNodeWithTag("cockpit-recording-timer").assert(hasText("00:06"))
-                compose.onNodeWithTag("cockpit-recording-clock").assert(hasText("00:06"))
+                compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assert(hasText("00:06"))
+                compose.onNodeWithTag("cockpit-recording-clock", useUnmergedTree = true).assert(hasText("00:06"))
                 compose.onNodeWithText("Screen Recording").assertIsDisplayed()
-                val clock = compose.onNodeWithTag("cockpit-recording-clock").getBoundsInRoot()
+                val clock = compose.onNodeWithTag("cockpit-recording-clock", useUnmergedTree = true).getBoundsInRoot()
                 val stop = compose.onNodeWithTag("cockpit-recording-stop")
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
@@ -1197,8 +1197,8 @@ class CockpitUiScreenshotTest {
                 }
             },
             verify = {
-                compose.onNodeWithTag("cockpit-nav-distance").assert(hasText("90 ft"))
-                compose.onNodeWithTag("cockpit-nav-card-distance").assert(hasText("90 ft")).assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assert(hasText("90 ft"))
+                compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true).assert(hasText("90 ft")).assertIsDisplayed()
                 compose.onNodeWithText("North").assertIsDisplayed()
                 compose.onNodeWithText("San Francisco").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-nav-card").assertIsDisplayed()
@@ -1394,7 +1394,7 @@ class CockpitUiScreenshotTest {
 
             compose.onNodeWithTag("cockpit-preview-ongoing-call").performClick()
             pump(18)
-            compose.onNodeWithTag("cockpit-call-timer").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
 
             // A ringing call opens the island on its own; Answer turns it into an ongoing pill.
             compose.onNodeWithTag("cockpit-preview-incoming-call").performClick()
@@ -1402,28 +1402,28 @@ class CockpitUiScreenshotTest {
             compose.onNodeWithTag("cockpit-call-incoming").assertIsDisplayed()
             compose.onNodeWithTag("cockpit-call-answer").performClick()
             pump(24)
-            compose.onNodeWithTag("cockpit-call-timer").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
 
             compose.onNodeWithTag("cockpit-preview-screen-recording").performClick()
             pump(18)
-            compose.onNodeWithTag("cockpit-recording-timer").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assertIsDisplayed()
 
             compose.onNodeWithTag("cockpit-preview-navigation").performClick()
             pump(18)
-            compose.onNodeWithTag("cockpit-nav-distance").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assertIsDisplayed()
 
             // Multi-activity: the satellite bubble appears and a tap swaps it into the primary slot.
             compose.onNodeWithTag("cockpit-preview-multi-swap").performClick()
             pump(18)
-            compose.onNodeWithTag("cockpit-call-timer").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
             compose.onNodeWithTag("cockpit-secondary-bubble").assertIsDisplayed().performClick()
             pump(18)
-            compose.onNodeWithTag("cockpit-recording-timer").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assertIsDisplayed()
 
             // Tapping the selected chip returns the preview to its default pair.
             compose.onNodeWithTag("cockpit-preview-multi-swap").performClick()
             pump(18)
-            assertEquals(0, compose.onAllNodesWithTag("cockpit-call-timer").fetchSemanticsNodes().size)
+            assertEquals(0, compose.onAllNodesWithTag("cockpit-call-timer", useUnmergedTree = true).fetchSemanticsNodes().size)
         }
     }
 
