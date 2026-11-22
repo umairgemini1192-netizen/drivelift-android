@@ -24,6 +24,21 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 
 /**
+ * Whether the overlay service is really working. Android keeps listing a service as enabled in
+ * Settings after it was suspended, for example following a crash, so the list alone is not proof.
+ */
+enum class AccessibilityHealth {
+    /** Not enabled in Accessibility settings. */
+    NOT_GRANTED,
+
+    /** Enabled and connected: the overlay can be mounted. */
+    CONNECTED,
+
+    /** Enabled in Settings but not connected: it has to be switched off and on again. */
+    NEEDS_REENABLE,
+}
+
+/**
  * Privacy-strict AccessibilityService whose sole purpose is mounting the Dynamic Island overlay
  * via `WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY` so touches clear Pixel SystemUI's
  * top status-bar touch dead zone. Subscribes to zero accessibility events and reads zero window content.
@@ -131,6 +146,18 @@ class CockpitAccessibilityService :
         private var activeInstance: CockpitAccessibilityService? = null
 
         fun isRunning(): Boolean = activeInstance != null
+
+        /** True only while Android has bound the service (`onServiceConnected` ran, `onUnbind` did not). */
+        val isConnected: Boolean get() = activeInstance != null
+
+        fun health(grantedInSettings: Boolean, connected: Boolean): AccessibilityHealth = when {
+            connected -> AccessibilityHealth.CONNECTED
+            grantedInSettings -> AccessibilityHealth.NEEDS_REENABLE
+            else -> AccessibilityHealth.NOT_GRANTED
+        }
+
+        fun health(context: Context): AccessibilityHealth =
+            health(grantedInSettings = isServiceEnabled(context), connected = isConnected)
 
         fun isServiceEnabled(context: Context): Boolean {
             if (activeInstance != null) return true

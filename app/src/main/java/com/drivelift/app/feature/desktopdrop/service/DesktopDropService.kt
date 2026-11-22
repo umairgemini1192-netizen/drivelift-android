@@ -13,6 +13,8 @@ import android.os.Build
 import android.os.IBinder
 import android.os.PowerManager
 import androidx.core.app.NotificationCompat
+import androidx.core.app.ServiceCompat
+import android.util.Log
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
@@ -28,7 +30,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 /**
- * Foreground dataSync service hosting Desktop Drop's LAN/Hotspot HTTP server, transfer-scoped
+ * Foreground connectedDevice service hosting Desktop Drop's LAN/Hotspot HTTP server, transfer-scoped
  * WakeLock/WifiLock management, Android 14+ onTimeout safety, and idle auto-stop.
  */
 class DesktopDropService : Service() {
@@ -47,23 +49,26 @@ class DesktopDropService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val controller = Graph.get(this).desktopDrop.controller
         if (intent?.action == ACTION_STOP) {
             powerLockHolder.release()
-            controller.stopServer("Stopped from notification")
-            stopForeground(STOP_FOREGROUND_REMOVE)
+            runCatching { Graph.get(this).desktopDrop.controller.stopServer("Stopped from notification") }
+            runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
             stopSelf()
             return START_NOT_STICKY
         }
 
-        val initialSnapshot = controller.snapshot.value
-        powerLockHolder.update(initialSnapshot.activeTransferCount > 0)
-        val initial = buildNotification(initialSnapshot)
-        if (Build.VERSION.SDK_INT >= 34) {
-            startForeground(NOTIFICATION_ID, initial, ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
-        } else {
-            startForeground(NOTIFICATION_ID, initial)
+        // Promote to the foreground before anything else can fail, so Android never raises
+        // ForegroundServiceDidNotStartInTimeException for this start.
+        val controller = runCatching { Graph.get(this).desktopDrop.controller }.getOrNull()
+        val initialSnapshot = controller?.snapshot?.value ?: DesktopDropSnapshot()
+        val promoted = enterForeground(this, NOTIFICATION_ID, buildNotification(initialSnapshot))
+        if (!promoted || controller == null) {
+            Log.w(TAG, "Desktop Drop service could not enter the foreground; stopping")
+            controller?.stopServer("Android would not keep Desktop Drop running in the background")
+            stopSelf()
+            return START_NOT_STICKY
         }
+        powerLockHolder.update(initialSnapshot.activeTransferCount > 0)
 
         if (observerJob == null) {
             observerJob = serviceScope.launch {
@@ -73,12 +78,14 @@ class DesktopDropService : Service() {
                     if (snap.status == ServerStatus.RUNNING || snap.status == ServerStatus.STARTING) {
                         if (now - lastNotifyMs >= 500L || snap.activeTransferCount == 0) {
                             lastNotifyMs = now
-                            getSystemService(NotificationManager::class.java)
-                                ?.notify(NOTIFICATION_ID, buildNotification(snap))
+                            runCatching {
+                                getSystemService(NotificationManager::class.java)
+                                    ?.notify(NOTIFICATION_ID, buildNotification(snap))
+                            }
                         }
                     } else if (snap.status == ServerStatus.STOPPED || snap.status == ServerStatus.ERROR) {
                         powerLockHolder.release()
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
                         stopSelf()
                     }
                 }
@@ -91,7 +98,7 @@ class DesktopDropService : Service() {
                     delay(15_000L)
                     if (controller.checkIdleAutoStop()) {
                         powerLockHolder.release()
-                        stopForeground(STOP_FOREGROUND_REMOVE)
+                        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
                         stopSelf()
                         break
                     }
@@ -102,14 +109,15 @@ class DesktopDropService : Service() {
         return START_NOT_STICKY
     }
 
+    /** Android 15 calls this when a foreground service type runs out of time; stop at once. */
     override fun onTimeout(startId: Int, fgsType: Int) {
         powerLockHolder.release()
         runCatching {
             Graph.get(this).desktopDrop.controller.stopServer("Stopped by Android foreground timeout")
         }
-        stopForeground(STOP_FOREGROUND_REMOVE)
+        runCatching { stopForeground(STOP_FOREGROUND_REMOVE) }
         stopSelf()
-        super.onTimeout(startId, fgsType)
+        runCatching { super.onTimeout(startId, fgsType) }
     }
 
     override fun onDestroy() {
@@ -178,16 +186,63 @@ class DesktopDropService : Service() {
             nm.createNotificationChannel(channel)
         }
 
-        fun startService(context: Context) {
-            ensureChannel(context)
+        /**
+         * Starts the foreground service. Returns false when Android refuses a background start
+         * (ForegroundServiceStartNotAllowedException or any other failure), so the caller can fall
+         * back to [DesktopDropTrampolineActivity] instead of crashing.
+         */
+        fun startService(context: Context): Boolean {
+            runCatching { ensureChannel(context) }
             val intent = Intent(context, DesktopDropService::class.java).setAction(ACTION_START)
-            runCatching { context.startForegroundService(intent) }
+            return try {
+                context.startForegroundService(intent)
+                true
+            } catch (e: Exception) {
+                Log.w(TAG, "startForegroundService refused: ${e.javaClass.simpleName}")
+                false
+            }
         }
 
+        /** stopService has no background restriction, unlike startService. */
         fun stopService(context: Context) {
-            val intent = Intent(context, DesktopDropService::class.java).setAction(ACTION_STOP)
-            runCatching { context.startService(intent) }
+            val intent = Intent(context, DesktopDropService::class.java)
+            runCatching { context.stopService(intent) }
         }
+
+        /**
+         * Foreground service types to try, in order. A null entry means "use the manifest types"
+         * (before Android 14 the type argument is optional). On Android 14 and later the first
+         * choice is connectedDevice, which has no Android 15 timeout; dataSync is the fallback if
+         * the system rejects it.
+         */
+        internal fun foregroundTypeCandidates(sdk: Int): List<Int?> =
+            if (sdk >= 34) {
+                listOf(
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_CONNECTED_DEVICE,
+                    ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC,
+                )
+            } else {
+                listOf(null)
+            }
+
+        /** True once the service is in the foreground. Never throws. */
+        internal fun enterForeground(service: Service, id: Int, notification: Notification): Boolean {
+            for (type in foregroundTypeCandidates(Build.VERSION.SDK_INT)) {
+                try {
+                    if (type == null) {
+                        service.startForeground(id, notification)
+                    } else {
+                        ServiceCompat.startForeground(service, id, notification, type)
+                    }
+                    return true
+                } catch (e: Exception) {
+                    Log.w(TAG, "startForeground failed for type $type: ${e.javaClass.simpleName}")
+                }
+            }
+            return false
+        }
+
+        private const val TAG = "DesktopDropService"
     }
 }
 

@@ -2,6 +2,7 @@ package com.drivelift.app.feature.cockpit.ui
 
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
 
 /**
  * Dimensions and animation constants dedicated to the DriveLift Cockpit Dynamic Island overlay
@@ -37,6 +38,12 @@ object CockpitTokens {
     val HudStatusDotSize = 8.dp
     val HudWallpaperPad = 10.dp
     val HudPillSpacing = 6.dp
+    val HudPagerArrowWidth = 26.dp
+    val HudPagerDotGap = 3.dp
+    val IdleSpeedArrow = 12.dp
+    val NavProgressHairline = 2.dp
+    val NavTripTextSize = 11.sp
+    val WidgetClockTextSize = 34.sp
     val CallAvatar = 44.dp
     val CallActionButton = 48.dp
     val CallControlStandard = 52.dp

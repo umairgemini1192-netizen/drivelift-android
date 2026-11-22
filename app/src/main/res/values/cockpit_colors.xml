@@ -22,4 +22,12 @@
     <color name="cockpit_pill_cyan_fill">#FF123E5C</color>
     <color name="cockpit_pill_coral_fill">#FF5A2A22</color>
     <color name="cockpit_pill_violet_fill">#FF2F2876</color>
+
+    <!-- Status pill colours matched to GlassPalette.Hud* (Home Screen widget cannot read Compose colours). -->
+    <color name="cockpit_status_pill_bg">#EB070A14</color>
+    <color name="cockpit_status_ready_stroke">#B334D399</color>
+    <color name="cockpit_status_live_tint">#3838BDF8</color>
+    <color name="cockpit_status_live_stroke">#E638BDF8</color>
+    <color name="cockpit_status_torch_tint">#38FBBF24</color>
+    <color name="cockpit_status_torch_stroke">#E6FBBF24</color>
 </resources>

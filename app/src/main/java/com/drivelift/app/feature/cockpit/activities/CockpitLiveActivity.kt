@@ -120,6 +120,12 @@ sealed interface CockpitLiveActivity {
         val destinationText: String = "",
         /** Maneuver picture taken from the navigation notification, when it provides one. */
         val maneuverIcon: Bitmap? = null,
+        /** Distance left on the whole trip, in kilometres, when the notification names one. */
+        val remainingTripKm: Double? = null,
+        /** Distance already driven on this trip, in kilometres. Filled in by the coordinator. */
+        val droveTripKm: Double? = null,
+        /** True when the source app shows miles, so the footer uses the same unit. */
+        val tripUsesMiles: Boolean = false,
         override val updatedAtMs: Long = 0L,
     ) : CockpitLiveActivity {
         override val priority: Int = PRIORITY_NAVIGATION

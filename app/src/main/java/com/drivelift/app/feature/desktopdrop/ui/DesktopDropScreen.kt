@@ -32,6 +32,7 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Devices
@@ -77,11 +78,13 @@ import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import com.drivelift.app.feature.desktopdrop.data.DropFileOpener
 import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
@@ -355,7 +358,18 @@ fun DesktopDropScreen(
                     )
                 }
                 items(snapshot.transfers, key = { "xfer-${it.transferId}" }) { transfer ->
-                    DropTransferRow(transfer = transfer)
+                    DropTransferRow(
+                        transfer = transfer,
+                        onOpen = {
+                            DropFileOpener.open(
+                                context = context,
+                                fileName = transfer.filename,
+                                savedUri = transfer.savedUri,
+                                mimeType = transfer.mimeType,
+                                onMessage = vm::notifyMessage,
+                            )
+                        },
+                    )
                 }
             }
         }
@@ -524,28 +538,30 @@ private fun BookmarkAddressCard(
             Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
             verticalArrangement = Arrangement.spacedBy(Tokens.Small),
         ) {
-            Text("Bookmark this on your laptop", style = MaterialTheme.typography.titleMedium)
+            Text("Open this on your laptop", style = MaterialTheme.typography.titleMedium)
             Text(
-                "The same address every time, with no code in it. Your Pixel asks for your fingerprint or face.",
+                "No code to type. Your Pixel asks for your fingerprint or face.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            AddressChip(
-                label = "Bookmark address",
-                value = bookmark,
-                highlighted = true,
-                tag = "dd-bookmark-chip",
-                onCopy = { onCopy("address", bookmark) },
-            )
+            // The IP address works on every network. Windows and VPNs often block the multicast
+            // traffic that drivelift.local needs, so the name is only the optional shortcut.
             if (lan != null) {
                 AddressChip(
-                    label = "If that does not open, use",
+                    label = "Address",
                     value = lan,
-                    highlighted = false,
+                    highlighted = true,
                     tag = "dd-lan-chip",
-                    onCopy = { onCopy("LAN address", lan) },
+                    onCopy = { onCopy("address", lan) },
                 )
             }
+            AddressChip(
+                label = if (lan != null) "Or use the name (needs mDNS)" else "Address",
+                value = bookmark,
+                highlighted = lan == null,
+                tag = "dd-bookmark-chip",
+                onCopy = { onCopy("name address", bookmark) },
+            )
         }
     }
 }
@@ -1087,7 +1103,7 @@ private fun SharedFileRow(
 }
 
 @Composable
-private fun DropTransferRow(transfer: DropTransferProgress) {
+private fun DropTransferRow(transfer: DropTransferProgress, onOpen: () -> Unit = {}) {
     val context = LocalContext.current
     val detail = when (transfer.status) {
         DropTransferStatus.ACTIVE -> buildString {
@@ -1104,12 +1120,35 @@ private fun DropTransferRow(transfer: DropTransferProgress) {
         DropTransferStatus.CANCELLED -> "${transfer.direction.label} · Cancelled"
         DropTransferStatus.PAUSED -> "${transfer.direction.label} · Paused"
     }
+    val openable = transfer.status == DropTransferStatus.COMPLETED && DropFileOpener.isOpenable(transfer.savedUri)
+    val isApk = openable && DropFileOpener.isApk(transfer.filename, transfer.mimeType)
     GlassPanel(
         Modifier
             .fillMaxWidth()
             .padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
     ) {
-        Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .then(
+                    if (openable) {
+                        Modifier.clickable(
+                            role = Role.Button,
+                            onClickLabel = if (isApk) "Install ${transfer.filename}" else "Open ${transfer.filename}",
+                            onClick = onOpen,
+                        )
+                    } else {
+                        Modifier
+                    },
+                )
+                .testTag("dd-transfer-${transfer.transferId}"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+        Column(
+            Modifier
+                .weight(1f)
+                .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+        ) {
             Text(transfer.filename, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
             Text(
                 detail,
@@ -1128,6 +1167,15 @@ private fun DropTransferRow(transfer: DropTransferProgress) {
                     trackColor = GlassPalette.Dim,
                 )
             }
+        }
+        if (openable) {
+            Icon(
+                imageVector = Icons.Outlined.ChevronRight,
+                contentDescription = if (isApk) "Install" else "Open",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.padding(end = Tokens.Medium).size(Tokens.IconSmall),
+            )
+        }
         }
     }
 }

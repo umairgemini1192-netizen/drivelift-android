@@ -22,8 +22,10 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
@@ -80,6 +82,8 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitDurationFormat
+import com.drivelift.app.feature.cockpit.activities.TripDistanceFormat
+import com.drivelift.app.feature.cockpit.activities.TripProgress
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
@@ -770,7 +774,7 @@ private fun OngoingCallCard(
                     size = buttonSize,
                     container = CockpitLivePalette.Charcoal,
                     content = CockpitLivePalette.White,
-                    icon = if (call.isVideo) Icons.Outlined.Videocam else Icons.Outlined.Call,
+                    icon = Icons.Outlined.Videocam,
                     description = if (call.isVideo) "Open video call" else "Open call",
                     tag = "cockpit-call-open",
                     onClick = { actions.onOpenCall(call) },
@@ -888,28 +892,20 @@ private fun NavigationCard(
             .testTag("cockpit-nav-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
+        val straightActive = nav.turnDirection == MapsTurnDirection.STRAIGHT ||
+            nav.turnDirection == MapsTurnDirection.UTURN
+        // Four lane slots share the whole row, so the arrows sit evenly instead of bunching left.
         Row(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("cockpit-nav-lanes"),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            horizontalArrangement = Arrangement.SpaceBetween,
         ) {
-            LaneArrow(Icons.Outlined.TurnLeft, active = nav.turnDirection == MapsTurnDirection.LEFT)
-            LaneArrow(
-                Icons.Outlined.ArrowUpward,
-                active = nav.turnDirection == MapsTurnDirection.STRAIGHT ||
-                    nav.turnDirection == MapsTurnDirection.UTURN,
-            )
-            LaneArrow(Icons.Outlined.TurnRight, active = nav.turnDirection == MapsTurnDirection.RIGHT)
-            Spacer(Modifier.weight(1f))
-            if (nav.etaText.isNotBlank()) {
-                Text(
-                    text = nav.etaText,
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
+            LaneArrow(Icons.Outlined.TurnLeft, nav.turnDirection == MapsTurnDirection.LEFT, "cockpit-nav-lane-0")
+            LaneArrow(Icons.Outlined.ArrowUpward, straightActive, "cockpit-nav-lane-1")
+            LaneArrow(Icons.Outlined.ArrowUpward, straightActive, "cockpit-nav-lane-2")
+            LaneArrow(Icons.Outlined.TurnRight, nav.turnDirection == MapsTurnDirection.RIGHT, "cockpit-nav-lane-3")
         }
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -966,15 +962,88 @@ private fun NavigationCard(
                 }
             }
         }
+        NavigationTripFooter(nav)
+    }
+}
+
+/**
+ * Muted trip line under the turn header: kilometres driven and left, the arrival estimate when the
+ * notification has one, and a 2 dp progress hairline at the very bottom of the card.
+ */
+@Composable
+private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
+    val remaining = nav.remainingTripKm
+    val drove = nav.droveTripKm
+    val trip = if (remaining != null && drove != null) {
+        TripProgress(startKm = drove + remaining, remainingKm = remaining, droveKm = drove)
+    } else {
+        null
+    }
+    if (trip == null && nav.etaText.isBlank()) return
+    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Tiny)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            if (trip != null) {
+                Text(
+                    text = TripDistanceFormat.footer(trip.droveKm, trip.remainingKm, nav.tripUsesMiles),
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = CockpitTokens.NavTripTextSize,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("cockpit-nav-trip-text"),
+                )
+            } else {
+                Spacer(Modifier.weight(1f))
+            }
+            if (nav.etaText.isNotBlank()) {
+                Text(
+                    text = nav.etaText,
+                    style = MaterialTheme.typography.labelSmall.copy(
+                        fontSize = CockpitTokens.NavTripTextSize,
+                        fontFeatureSettings = "tnum",
+                    ),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (trip != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(CockpitTokens.NavProgressHairline)
+                    .clip(CircleShape)
+                    .background(CockpitLivePalette.Charcoal)
+                    .testTag("cockpit-nav-progress"),
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(trip.fraction)
+                        .fillMaxHeight()
+                        .background(MaterialTheme.colorScheme.tertiary),
+                )
+            }
+        }
     }
 }
 
 @Composable
-private fun LaneArrow(icon: ImageVector, active: Boolean) {
+private fun LaneArrow(icon: ImageVector, active: Boolean, tag: String) {
     Icon(
         imageVector = icon,
         contentDescription = null,
         tint = if (active) CockpitLivePalette.White else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier.size(CockpitTokens.NavLaneArrow),
+        modifier = Modifier
+            .size(CockpitTokens.NavLaneArrow)
+            .testTag(tag),
     )
 }

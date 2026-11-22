@@ -34,6 +34,15 @@ jobs:
           distribution: temurin
           java-version: 17
       - uses: gradle/actions/setup-gradle@v4
+      # Robolectric downloads its Android jars from Maven Central into ~/.m2. Caching them stops
+      # runs from hitting Maven Central's HTTP 429 rate limit when several pull requests build at once.
+      - name: Cache Robolectric Android jars
+        uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository/org/robolectric
+          key: robolectric-jars-${{ runner.os }}-${{ hashFiles('app/build.gradle.kts') }}
+          restore-keys: |
+            robolectric-jars-${{ runner.os }}-
       # The same run renders the screens and writes the screenshots that UI review needs.
       - name: Unit tests and screenshots
         run: ./gradlew testDebugUnitTest -PrecordScreenshots

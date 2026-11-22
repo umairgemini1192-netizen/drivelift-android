@@ -217,8 +217,9 @@ class DropMdnsResponder(
     @Synchronized
     fun start(ipv4: String): Boolean {
         stop()
-        if (lockHeld.compareAndSet(false, true)) lock.acquire()
         return try {
+            // Acquiring is inside the guard: a lock that throws must end in "false", not a crash.
+            if (lockHeld.compareAndSet(false, true)) lock.acquire()
             val ip = InetAddress.getByName(ipv4).address
             require(ip.size == 4) { "Not an IPv4 address" }
             answer = MdnsPacket.buildAddressAnswer(hostName, ip)
@@ -237,9 +238,9 @@ class DropMdnsResponder(
                 start()
             }
             true
-        } catch (e: Exception) {
+        } catch (e: Throwable) {
             warn("mDNS responder could not start: ${e.message}")
-            stop()
+            runCatching { stop() }
             false
         }
     }
@@ -251,10 +252,19 @@ class DropMdnsResponder(
         socket = null
         worker = null
         if (sock != null) runCatching { sock.close() }
-        if (lockHeld.compareAndSet(true, false)) lock.release()
+        if (lockHeld.compareAndSet(true, false)) runCatching { lock.release() }
     }
 
     private fun listen(sock: MulticastSocket, group: InetAddress) {
+        // A thread that dies with an uncaught Throwable would take the whole app process with it.
+        try {
+            listenLoop(sock, group)
+        } catch (e: Throwable) {
+            warn("mDNS listener stopped: ${e.message}")
+        }
+    }
+
+    private fun listenLoop(sock: MulticastSocket, group: InetAddress) {
         val buffer = ByteArray(MAX_PACKET)
         runCatching { send(sock, answer, group, port) }
         while (!sock.isClosed) {

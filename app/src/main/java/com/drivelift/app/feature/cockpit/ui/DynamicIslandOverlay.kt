@@ -424,6 +424,7 @@ private fun RowScope.CollapsedPillBody(primary: CockpitLiveActivity, accent: Col
         is CockpitLiveActivity.CallActivity -> CollapsedCallContent(primary)
         is CockpitLiveActivity.ScreenRecordingActivity -> CollapsedRecordingContent(primary)
         is CockpitLiveActivity.MapsNavActivity -> CollapsedNavigationContent(primary, accent)
+        is CockpitLiveActivity.IdleQuickDockActivity -> CollapsedIdleNetworkContent()
         else -> {
             Row(
                 modifier = Modifier.weight(1f, fill = false),

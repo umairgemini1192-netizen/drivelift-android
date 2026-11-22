@@ -12,6 +12,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -60,6 +61,8 @@ import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
 import com.drivelift.app.feature.cockpit.hardware.BluetoothTileState
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.feature.cockpit.hardware.MobileDataTileState
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.RingerTileState
@@ -75,11 +78,15 @@ import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.LocalCockpitNowMs
+import com.drivelift.app.feature.cockpit.ui.LocalIdleNetworkOverride
+import com.drivelift.app.feature.cockpit.ui.PermissionRow
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
+import com.drivelift.app.feature.cockpit.widget.CockpitWidgetModel
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
+import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.Tokens
 import com.drivelift.app.ui.appVersionLabel
 import com.github.takahirom.roborazzi.captureRoboImage
@@ -432,7 +439,8 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("11:15 PM").assertIsDisplayed()
                 compose.onNodeWithText("Alarm 06:30 AM").assertExists()
                 compose.onNodeWithText("Rings in 07:14:22").assertExists()
-                compose.onNodeWithText("Drop 55.3 MB/s").assertExists()
+                compose.onNodeWithText("DROP LIVE").assertExists()
+                compose.onNodeWithText("Stop").assertExists()
                 compose.onNodeWithTag("cockpit-widget-battery-gauge").assertExists()
                 compose.onNodeWithTag("cockpit-widget-ram-gauge").assertExists()
                 compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
@@ -927,8 +935,8 @@ class CockpitUiScreenshotTest {
                 .performClick()
             pump(8)
 
-            compose.onNodeWithText("Drop 42.0 MB/s").assertIsDisplayed()
-            compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Drop On"))
+            compose.onNodeWithText("DROP LIVE").assertIsDisplayed()
+            compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Stop"))
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1].assert(hasText("Torch On"))
             compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1].assert(hasText("Island On"))
         }
@@ -967,6 +975,8 @@ class CockpitUiScreenshotTest {
         roadText = "North",
         destinationText = "San Francisco",
         notificationKey = "notif_nav_v3",
+        remainingTripKm = 8.4,
+        droveTripKm = 3.2,
     )
 
     private fun v3Slot(queue: List<CockpitLiveActivity>, index: Int = 0) = CockpitSlotState(
@@ -1202,6 +1212,27 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("North").assertIsDisplayed()
                 compose.onNodeWithText("San Francisco").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-nav-card").assertIsDisplayed()
+
+                // Four lane arrows share the full row evenly: first at the left edge, last at the right edge.
+                val lanes = compose.onNodeWithTag("cockpit-nav-lanes").assertIsDisplayed().getBoundsInRoot()
+                val arrows = (0..3).map { index ->
+                    compose.onNodeWithTag("cockpit-nav-lane-$index").assertIsDisplayed().getBoundsInRoot()
+                }
+                assertTrue("first arrow sits at the left edge", (arrows.first().left - lanes.left).value < 1f)
+                assertTrue("last arrow sits at the right edge", (lanes.right - arrows.last().right).value < 1f)
+                val gaps = arrows.zipWithNext().map { (a, b) -> (b.left - a.right).value }
+                assertTrue("arrow gaps must be even: $gaps", gaps.max() - gaps.min() < 1f)
+
+                // Trip footer and its hairline never crowd the 90 ft header.
+                compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true)
+                    .assert(hasText("3.2 km drove \u00B7 8.4 km left"))
+                    .assertIsDisplayed()
+                val header = compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true).getBoundsInRoot()
+                val tripText = compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true).getBoundsInRoot()
+                val hairline = compose.onNodeWithTag("cockpit-nav-progress").assertIsDisplayed().getBoundsInRoot()
+                assertTrue("trip text sits below the turn header", tripText.top >= header.bottom)
+                assertTrue("hairline is the last line of the card", hairline.top >= tripText.bottom)
+                assertEquals("hairline is 2dp", 2f, hairline.height.value, 0.6f)
             },
         )
     }
@@ -1426,6 +1457,227 @@ class CockpitUiScreenshotTest {
             pump(18)
             assertEquals(0, compose.onAllNodesWithTag("cockpit-call-timer", useUnmergedTree = true).fetchSemanticsNodes().size)
         }
+    }
+
+
+    private val manyPinned by lazy {
+        listOf(
+            PinnedAppInfo("com.alfalah.mobile", "Alfa", iconBitmap = syntheticIconBitmap(0xFF34D399.toInt())),
+            PinnedAppInfo("com.android.chrome", "Chrome", iconBitmap = syntheticIconBitmap(0xFF38BDF8.toInt())),
+            PinnedAppInfo("com.google.android.apps.maps", "Maps", iconBitmap = syntheticIconBitmap(0xFFA596FF.toInt())),
+            PinnedAppInfo("com.whatsapp", "WhatsApp", iconBitmap = syntheticIconBitmap(0xFF22D3EE.toInt())),
+            PinnedAppInfo("com.google.android.apps.photos", "Photos", iconBitmap = syntheticIconBitmap(0xFFFBBF24.toInt())),
+            PinnedAppInfo("com.google.android.deskclock", "Clock", iconBitmap = syntheticIconBitmap(0xFFFF6482.toInt())),
+        )
+    }
+
+    @Test
+    fun v3MasterWidgetShowsLargeClockLivePillStopTileCurrentAndPagedDock() {
+        val draining = BatteryHudMetric(
+            percent = 62,
+            fraction = 0.62f,
+            valueText = "62%",
+            label = "BATT",
+            isCharging = false,
+            current = CockpitWidgetModel.formatBatteryCurrent(microAmps = -510_000L, isCharging = false),
+        )
+        val charging = BatteryHudMetric(
+            percent = 84,
+            fraction = 0.84f,
+            valueText = "84%",
+            label = "CHRG",
+            isCharging = true,
+            current = CockpitWidgetModel.formatBatteryCurrent(microAmps = 2_450_000L, isCharging = true),
+        )
+        val ram = CockpitHudBitmapRenderer.formatRamHudMetric(
+            availBytes = (1.8 * 1024 * 1024 * 1024).toLong(),
+            totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+        )
+        launchAndAssert(
+            name = "cockpit-v3-master-widget",
+            directory = v3Directory,
+            content = {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = Tokens.Medium, vertical = Tokens.Edge),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                ) {
+                    // Idle: READY pill, Drop tile, battery draining.
+                    CockpitMasterWidgetCard(
+                        clockTimeLabel = "05:34 PM",
+                        clockDateLabel = "Sun \u00B7 Nov 22",
+                        alarm = syntheticAlarm,
+                        telemetry = DriveLiftTelemetrySummary(isDesktopDropRunning = false, isDropAvailable = true),
+                        freeStorageLabel = "118 GB free",
+                        batteryLabel = "62% batt",
+                        torchOn = false,
+                        islandOn = true,
+                        pinnedApps = manyPinned,
+                        batteryMetric = draining,
+                        ramMetric = ram,
+                    )
+                    // Drop live: DROP LIVE pill, Stop tile, battery charging.
+                    CockpitMasterWidgetCard(
+                        clockTimeLabel = "05:34 PM",
+                        clockDateLabel = "Sun \u00B7 Nov 22",
+                        alarm = syntheticAlarm,
+                        telemetry = syntheticTelemetry,
+                        freeStorageLabel = "118 GB free",
+                        batteryLabel = "84% batt",
+                        torchOn = false,
+                        islandOn = true,
+                        pinnedApps = manyPinned,
+                        batteryMetric = charging,
+                        ramMetric = ram,
+                    )
+                }
+            },
+            verify = {
+                compose.onAllNodesWithText("READY")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("DROP LIVE")[0].assertIsDisplayed()
+                compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[0].assert(hasText("Drop"))
+                compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Stop"))
+                compose.onAllNodesWithTag("cockpit-widget-battery-current")[0].assert(hasText("-510 mA"))
+                compose.onAllNodesWithTag("cockpit-widget-battery-current")[1].assert(hasText("+2,450 mA"))
+
+                // Nothing on the first card may leave it.
+                val card = compose.onAllNodesWithTag("cockpit-master-widget-card")[0].getBoundsInRoot()
+                for (tag in listOf(
+                    "cockpit-widget-status-badge",
+                    "cockpit-widget-battery-gauge",
+                    "cockpit-widget-battery-current",
+                    "cockpit-widget-ram-gauge",
+                    "cockpit-widget-alarm-pill",
+                    "cockpit-widget-pinned-row",
+                )) {
+                    val bounds = compose.onAllNodesWithTag(tag)[0].assertIsDisplayed().getBoundsInRoot()
+                    assertTrue("$tag clipped on the left", bounds.left >= card.left)
+                    assertTrue("$tag clipped on the right", bounds.right <= card.right)
+                    assertTrue("$tag clipped at the bottom", bounds.bottom <= card.bottom)
+                }
+
+                // Six pinned apps make two pages of four; the arrows are real 48dp targets.
+                compose.onAllNodesWithTag("cockpit-widget-pinned-prev")[0]
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .assertIsDisplayed()
+                compose.onAllNodesWithTag("cockpit-widget-pinned-next")[0]
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .assertIsDisplayed()
+                compose.onAllNodesWithTag("cockpit-widget-pinned-dots")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("Alfa")[0].assertIsDisplayed()
+                compose.onAllNodesWithTag("cockpit-widget-pinned-next")[0].performClick()
+                pump(6)
+                compose.onAllNodesWithText("Photos")[0].assertIsDisplayed()
+                compose.onAllNodesWithTag("cockpit-widget-pinned-prev")[0].performClick()
+                pump(6)
+                compose.onAllNodesWithText("Alfa")[0].assertIsDisplayed()
+            },
+        )
+    }
+
+    @Test
+    fun v3AccessibilityRowShowsNeedsReenableWhenTheServiceIsListedButNotConnected() {
+        launchAndAssert(
+            name = "cockpit-v3-accessibility-health",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    GlassPanel(Modifier.fillMaxWidth()) {
+                        Column(
+                            modifier = Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            PermissionRow(
+                                title = "Accessibility overlay: connected",
+                                body = "Enabled in Settings and bound by Android.",
+                                granted = true,
+                                onGrant = {},
+                                tag = "perm-connected",
+                            )
+                            PermissionRow(
+                                title = "Accessibility overlay: suspended",
+                                body = "Enabled in Settings but Android is not running it.",
+                                granted = false,
+                                onGrant = {},
+                                tag = "perm-suspended",
+                                needsReenable = true,
+                            )
+                            PermissionRow(
+                                title = "Accessibility overlay: off",
+                                body = "Not enabled in Settings.",
+                                granted = false,
+                                onGrant = {},
+                                tag = "perm-off",
+                            )
+                        }
+                    }
+                }
+            },
+            verify = {
+                compose.onNodeWithText("Granted").assertIsDisplayed()
+                compose.onNodeWithText("Needs Re-enable").assertIsDisplayed()
+                compose.onNodeWithTag("perm-suspended-needs-reenable").assertIsDisplayed()
+                compose.onNodeWithTag("perm-suspended").assertHeightIsAtLeast(Tokens.TouchTarget).assertIsDisplayed()
+                compose.onNodeWithTag("perm-off").assertHeightIsAtLeast(Tokens.TouchTarget)
+                assertEquals(1, compose.onAllNodesWithText("Open Accessibility settings").fetchSemanticsNodes().size)
+            },
+        )
+    }
+
+    @Test
+    fun v3IdlePillShowsNetworkOnTheLeftAndLiveSpeedOnTheRight() {
+        val idle = CockpitSlotState()
+        val wifi = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.WIFI,
+            label = "Wi-Fi",
+            uploadBytesPerSec = 12L * 1024L,
+            downloadBytesPerSec = (1.4 * 1024 * 1024).toLong(),
+        )
+        val cellular = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.CELLULAR,
+            label = "5G",
+            uploadBytesPerSec = 640L * 1024L,
+            downloadBytesPerSec = 18L * 1024L * 1024L,
+        )
+        val offline = IdleNetworkSnapshot(kind = IdleNetworkKind.OFFLINE, label = "Offline")
+        launchAndAssert(
+            name = "cockpit-v3-idle-pill",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Wi-Fi, 12K up, 1.4M down") {
+                        CompositionLocalProvider(LocalIdleNetworkOverride provides wifi) { V3Pill(idle) }
+                    }
+                    V3Section("Mobile data, 5G") {
+                        CompositionLocalProvider(LocalIdleNetworkOverride provides cellular) { V3Pill(idle) }
+                    }
+                    V3Section("Offline") {
+                        CompositionLocalProvider(LocalIdleNetworkOverride provides offline) { V3Pill(idle) }
+                    }
+                }
+            },
+            verify = {
+                compose.onAllNodesWithText("Wi-Fi")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("5G")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("Offline")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("12K")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("1.4M")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("640K")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("18M")[0].assertIsDisplayed()
+                assertEquals(0, compose.onAllNodesWithText("Cockpit").fetchSemanticsNodes().size)
+                assertEquals(0, compose.onAllNodesWithText("Ready").fetchSemanticsNodes().size)
+
+                // The connection stays left of the speeds, and both stay inside the pill.
+                val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+                for (index in 0..1) {
+                    val pill = pills[index].assertIsDisplayed().getBoundsInRoot()
+                    val net = compose.onAllNodesWithTag("cockpit-idle-network")[index].assertIsDisplayed().getBoundsInRoot()
+                    val speed = compose.onAllNodesWithTag("cockpit-idle-speed")[index].assertIsDisplayed().getBoundsInRoot()
+                    assertTrue("connection ends before the speeds start", net.right <= speed.left)
+                    assertTrue("connection stays inside the pill", net.left >= pill.left)
+                    assertTrue("speeds stay inside the pill", speed.right <= pill.right)
+                }
+            },
+        )
     }
 
     private fun syntheticIconBitmap(argb: Int): Bitmap =

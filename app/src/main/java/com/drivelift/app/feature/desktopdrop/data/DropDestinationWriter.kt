@@ -18,6 +18,7 @@ data class CommittedDropFile(
     val destinationLabel: String,
     val sizeBytes: Long,
     val uriString: String? = null,
+    val mimeType: String? = null,
 )
 
 interface DropDestinationWriter {
@@ -134,6 +135,7 @@ class DirectoryDropDestinationWriter(
             destinationLabel = label,
             sizeBytes = expectedBytes,
             uriString = finalFile.toURI().toString(),
+            mimeType = DropPathSanitizer.resolveMimeType(finalName, mimeType),
         )
     }
 }
@@ -190,7 +192,7 @@ class AndroidDropDestinationWriter(
             }
             partFile.delete()
             val label = if (subdirs.isEmpty()) rootLabel else "$rootLabel/${subdirs.joinToString("/")}"
-            CommittedDropFile(finalName, label, expectedBytes, doc.uri.toString())
+            CommittedDropFile(finalName, label, expectedBytes, doc.uri.toString(), mimeType)
         } catch (e: Exception) {
             runCatching { doc.delete() }
             throw e
@@ -225,7 +227,7 @@ class AndroidDropDestinationWriter(
             }
             resolver.update(uri, ContentValues().apply { put(MediaStore.Downloads.IS_PENDING, 0) }, null, null)
             partFile.delete()
-            CommittedDropFile(cleanName, relPath, expectedBytes, uri.toString())
+            CommittedDropFile(cleanName, relPath, expectedBytes, uri.toString(), mimeType)
         } catch (e: Exception) {
             runCatching { resolver.delete(uri, null, null) }
             throw e
