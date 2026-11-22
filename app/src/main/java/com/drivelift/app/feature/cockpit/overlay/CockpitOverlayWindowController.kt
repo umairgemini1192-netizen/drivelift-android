@@ -38,6 +38,7 @@ import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.notifications.CockpitNotificationListener
+import com.drivelift.app.feature.cockpit.ui.CockpitActivityActions
 import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.ui.DriveLiftTheme
@@ -260,6 +261,45 @@ internal class CockpitOverlayWindowController(
                 val telemetry by cockpit.telemetryAdapter.summary.collectAsStateWithLifecycle()
                 val torchState by cockpit.torchController.state.collectAsStateWithLifecycle()
                 val quickControls by cockpit.quickControlsController.state.collectAsStateWithLifecycle()
+                val callAudio by cockpit.callActionsController.audioState.collectAsStateWithLifecycle()
+                val activityActions = remember(cockpit) {
+                    CockpitActivityActions(
+                        onAnswerCall = { call ->
+                            if (!cockpit.callActionsController.answer(call.notificationKey)) {
+                                launchActivityTarget(call)
+                            }
+                        },
+                        onDeclineCall = { call ->
+                            if (!cockpit.callActionsController.decline(call.notificationKey)) {
+                                launchActivityTarget(call)
+                            }
+                        },
+                        onHangUpCall = { call ->
+                            if (!cockpit.callActionsController.hangUp(call.notificationKey)) {
+                                launchActivityTarget(call)
+                            }
+                        },
+                        onToggleMute = { call -> cockpit.callActionsController.toggleMute(call.notificationKey) },
+                        onCycleAudioOutput = { call ->
+                            cockpit.callActionsController.cycleAudioOutput(call.notificationKey)
+                        },
+                        onOpenCall = { call ->
+                            launchActivityTarget(call)
+                            cockpit.coordinator.setExpanded(false)
+                        },
+                        onStopRecording = { recording ->
+                            cockpit.callActionsController.stopRecording(recording.notificationKey)
+                            cockpit.coordinator.setExpanded(false)
+                        },
+                        onOpenNavigation = { nav ->
+                            launchActivityTarget(nav)
+                            cockpit.coordinator.setExpanded(false)
+                        },
+                        onRefreshCallAudio = { call ->
+                            cockpit.callActionsController.refreshAudioState(call.notificationKey)
+                        },
+                    )
+                }
                 val pinnedApps = remember(prefs.pinnedPackages) {
                     cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
                 }
@@ -317,8 +357,8 @@ internal class CockpitOverlayWindowController(
                                     cockpit.coordinator.setExpanded(false)
                                 },
                                 onTapSecondary = { activity ->
+                                    // The satellite bubble swaps into the primary slot without expanding.
                                     cockpit.coordinator.focusActivity(activity.id)
-                                    cockpit.coordinator.setExpanded(true)
                                 },
                                 onExpand = {
                                     CockpitHaptics.performClick(serviceContext)
@@ -370,6 +410,8 @@ internal class CockpitOverlayWindowController(
                                     cockpit.pinnedAppsRepo.launchApp(pkg)
                                     cockpit.coordinator.setExpanded(false)
                                 },
+                                callAudio = callAudio,
+                                activityActions = activityActions,
                                 modifier = if (fullOverlayActive) {
                                     Modifier.offset(
                                         x = prefs.cutoutOffsetX.dp,
@@ -410,6 +452,23 @@ internal class CockpitOverlayWindowController(
         val cockpit = Graph.get(serviceContext).cockpit
         when (activity) {
             is CockpitLiveActivity.TransferActivity -> openDriveLiftApp()
+            is CockpitLiveActivity.CallActivity -> {
+                if (!CockpitNotificationListener.launchNotification(activity.notificationKey) &&
+                    !cockpit.callActionsController.openCall(activity.notificationKey)
+                ) {
+                    if (!cockpit.pinnedAppsRepo.launchApp(activity.packageName)) openDriveLiftApp()
+                }
+            }
+            is CockpitLiveActivity.ScreenRecordingActivity -> {
+                if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
+                    openDriveLiftApp()
+                }
+            }
+            is CockpitLiveActivity.MediaActivity -> {
+                if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
+                    if (!cockpit.pinnedAppsRepo.launchApp(activity.packageName)) openDriveLiftApp()
+                }
+            }
             is CockpitLiveActivity.WhatsAppAlertActivity -> {
                 if (!CockpitNotificationListener.launchNotification(activity.notificationKey)) {
                     val pkg = if (activity.isBusiness) "com.whatsapp.w4b" else "com.whatsapp"

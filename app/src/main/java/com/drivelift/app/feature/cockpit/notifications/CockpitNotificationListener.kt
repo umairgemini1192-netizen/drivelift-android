@@ -1,23 +1,24 @@
 package com.drivelift.app.feature.cockpit.notifications
 
-import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.app.RemoteInput
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Listens for WhatsApp, Google Maps turn-by-turn, Clock timers/stopwatches, and audio/screen
- * recording notifications, forwarding parsed activities into [CockpitStateCoordinator] and
- * caching [RemoteInput] / content intents for inline quick actions from the expanded Cockpit card.
+ * Listens for phone and VoIP calls, SystemUI screen recording, Google Maps and Waze navigation,
+ * WhatsApp, Clock timers/stopwatches, and audio recording notifications, forwarding parsed
+ * activities into [CockpitStateCoordinator] and caching [RemoteInput] / content intents (and the
+ * call and screen recording buttons, through [CockpitCallActionsController]) for quick actions
+ * from the Cockpit card.
  */
 class CockpitNotificationListener : NotificationListenerService() {
 
@@ -44,18 +45,24 @@ class CockpitNotificationListener : NotificationListenerService() {
         if (sbn == null) return
         cachedActions.remove(sbn.key)
         runCatching {
-            Graph.get(applicationContext).cockpit.coordinator.removeByNotificationKey(sbn.key)
+            val cockpit = Graph.get(applicationContext).cockpit
+            cockpit.callActionsController.clear(sbn.key)
+            cockpit.coordinator.removeByNotificationKey(sbn.key)
         }
     }
 
     override fun onListenerDisconnected() {
         cachedActions.clear()
+        runCatching { Graph.get(applicationContext).cockpit.callActionsController.clearAll() }
         if (activeInstance === this) activeInstance = null
         super.onListenerDisconnected()
     }
 
     private fun handlePosted(sbn: StatusBarNotification) {
-        val snapshot = LiveNotificationParser.fromStatusBarNotification(sbn)
+        val snapshot = LiveNotificationParser.fromStatusBarNotification(
+            sbn = sbn,
+            context = applicationContext,
+        )
         val parsed = LiveNotificationParser.parse(snapshot)
         val cockpit = runCatching { Graph.get(applicationContext).cockpit }.getOrNull() ?: return
         val coordinator = cockpit.coordinator
@@ -64,8 +71,16 @@ class CockpitNotificationListener : NotificationListenerService() {
         }
         if (parsed == null) {
             cachedActions.remove(sbn.key)
+            cockpit.callActionsController.clear(sbn.key)
             coordinator.removeByNotificationKey(sbn.key)
             return
+        }
+        when (parsed) {
+            is CockpitLiveActivity.CallActivity ->
+                cockpit.callActionsController.cacheCall(sbn.key, sbn.notification)
+            is CockpitLiveActivity.ScreenRecordingActivity ->
+                cockpit.callActionsController.cacheScreenRecording(sbn.key, sbn.notification)
+            else -> Unit
         }
         val replyAction = sbn.notification.actions.orEmpty().firstOrNull { action ->
             action.remoteInputs?.isNotEmpty() == true && action.actionIntent != null
@@ -96,19 +111,7 @@ class CockpitNotificationListener : NotificationListenerService() {
         fun launchNotification(notificationKey: String?): Boolean {
             if (notificationKey.isNullOrBlank()) return false
             val intent = cachedActions[notificationKey]?.contentIntent ?: return false
-            return runCatching {
-                if (Build.VERSION.SDK_INT >= 34) {
-                    val options = ActivityOptions.makeBasic()
-                        .setPendingIntentBackgroundActivityStartMode(
-                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED,
-                        )
-                        .toBundle()
-                    intent.send(options)
-                } else {
-                    intent.send()
-                }
-                true
-            }.getOrDefault(false)
+            return CockpitPendingIntents.send(intent)
         }
 
         fun sendInlineReply(context: Context, notificationKey: String, replyText: String): Boolean {

@@ -13,16 +13,22 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.padding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
@@ -35,11 +41,16 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipe
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
@@ -54,6 +65,8 @@ import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.RingerTileState
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.hardware.WifiTileState
+import com.drivelift.app.feature.cockpit.notifications.CallAudioOutput
+import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
@@ -61,6 +74,7 @@ import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
 import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
+import com.drivelift.app.feature.cockpit.ui.LocalCockpitNowMs
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
@@ -86,7 +100,8 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * Renders the four DriveLift Cockpit UI surfaces across STANDARD, LARGE_FONT (1.5x), and
- * COMPACT (320dp) configurations, recording 12 screenshots under `build/outputs/screenshots/`, plus
+ * COMPACT (320dp) configurations, recording 12 screenshots under `build/outputs/screenshots/` and the
+ * Cockpit v3 live activity screenshots under `build/outputs/screenshots/v3/`, plus
  * interactive tests covering the 5-control quick deck, Torch OFF->ON scrubber reveal, disabled camera
  * state, and Charging/Low-Battery/Light-Dark widget contrast.
  */
@@ -188,7 +203,10 @@ class CockpitUiScreenshotTest {
         name: String,
         content: @androidx.compose.runtime.Composable () -> Unit,
         verify: (Variant) -> Unit,
+        directory: String = "",
     ) {
+        val folder = if (directory.isEmpty()) "" else "$directory/"
+        if (record && folder.isNotEmpty()) java.io.File("build/outputs/screenshots/$folder").mkdirs()
         for (variant in Variant.entries) {
             RuntimeEnvironment.setQualifiers(variant.qualifiers)
             RuntimeEnvironment.setFontScale(variant.fontScale)
@@ -210,7 +228,7 @@ class CockpitUiScreenshotTest {
                 verify(variant)
                 if (record) {
                     compose.onRoot().captureRoboImage(
-                        "build/outputs/screenshots/$name-${variant.name.lowercase()}.png",
+                        "build/outputs/screenshots/$folder$name-${variant.name.lowercase()}.png",
                     )
                 }
             }
@@ -277,7 +295,8 @@ class CockpitUiScreenshotTest {
             },
             verify = {
                 compose.onNodeWithText("Workstation").assertIsDisplayed()
-                compose.onNodeWithText("Turn right").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assertIsDisplayed()
+                compose.onNodeWithText("350 m").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-secondary-bubble").assertIsDisplayed()
             },
         )
@@ -912,6 +931,500 @@ class CockpitUiScreenshotTest {
             compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Drop On"))
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1].assert(hasText("Torch On"))
             compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1].assert(hasText("Island On"))
+        }
+    }
+
+    // ------------------------------------------------------------------------------------------
+    // Cockpit v3 live activities: call, screen recording, navigation and activity swapping.
+    // Images go to build/outputs/screenshots/v3/ so the flat screenshot count CI checks is unchanged.
+    // ------------------------------------------------------------------------------------------
+
+    private val v3Directory = "v3"
+    private val v3FixedNow: () -> Long = { FIXED_TIME_MS }
+
+    private fun v3Call(state: CallState, isVideo: Boolean = false) = CockpitLiveActivity.CallActivity(
+        id = "call_v3",
+        callerName = "Amina Khan",
+        sourceLabel = if (isVideo) "WhatsApp Video" else "WhatsApp Audio",
+        isVideo = isVideo,
+        state = state,
+        startedAtMs = FIXED_TIME_MS - 134_000L,
+        packageName = "com.whatsapp",
+        notificationKey = "notif_call_v3",
+    )
+
+    private fun v3Recording() = CockpitLiveActivity.ScreenRecordingActivity(
+        id = "screenrec_v3",
+        startedAtMs = FIXED_TIME_MS - 6_000L,
+        notificationKey = "notif_rec_v3",
+    )
+
+    private fun v3Navigation() = CockpitLiveActivity.MapsNavActivity(
+        maneuverText = "North",
+        distanceText = "90 ft",
+        etaText = "12 min",
+        turnDirection = MapsTurnDirection.STRAIGHT,
+        roadText = "North",
+        destinationText = "San Francisco",
+        notificationKey = "notif_nav_v3",
+    )
+
+    private fun v3Slot(queue: List<CockpitLiveActivity>, index: Int = 0) = CockpitSlotState(
+        primary = queue[index],
+        secondary = if (queue.size > 1) queue[(index + 1) % queue.size] else null,
+        visibleQueue = queue,
+        isExpanded = false,
+        activeIndex = index,
+    )
+
+    @androidx.compose.runtime.Composable
+    private fun V3Section(caption: String, content: @androidx.compose.runtime.Composable () -> Unit) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(Tokens.Snug),
+        ) {
+            Text(
+                text = caption,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            content()
+        }
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun V3Pill(slot: CockpitSlotState) {
+        CollapsedSplitIslandRow(
+            slotState = slot,
+            widthDeltaDp = 0,
+            onTapPrimary = {},
+            onTapSecondary = {},
+            onLongPressExpand = {},
+            onCycleNext = {},
+            onCyclePrevious = {},
+        )
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun V3Card(
+        slot: CockpitSlotState,
+        audio: CallAudioUiState = CallAudioUiState(),
+        onCollapse: () -> Unit = {},
+        onCycleNext: () -> Unit = {},
+        onCyclePrevious: () -> Unit = {},
+    ) {
+        ExpandedCockpitCard(
+            slotState = slot.copy(isExpanded = true),
+            telemetry = syntheticTelemetry,
+            torchState = TorchUiState(available = true),
+            pinnedApps = syntheticPinned,
+            onCollapse = onCollapse,
+            onCycleNext = onCycleNext,
+            onCyclePrevious = onCyclePrevious,
+            onSoftDismiss = {},
+            onRestoreDismissed = {},
+            onTapActivity = {},
+            onStopDesktopDrop = {},
+            onOpenDriveLiftCockpit = {},
+            onToggleInlineReply = {},
+            onSendWhatsAppReply = { _, _ -> },
+            onToggleTorch = {},
+            onTorchBrightnessChange = {},
+            onToggleTorchSos = {},
+            onLaunchPinnedApp = {},
+            callAudio = audio,
+        )
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun V3Frame(content: @androidx.compose.runtime.Composable () -> Unit) {
+        CompositionLocalProvider(LocalCockpitNowMs provides v3FixedNow) {
+            Column(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(horizontal = Tokens.Medium, vertical = Tokens.Edge),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(Tokens.Section),
+            ) {
+                content()
+            }
+        }
+    }
+
+    @Test
+    fun v3IncomingCallBannerKeepsDeclineAndAnswerClearOfTheCallerName() {
+        val slot = v3Slot(listOf(v3Call(CallState.INCOMING)))
+        launchAndAssert(
+            name = "cockpit-v3-call-incoming",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Collapsed ringing pill") { V3Pill(slot) }
+                    V3Section("Auto-expanded incoming banner") { V3Card(slot) }
+                }
+            },
+            verify = {
+                compose.onNodeWithTag("cockpit-call-incoming").assertIsDisplayed()
+                val decline = compose.onNodeWithTag("cockpit-call-decline")
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .getBoundsInRoot()
+                val answer = compose.onNodeWithTag("cockpit-call-answer")
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .getBoundsInRoot()
+                val caller = compose.onNodeWithTag("cockpit-call-caller").assertIsDisplayed().getBoundsInRoot()
+                assertTrue("name must end before Decline", caller.right <= decline.left)
+                assertTrue("Decline must end before Answer", decline.right <= answer.left)
+                compose.onNodeWithText("WhatsApp Audio").assertIsDisplayed()
+            },
+        )
+    }
+
+    @Test
+    fun v3OngoingCallShowsTimerWaveformAndFourEvenlySpacedCircularControls() {
+        val slot = v3Slot(listOf(v3Call(CallState.ONGOING)))
+        launchAndAssert(
+            name = "cockpit-v3-call-ongoing",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Collapsed pill: timer and waveform") { V3Pill(slot) }
+                    V3Section("Expanded card: speaker on, microphone live") {
+                        V3Card(slot, audio = CallAudioUiState(isMuted = false, output = CallAudioOutput.SPEAKER))
+                    }
+                    V3Section("Expanded card: earpiece, microphone muted") {
+                        V3Card(slot, audio = CallAudioUiState(isMuted = true, output = CallAudioOutput.EARPIECE))
+                    }
+                }
+            },
+            verify = {
+                compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assert(hasText("02:14"))
+                val timer = compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).getBoundsInRoot()
+                val waveform = compose.onNodeWithTag("cockpit-call-waveform", useUnmergedTree = true).assertIsDisplayed().getBoundsInRoot()
+                assertTrue("timer must end before the waveform", timer.right <= waveform.left)
+
+                compose.onAllNodesWithTag("cockpit-call-subtitle", useUnmergedTree = true)[0].assert(hasText("WhatsApp Audio · 02:14"))
+                compose.onAllNodesWithTag("cockpit-call-info")[0].assertHeightIsAtLeast(Tokens.TouchTarget)
+
+                for (cardIndex in 0..1) {
+                    val tags = listOf("cockpit-call-audio", "cockpit-call-mute", "cockpit-call-open", "cockpit-call-hangup")
+                    val card = compose.onAllNodesWithTag("cockpit-expanded-card")[cardIndex].getBoundsInRoot()
+                    val buttons = tags.map { tag ->
+                        compose.onAllNodesWithTag(tag)[cardIndex]
+                            .assertHeightIsAtLeast(Tokens.TouchTarget)
+                            .assertWidthIsAtLeast(Tokens.TouchTarget)
+                            .getBoundsInRoot()
+                    }
+                    buttons.zipWithNext().forEach { (left, right) ->
+                        assertTrue("controls must not overlap", left.right <= right.left)
+                    }
+                    buttons.forEach { bounds ->
+                        assertTrue("control clipped on the left", bounds.left >= card.left)
+                        assertTrue("control clipped on the right", bounds.right <= card.right)
+                    }
+                    val gaps = buttons.zipWithNext().map { (left, right) -> (right.left - left.right).value }
+                    assertTrue("gaps must be balanced: $gaps", gaps.max() - gaps.min() < 1f)
+                }
+            },
+        )
+    }
+
+    @Test
+    fun v3DualActivityPillShowsASatelliteBubbleBesideThePrimaryPill() {
+        val callAndRecording = v3Slot(listOf(v3Call(CallState.ONGOING), v3Recording()))
+        val swiped = v3Slot(listOf(v3Call(CallState.ONGOING), v3Recording(), v3Navigation()), index = 1)
+        launchAndAssert(
+            name = "cockpit-v3-dual-activity",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Call with screen recording in the satellite") { V3Pill(callAndRecording) }
+                    V3Section("Swiped once: recording leads, navigation follows") { V3Pill(swiped) }
+                }
+            },
+            verify = {
+                val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+                val bubbles = compose.onAllNodesWithTag("cockpit-secondary-bubble")
+                val root = compose.onRoot().getBoundsInRoot()
+                for (index in 0..1) {
+                    val pill = pills[index].assertIsDisplayed().getBoundsInRoot()
+                    val bubble = bubbles[index].assertIsDisplayed().getBoundsInRoot()
+                    assertTrue("satellite must sit beside the pill", pill.right <= bubble.left)
+                    assertTrue("satellite must stay on screen", bubble.right <= root.right)
+                    assertTrue("pill must stay on screen", pill.left >= root.left)
+                }
+            },
+        )
+    }
+
+    @Test
+    fun v3ScreenRecordingPillShowsTimerAndAWhiteRingedStopButton() {
+        val slot = v3Slot(listOf(v3Recording()))
+        launchAndAssert(
+            name = "cockpit-v3-screen-recording",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Collapsed pill: pulsing dot and timer") { V3Pill(slot) }
+                    V3Section("Expanded banner with Stop") { V3Card(slot) }
+                }
+            },
+            verify = {
+                compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assert(hasText("00:06"))
+                compose.onNodeWithTag("cockpit-recording-clock", useUnmergedTree = true).assert(hasText("00:06"))
+                compose.onNodeWithText("Screen Recording").assertIsDisplayed()
+                val clock = compose.onNodeWithTag("cockpit-recording-clock", useUnmergedTree = true).getBoundsInRoot()
+                val stop = compose.onNodeWithTag("cockpit-recording-stop")
+                    .assertHeightIsAtLeast(Tokens.TouchTarget)
+                    .assertWidthIsAtLeast(Tokens.TouchTarget)
+                    .getBoundsInRoot()
+                assertTrue("Stop must sit right of the timer", clock.right <= stop.left)
+            },
+        )
+    }
+
+    @Test
+    fun v3NavigationCardShowsDistanceRoadAndDestinationWithoutTruncation() {
+        val slot = v3Slot(listOf(v3Navigation()))
+        launchAndAssert(
+            name = "cockpit-v3-navigation",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Collapsed pill: maneuver arrow and distance") { V3Pill(slot) }
+                    V3Section("Expanded navigation card") { V3Card(slot) }
+                }
+            },
+            verify = {
+                compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assert(hasText("90 ft"))
+                compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true).assert(hasText("90 ft")).assertIsDisplayed()
+                compose.onNodeWithText("North").assertIsDisplayed()
+                compose.onNodeWithText("San Francisco").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-nav-card").assertIsDisplayed()
+            },
+        )
+    }
+
+    @Test
+    fun v3HorizontalSwipeSwapsAndVerticalSwipeCollapsesNeverBoth() {
+        var nextCount = 0
+        var previousCount = 0
+        var collapseCount = 0
+        val slot = v3Slot(listOf(v3Call(CallState.ONGOING), v3Recording()))
+
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            V3Frame {
+                                V3Card(
+                                    slot = slot,
+                                    onCollapse = { collapseCount++ },
+                                    onCycleNext = { nextCount++ },
+                                    onCyclePrevious = { previousCount++ },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            // Swipe left cycles forward; nothing collapses.
+            compose.onNodeWithTag("cockpit-expanded-card").performTouchInput { swipeLeft() }
+            pump(4)
+            assertEquals(1, nextCount)
+            assertEquals(0, previousCount)
+            assertEquals(0, collapseCount)
+
+            // Swipe right cycles back.
+            compose.onNodeWithTag("cockpit-expanded-card").performTouchInput { swipeRight() }
+            pump(4)
+            assertEquals(1, nextCount)
+            assertEquals(1, previousCount)
+            assertEquals(0, collapseCount)
+
+            // Swipe up collapses; nothing is swapped.
+            compose.onNodeWithTag("cockpit-expanded-card").performTouchInput { swipeUp() }
+            pump(4)
+            assertEquals(1, nextCount)
+            assertEquals(1, previousCount)
+            assertEquals(1, collapseCount)
+
+            // A mostly horizontal diagonal swaps and does not collapse.
+            compose.onNodeWithTag("cockpit-expanded-card").performTouchInput {
+                swipe(
+                    start = Offset(centerX, centerY),
+                    end = Offset(centerX - 320f, centerY - 90f),
+                    durationMillis = 240,
+                )
+            }
+            pump(4)
+            assertEquals(2, nextCount)
+            assertEquals(1, collapseCount)
+
+            // A mostly vertical diagonal collapses and does not swap.
+            compose.onNodeWithTag("cockpit-expanded-card").performTouchInput {
+                swipe(
+                    start = Offset(centerX, centerY),
+                    end = Offset(centerX - 70f, centerY - 320f),
+                    durationMillis = 240,
+                )
+            }
+            pump(4)
+            assertEquals(2, nextCount)
+            assertEquals(1, previousCount)
+            assertEquals(2, collapseCount)
+        }
+    }
+
+    @Test
+    fun v3CollapsedPillSwipesBetweenActivitiesAndIgnoresVerticalDrags() {
+        var nextCount = 0
+        var previousCount = 0
+        var satelliteTaps = 0
+        val slot = v3Slot(listOf(v3Call(CallState.ONGOING), v3Recording()))
+
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            V3Frame {
+                                CollapsedSplitIslandRow(
+                                    slotState = slot,
+                                    widthDeltaDp = 0,
+                                    onTapPrimary = {},
+                                    onTapSecondary = { satelliteTaps++ },
+                                    onLongPressExpand = {},
+                                    onCycleNext = { nextCount++ },
+                                    onCyclePrevious = { previousCount++ },
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            compose.onNodeWithTag("cockpit-collapsed-row").performTouchInput { swipeLeft() }
+            pump(4)
+            assertEquals(1, nextCount)
+            compose.onNodeWithTag("cockpit-collapsed-row").performTouchInput { swipeRight() }
+            pump(4)
+            assertEquals(1, previousCount)
+
+            // A vertical drag on the pill swaps nothing.
+            compose.onNodeWithTag("cockpit-collapsed-row").performTouchInput { swipeUp() }
+            pump(4)
+            assertEquals(1, nextCount)
+            assertEquals(1, previousCount)
+
+            // Tapping the satellite bubble asks to swap it into the primary slot.
+            compose.onNodeWithTag("cockpit-secondary-bubble").performClick()
+            pump(4)
+            assertEquals(1, satelliteTaps)
+        }
+    }
+
+    @Test
+    fun v3HubChipsSimulateEveryLiveActivityInThePreview() {
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CockpitSetupContent(
+                                prefs = CockpitPrefsState(masterEnabled = true),
+                                telemetry = syntheticTelemetry,
+                                alarm = syntheticAlarm,
+                                clockTimeLabel = "11:15 PM",
+                                clockDateLabel = "Sat, Nov 21",
+                                freeStorageLabel = "118 GB free",
+                                batteryLabel = "84% batt",
+                                torchOn = false,
+                                hasOverlay = true,
+                                hasNotifications = true,
+                                hasBatteryExemption = true,
+                                hasAccessibilityOverlay = true,
+                                hasLocationPermission = true,
+                                hasUsageAccess = true,
+                                hasBluetoothPermission = true,
+                                hasDndAccess = true,
+                                onGrantAccessibilityOverlay = {},
+                                quickControls = syntheticQuickControls,
+                                launchableApps = syntheticPinned,
+                                pinnedApps = syntheticPinned,
+                                onBack = {},
+                                onToggleMaster = {},
+                                onToggleCategory = { _, _ -> },
+                                onCalibrationChange = { _, _, _ -> },
+                                onResetCalibration = {},
+                                onTogglePinnedApp = {},
+                                onGrantOverlay = {},
+                                onGrantNotifications = {},
+                                onGrantBattery = {},
+                                onToggleTorch = {},
+                                onToggleDrop = {},
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            compose.onNodeWithTag("cockpit-preview-chips").assertIsDisplayed()
+
+            compose.onNodeWithTag("cockpit-preview-ongoing-call").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
+
+            // A ringing call opens the island on its own; Answer turns it into an ongoing pill.
+            compose.onNodeWithTag("cockpit-preview-incoming-call").performClick()
+            pump(24)
+            // The expanded preview panel is clickable, so its children only exist in the unmerged tree.
+            compose.onNodeWithTag("cockpit-call-incoming", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-call-answer", useUnmergedTree = true).performClick()
+            pump(24)
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
+
+            compose.onNodeWithTag("cockpit-preview-screen-recording").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assertIsDisplayed()
+
+            compose.onNodeWithTag("cockpit-preview-navigation").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assertIsDisplayed()
+
+            // Multi-activity: the satellite bubble appears and a tap swaps it into the primary slot.
+            compose.onNodeWithTag("cockpit-preview-multi-swap").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-secondary-bubble").assertIsDisplayed().performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-recording-timer", useUnmergedTree = true).assertIsDisplayed()
+
+            // Tapping the selected chip returns the preview to its default pair.
+            compose.onNodeWithTag("cockpit-preview-multi-swap").performClick()
+            pump(18)
+            assertEquals(0, compose.onAllNodesWithTag("cockpit-call-timer", useUnmergedTree = true).fetchSemanticsNodes().size)
         }
     }
 

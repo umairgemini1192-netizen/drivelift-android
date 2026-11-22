@@ -1,5 +1,6 @@
 package com.drivelift.app.feature.cockpit
 
+import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
@@ -12,6 +13,25 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CockpitSlotPriorityTest {
+
+    private val callActivity = CockpitLiveActivity.CallActivity(
+        id = "call_1",
+        callerName = "Amina Khan",
+        sourceLabel = "WhatsApp Audio",
+        isVideo = false,
+        state = CallState.ONGOING,
+        startedAtMs = 1_000L,
+        packageName = "com.whatsapp",
+        notificationKey = "notif_call_1",
+        updatedAtMs = 50L,
+    )
+
+    private val recordingActivity = CockpitLiveActivity.ScreenRecordingActivity(
+        id = "screenrec_1",
+        startedAtMs = 2_000L,
+        notificationKey = "notif_rec_1",
+        updatedAtMs = 60L,
+    )
 
     private val dropActivity = CockpitLiveActivity.TransferActivity(
         id = CockpitLiveActivity.ID_DESKTOP_DROP,
@@ -44,6 +64,15 @@ class CockpitSlotPriorityTest {
         updatedAtMs = 300L,
     )
 
+    private val mediaActivity = CockpitLiveActivity.MediaActivity(
+        id = "media_1",
+        title = "Evening Drive",
+        artist = "Night Radio",
+        packageName = "com.example.music",
+        notificationKey = "notif_media_1",
+        updatedAtMs = 350L,
+    )
+
     private val whatsappActivity = CockpitLiveActivity.WhatsAppAlertActivity(
         id = "wa_1",
         senderName = "Amina",
@@ -60,49 +89,165 @@ class CockpitSlotPriorityTest {
         assertTrue(state.primary is CockpitLiveActivity.IdleQuickDockActivity)
         assertNull(state.secondary)
         assertTrue(state.visibleQueue.isEmpty())
+        assertEquals(0, state.activeIndex)
     }
 
     @Test
-    fun priorityArbitrationOrdersTransferThenTimerThenMapsThenWhatsApp() {
-        val coordinator = CockpitStateCoordinator()
-        coordinator.upsertActivity(whatsappActivity)
-        coordinator.upsertActivity(mapsActivity)
-        coordinator.upsertActivity(timerActivity)
-
-        // With 3 active (Timer, Maps, WhatsApp), Primary=Timer and Secondary=Maps.
-        var state = coordinator.slotState.value
-        assertEquals(timerActivity.id, state.primary.id)
-        assertEquals(mapsActivity.id, state.secondary?.id)
-        assertEquals(listOf(timerActivity.id, mapsActivity.id, whatsappActivity.id), state.visibleQueue.map { it.id })
-
-        // Adding Transfer/Desktop Drop puts it into Primary and moves Timer to Secondary.
-        coordinator.upsertActivity(dropActivity)
-        state = coordinator.slotState.value
-        assertEquals(dropActivity.id, state.primary.id)
-        assertEquals(timerActivity.id, state.secondary?.id)
+    fun priorityConstantsAreCallThenRecordingThenNavigationThenTransferThenTimerThenMedia() {
+        assertEquals(0, callActivity.priority)
+        assertEquals(1, recordingActivity.priority)
+        assertEquals(2, mapsActivity.priority)
+        assertEquals(3, dropActivity.priority)
+        assertEquals(4, timerActivity.priority)
+        assertEquals(5, mediaActivity.priority)
+        assertTrue(whatsappActivity.priority > mediaActivity.priority)
     }
 
     @Test
-    fun swipeCyclingRotatesPrimaryAndSecondarySlotsCleanly() {
+    fun queueIsSortedByPriorityWhateverTheArrivalOrder() {
+        val coordinator = CockpitStateCoordinator()
+        listOf(whatsappActivity, mediaActivity, timerActivity, dropActivity, mapsActivity, recordingActivity, callActivity)
+            .forEach(coordinator::upsertActivity)
+
+        val state = coordinator.slotState.value
+        assertEquals(
+            listOf(
+                callActivity.id,
+                recordingActivity.id,
+                mapsActivity.id,
+                dropActivity.id,
+                timerActivity.id,
+                mediaActivity.id,
+                whatsappActivity.id,
+            ),
+            state.visibleQueue.map { it.id },
+        )
+        assertEquals(callActivity.id, state.primary.id)
+        assertEquals(recordingActivity.id, state.secondary?.id)
+        assertEquals(0, state.activeIndex)
+    }
+
+    @Test
+    fun swipeLeftAndRightWrapAroundTheQueueAndReportTheDirection() {
         val coordinator = CockpitStateCoordinator()
         coordinator.upsertActivity(timerActivity)
         coordinator.upsertActivity(mapsActivity)
         coordinator.upsertActivity(whatsappActivity)
+        // Queue by priority: Maps, Timer, WhatsApp.
 
         coordinator.cycleNext()
         var state = coordinator.slotState.value
-        assertEquals(mapsActivity.id, state.primary.id)
+        assertEquals(timerActivity.id, state.primary.id)
         assertEquals(whatsappActivity.id, state.secondary?.id)
+        assertEquals(1, state.activeIndex)
+        assertEquals(1, state.swapDirection)
 
         coordinator.cycleNext()
         state = coordinator.slotState.value
         assertEquals(whatsappActivity.id, state.primary.id)
-        assertEquals(timerActivity.id, state.secondary?.id)
+        assertEquals(mapsActivity.id, state.secondary?.id)
+        assertEquals(2, state.activeIndex)
 
-        coordinator.cyclePrevious()
+        // Swipe left on the last activity wraps to the first.
+        coordinator.cycleNext()
         state = coordinator.slotState.value
         assertEquals(mapsActivity.id, state.primary.id)
-        assertEquals(whatsappActivity.id, state.secondary?.id)
+        assertEquals(0, state.activeIndex)
+
+        // Swipe right on the first activity wraps to the last.
+        coordinator.cyclePrevious()
+        state = coordinator.slotState.value
+        assertEquals(whatsappActivity.id, state.primary.id)
+        assertEquals(2, state.activeIndex)
+        assertEquals(-1, state.swapDirection)
+
+        // Any other change reports no swap direction.
+        coordinator.setExpanded(true)
+        assertEquals(0, coordinator.slotState.value.swapDirection)
+    }
+
+    @Test
+    fun swipingWithOneActivityDoesNothing() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(callActivity)
+        coordinator.cycleNext()
+        coordinator.cyclePrevious()
+        val state = coordinator.slotState.value
+        assertEquals(callActivity.id, state.primary.id)
+        assertNull(state.secondary)
+        assertEquals(0, state.swapDirection)
+    }
+
+    @Test
+    fun tappingTheSatelliteSwapsItIntoThePrimarySlotWithoutExpanding() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(callActivity)
+        coordinator.upsertActivity(recordingActivity)
+
+        val satellite = coordinator.slotState.value.secondary!!
+        assertEquals(recordingActivity.id, satellite.id)
+        coordinator.focusActivity(satellite.id)
+
+        val state = coordinator.slotState.value
+        assertEquals(recordingActivity.id, state.primary.id)
+        assertEquals(callActivity.id, state.secondary?.id)
+        assertFalse(state.isExpanded)
+        assertEquals(1, state.swapDirection)
+    }
+
+    @Test
+    fun higherPriorityArrivalTakesFocusAndTheUsersChoiceIsRestoredWhenItEnds() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(dropActivity)
+        coordinator.upsertActivity(timerActivity)
+        coordinator.upsertActivity(whatsappActivity)
+        coordinator.cycleNext()
+        assertEquals(timerActivity.id, coordinator.slotState.value.primary.id)
+
+        // An incoming call outranks everything and takes the primary slot.
+        coordinator.upsertActivity(callActivity.copy(state = CallState.ONGOING))
+        assertEquals(callActivity.id, coordinator.slotState.value.primary.id)
+
+        // When the call ends, the Timer the user was looking at comes back, not the Transfer.
+        coordinator.removeByNotificationKey("notif_call_1")
+        val state = coordinator.slotState.value
+        assertEquals(timerActivity.id, state.primary.id)
+        assertEquals(1, state.activeIndex)
+    }
+
+    @Test
+    fun withoutAManualChoiceTheQueueFallsBackToPriorityWhenTheNewcomerEnds() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(dropActivity)
+        coordinator.upsertActivity(timerActivity)
+        coordinator.upsertActivity(recordingActivity)
+        assertEquals(recordingActivity.id, coordinator.slotState.value.primary.id)
+
+        coordinator.removeByNotificationKey("notif_rec_1")
+        assertEquals(dropActivity.id, coordinator.slotState.value.primary.id)
+    }
+
+    @Test
+    fun incomingCallExpandsTheIslandAndCollapsesWhenConnectedOrEnded() {
+        val coordinator = CockpitStateCoordinator()
+        coordinator.upsertActivity(timerActivity)
+        val ringing = callActivity.copy(state = CallState.INCOMING)
+
+        coordinator.upsertActivity(ringing)
+        assertTrue(coordinator.slotState.value.isExpanded)
+        assertEquals(ringing.id, coordinator.slotState.value.primary.id)
+
+        // Answering turns the same call into an ongoing one and the island returns to a pill.
+        coordinator.upsertActivity(ringing.copy(state = CallState.ONGOING))
+        assertFalse(coordinator.slotState.value.isExpanded)
+        assertEquals(callActivity.id, coordinator.slotState.value.primary.id)
+
+        // A ringing call that is declined collapses the island too.
+        val second = ringing.copy(id = "call_2", notificationKey = "notif_call_2")
+        coordinator.upsertActivity(second)
+        assertTrue(coordinator.slotState.value.isExpanded)
+        coordinator.removeByNotificationKey("notif_call_2")
+        assertFalse(coordinator.slotState.value.isExpanded)
     }
 
     @Test

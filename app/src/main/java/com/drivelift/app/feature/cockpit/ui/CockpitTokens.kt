@@ -37,6 +37,22 @@ object CockpitTokens {
     val HudStatusDotSize = 8.dp
     val HudWallpaperPad = 10.dp
     val HudPillSpacing = 6.dp
+    val CallAvatar = 44.dp
+    val CallActionButton = 48.dp
+    val CallControlStandard = 52.dp
+    val CallControlCompact = 44.dp
+    val CallInfoButton = 36.dp
+    val SatelliteIcon = 16.dp
+    val WaveformHeight = 18.dp
+    val WaveformBarWidth = 3.dp
+    val WaveformGap = 3.dp
+    val RecordingDot = 8.dp
+    val RecordingStopBox = 14.dp
+    val StopRingWidth = 2.dp
+    val NavManeuverBox = 56.dp
+    val NavLaneArrow = 22.dp
+    val PagerDot = 5.dp
+    val SpecularRimWidth = 1.dp
     val IslandBadgeShape = RoundedCornerShape(18.dp)
     val QuickDeckShape = RoundedCornerShape(16.dp)
     val ExpandedCardShape = RoundedCornerShape(28.dp)
@@ -54,4 +70,13 @@ object CockpitTokens {
     const val TELEMETRY_TICK_INTERVAL_MS = 20_000L
     const val RAM_DELTA_THRESHOLD_GB = 0.1
     const val SHIMMER_DURATION_MS = 1_100
+    const val WAVEFORM_PERIOD_MS = 1_800
+    const val ANSWER_PULSE_MS = 1_100
+    const val RECORDING_PULSE_MS = 1_000
+    const val SWAP_SLIDE_MS = 240
+    const val SWAP_DRAG_DAMPING = 0.35f
+    const val COMPACT_CALL_WIDTH_DP = 300
+    const val CALL_AVATAR_PX = 128
+    const val TICK_INTERVAL_MS = 1_000L
+    const val AUDIO_REFRESH_MS = 1_500L
 }

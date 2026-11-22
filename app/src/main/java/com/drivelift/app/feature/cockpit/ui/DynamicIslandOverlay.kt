@@ -1,6 +1,7 @@
 package com.drivelift.app.feature.cockpit.ui
 
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
@@ -23,7 +24,6 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,6 +32,7 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -58,11 +59,14 @@ import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
 import androidx.compose.material.icons.outlined.Devices
+import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Directions
+import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.FlashlightOff
 import androidx.compose.material.icons.outlined.FlashlightOn
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Mic
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Navigation
 import androidx.compose.material.icons.outlined.NotificationsActive
 import androidx.compose.material.icons.outlined.NotificationsOff
@@ -74,6 +78,7 @@ import androidx.compose.material.icons.outlined.TurnLeft
 import androidx.compose.material.icons.outlined.TurnRight
 import androidx.compose.material.icons.outlined.UTurnLeft
 import androidx.compose.material.icons.outlined.Vibration
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WifiOff
@@ -102,6 +107,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -110,6 +116,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
@@ -123,15 +130,19 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
+import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
+import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
+import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.cockpitSpecularRim
 import com.drivelift.app.feature.cockpit.overlay.toWideGamutP3
+import com.drivelift.app.ui.CockpitLivePalette
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
@@ -179,6 +190,8 @@ fun DynamicIslandOverlay(
     onLongPressMobileData: () -> Unit = {},
     onTapBluetooth: () -> Unit = {},
     onCycleRingerMode: () -> Unit = {},
+    callAudio: CallAudioUiState = CallAudioUiState(),
+    activityActions: CockpitActivityActions = CockpitActivityActions(),
 ) {
     val reducedMotion = LocalReducedMotion.current
     val density = LocalDensity.current
@@ -259,6 +272,26 @@ fun DynamicIslandOverlay(
     val collapseDragRangePx = with(density) { (measuredExpandedHeight * 0.65f).toPx().coerceAtLeast(160f) }
 
     val settledExpanded = slotState.isExpanded && progress >= 0.999f && !isDraggingCollapse
+    val settleSizeModifier = if (settledExpanded && !reducedMotion) {
+        Modifier.animateContentSize(
+            animationSpec = spring(
+                dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
+                stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+            ),
+        )
+    } else {
+        Modifier
+    }
+    val surfaceBrush: Brush = if (usesDedicatedCard(primary)) {
+        SolidColor(CockpitLivePalette.Oled)
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
+                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
+            ),
+        )
+    }
     val surfaceSizeModifier = if (settledExpanded) {
         Modifier.width(expandedCardWidth)
     } else {
@@ -271,21 +304,15 @@ fun DynamicIslandOverlay(
         modifier = modifier
             .then(surfaceSizeModifier)
             .clip(currentShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
-                        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
-                    ),
-                ),
-            )
+            .background(surfaceBrush)
             .cockpitSpecularRim(
                 shape = currentShape,
                 primaryAccent = accent,
                 secondaryAccent = secondaryAccent,
                 intensity = 0.95f,
                 animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
-            ),
+            )
+            .then(settleSizeModifier),
         contentAlignment = Alignment.TopCenter,
     ) {
         if (progress < 0.4f) {
@@ -316,49 +343,56 @@ fun DynamicIslandOverlay(
                     translationY = (1f - progress) * -slideOffsetPx
                 },
         ) {
-            ExpandedCockpitCardContent(
-                slotState = slotState,
-                telemetry = telemetry,
-                torchState = torchState,
-                quickControls = quickControls,
-                pinnedApps = pinnedApps,
-                cachedAppIcons = cachedAppIcons,
-                onCollapse = onCollapse,
-                onCycleNext = onCycleNext,
-                onCyclePrevious = onCyclePrevious,
-                onSoftDismiss = onSoftDismiss,
-                onRestoreDismissed = onRestoreDismissed,
-                onTapActivity = onTapPrimary,
-                onStopDesktopDrop = onStopDesktopDrop,
-                onOpenDriveLiftCockpit = onOpenDriveLiftCockpit,
-                onToggleInlineReply = onToggleInlineReply,
-                onSendWhatsAppReply = onSendWhatsAppReply,
-                onTapWifi = onTapWifi,
-                onLongPressWifi = onLongPressWifi,
-                onTapMobileData = onTapMobileData,
-                onLongPressMobileData = onLongPressMobileData,
-                onTapBluetooth = onTapBluetooth,
-                onCycleRingerMode = onCycleRingerMode,
-                onToggleTorch = onToggleTorch,
-                onTorchBrightnessChange = onTorchBrightnessChange,
-                onToggleTorchSos = onToggleTorchSos,
-                onLaunchPinnedApp = onLaunchPinnedApp,
-                onVerticalDragStart = {
-                    isDraggingCollapse = true
-                },
-                onVerticalDragDelta = { totalDragPx ->
-                    val draggedProgress = (1f + (totalDragPx / collapseDragRangePx)).coerceIn(0.18f, 1f)
-                    scope.launch { morphProgress.snapTo(draggedProgress) }
-                },
-                onVerticalDragFinish = { shouldCollapse ->
-                    isDraggingCollapse = false
-                    if (shouldCollapse) {
-                        onCollapse()
-                    } else {
-                        scope.launch { morphProgress.animateTo(1f, animationSpec = morphSpec) }
-                    }
-                },
-            )
+            SwapTransition(
+                key = slotState.primary.id,
+                direction = slotState.swapDirection,
+            ) {
+                ExpandedCockpitCardContent(
+                    slotState = slotState,
+                    telemetry = telemetry,
+                    torchState = torchState,
+                    quickControls = quickControls,
+                    pinnedApps = pinnedApps,
+                    cachedAppIcons = cachedAppIcons,
+                    callAudio = callAudio,
+                    activityActions = activityActions,
+                    onCollapse = onCollapse,
+                    onCycleNext = onCycleNext,
+                    onCyclePrevious = onCyclePrevious,
+                    onSoftDismiss = onSoftDismiss,
+                    onRestoreDismissed = onRestoreDismissed,
+                    onTapActivity = onTapPrimary,
+                    onStopDesktopDrop = onStopDesktopDrop,
+                    onOpenDriveLiftCockpit = onOpenDriveLiftCockpit,
+                    onToggleInlineReply = onToggleInlineReply,
+                    onSendWhatsAppReply = onSendWhatsAppReply,
+                    onTapWifi = onTapWifi,
+                    onLongPressWifi = onLongPressWifi,
+                    onTapMobileData = onTapMobileData,
+                    onLongPressMobileData = onLongPressMobileData,
+                    onTapBluetooth = onTapBluetooth,
+                    onCycleRingerMode = onCycleRingerMode,
+                    onToggleTorch = onToggleTorch,
+                    onTorchBrightnessChange = onTorchBrightnessChange,
+                    onToggleTorchSos = onToggleTorchSos,
+                    onLaunchPinnedApp = onLaunchPinnedApp,
+                    onVerticalDragStart = {
+                        isDraggingCollapse = true
+                    },
+                    onVerticalDragDelta = { totalDragPx ->
+                        val draggedProgress = (1f + (totalDragPx / collapseDragRangePx)).coerceIn(0.18f, 1f)
+                        scope.launch { morphProgress.snapTo(draggedProgress) }
+                    },
+                    onVerticalDragFinish = { shouldCollapse ->
+                        isDraggingCollapse = false
+                        if (shouldCollapse) {
+                            onCollapse()
+                        } else {
+                            scope.launch { morphProgress.animateTo(1f, animationSpec = morphSpec) }
+                        }
+                    },
+                )
+            }
         }
     }
 }
@@ -376,32 +410,48 @@ private fun CollapsedPillSurfaceContent(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        Row(
-            modifier = Modifier.weight(1f, fill = false),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
-        ) {
-            Icon(
-                imageVector = activityIcon(primary),
-                contentDescription = null,
-                tint = primaryAccent,
-                modifier = Modifier.size(Tokens.IconSmall),
-            )
+        CollapsedPillBody(primary = primary, accent = primaryAccent)
+    }
+}
+
+/**
+ * Two clusters inside a pill row: the call, recording and navigation pills have their own layout,
+ * every other activity shows its icon and label on the left and one metric on the right.
+ */
+@Composable
+private fun RowScope.CollapsedPillBody(primary: CockpitLiveActivity, accent: Color) {
+    when (primary) {
+        is CockpitLiveActivity.CallActivity -> CollapsedCallContent(primary)
+        is CockpitLiveActivity.ScreenRecordingActivity -> CollapsedRecordingContent(primary)
+        is CockpitLiveActivity.MapsNavActivity -> CollapsedNavigationContent(primary, accent)
+        else -> {
+            Row(
+                modifier = Modifier.weight(1f, fill = false),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                Icon(
+                    imageVector = activityIcon(primary),
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                Text(
+                    text = activityCollapsedLabel(primary),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+            Spacer(Modifier.width(Tokens.Small))
             Text(
-                text = activityCollapsedLabel(primary),
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
+                text = activityCollapsedMetric(primary),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = accent,
                 maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
             )
         }
-        Spacer(Modifier.width(Tokens.Small))
-        Text(
-            text = activityCollapsedMetric(primary),
-            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-            color = primaryAccent,
-            maxLines = 1,
-        )
     }
 }
 
@@ -418,34 +468,40 @@ fun CollapsedSplitIslandRow(
     modifier: Modifier = Modifier,
 ) {
     val haptics = LocalHapticFeedback.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val primary = slotState.primary
     val secondary = slotState.secondary
     val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
     val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp)
         .coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
     val maxPillWidth = (CockpitTokens.PillMaxWidth + widthDeltaDp.dp).coerceAtLeast(minPillWidth)
-
-    var horizontalDrag by remember { mutableFloatStateOf(0f) }
+    val canSwap = slotState.visibleQueue.size > 1
+    val dragOffset = remember { Animatable(0f) }
 
     Row(
         modifier = modifier
             .testTag("cockpit-collapsed-row")
-            .pointerInput(primary.id, slotState.visibleQueue.size) {
-                detectHorizontalDragGestures(
-                    onDragStart = { horizontalDrag = 0f },
-                    onHorizontalDrag = { _, dragAmount -> horizontalDrag += dragAmount },
-                    onDragEnd = {
-                        if (horizontalDrag <= -CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onCycleNext()
-                        } else if (horizontalDrag >= CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onCyclePrevious()
-                        }
-                        horizontalDrag = 0f
-                    },
-                )
-            },
+            .cockpitAxisLockedSwipe(
+                key = primary.id,
+                enableVertical = false,
+                onSwipeNext = {
+                    if (canSwap) {
+                        CockpitHaptics.performTick(context)
+                        onCycleNext()
+                    }
+                },
+                onSwipePrevious = {
+                    if (canSwap) {
+                        CockpitHaptics.performTick(context)
+                        onCyclePrevious()
+                    }
+                },
+                onHorizontalDrag = { total ->
+                    if (canSwap) scope.launch { dragOffset.snapTo(total * CockpitTokens.SWAP_DRAG_DAMPING) }
+                },
+                onHorizontalEnd = { scope.launch { dragOffset.animateTo(0f, spring()) } },
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(CockpitTokens.SplitGap),
     ) {
@@ -475,7 +531,7 @@ fun CollapsedSplitIslandRow(
                     .widthIn(min = minPillWidth, max = maxPillWidth)
                     .height(CockpitTokens.PillHeight)
                     .clip(Tokens.PillShape)
-                    .background(MaterialTheme.colorScheme.scrim)
+                    .background(CockpitLivePalette.Oled)
                     .cockpitSpecularRim(
                         shape = Tokens.PillShape,
                         primaryAccent = primaryAccent,
@@ -485,38 +541,24 @@ fun CollapsedSplitIslandRow(
                     )
                     .padding(horizontal = Tokens.Medium),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Row(
-                    modifier = Modifier.weight(1f, fill = false),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                SwapTransition(
+                    key = primary.id,
+                    direction = slotState.swapDirection,
+                    modifier = Modifier.graphicsLayer { translationX = dragOffset.value },
                 ) {
-                    Icon(
-                        imageVector = activityIcon(primary),
-                        contentDescription = null,
-                        tint = primaryAccent,
-                        modifier = Modifier.size(Tokens.IconSmall),
-                    )
-                    Text(
-                        text = activityCollapsedLabel(primary),
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(
+                        modifier = Modifier.widthIn(min = minPillWidth - Tokens.Medium * 2),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        CollapsedPillBody(primary = primary, accent = primaryAccent)
+                    }
                 }
-                Spacer(Modifier.width(Tokens.Small))
-                Text(
-                    text = activityCollapsedMetric(primary),
-                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                    color = primaryAccent,
-                    maxLines = 1,
-                )
             }
         }
 
-        // Detached Secondary Circular Bubble for simultaneous 2-activity split mode.
+        // Satellite bubble for simultaneous activities: tap swaps it into the primary slot.
         if (secondary != null) {
             val (bubblePrimary, bubbleSecondary) = activityAccentPair(secondary)
             Box(
@@ -545,7 +587,7 @@ fun CollapsedSplitIslandRow(
                     modifier = Modifier
                         .size(CockpitTokens.BubbleSize)
                         .clip(CircleShape)
-                        .background(MaterialTheme.colorScheme.scrim)
+                        .background(CockpitLivePalette.Oled)
                         .cockpitSpecularRim(
                             shape = CircleShape,
                             primaryAccent = bubblePrimary,
@@ -599,9 +641,21 @@ fun ExpandedCockpitCard(
     onLongPressMobileData: () -> Unit = {},
     onTapBluetooth: () -> Unit = {},
     onCycleRingerMode: () -> Unit = {},
+    callAudio: CallAudioUiState = CallAudioUiState(),
+    activityActions: CockpitActivityActions = CockpitActivityActions(),
 ) {
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
+    val surfaceBrush: Brush = if (usesDedicatedCard(primary)) {
+        SolidColor(CockpitLivePalette.Oled)
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
+                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
+            ),
+        )
+    }
     val cachedAppIcons = remember(pinnedApps) {
         pinnedApps.associate { app ->
             app.packageName to app.iconBitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
@@ -613,14 +667,7 @@ fun ExpandedCockpitCard(
             .widthIn(max = CockpitTokens.ExpandedMaxWidth)
             .fillMaxWidth()
             .clip(CockpitTokens.ExpandedCardShape)
-            .background(
-                Brush.verticalGradient(
-                    listOf(
-                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
-                        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
-                    ),
-                ),
-            )
+            .background(surfaceBrush)
             .cockpitSpecularRim(
                 shape = CockpitTokens.ExpandedCardShape,
                 primaryAccent = accent,
@@ -636,6 +683,8 @@ fun ExpandedCockpitCard(
             quickControls = quickControls,
             pinnedApps = pinnedApps,
             cachedAppIcons = cachedAppIcons,
+            callAudio = callAudio,
+            activityActions = activityActions,
             onCollapse = onCollapse,
             onCycleNext = onCycleNext,
             onCyclePrevious = onCyclePrevious,
@@ -672,6 +721,8 @@ private fun ExpandedCockpitCardContent(
     quickControls: CockpitQuickControlsState,
     pinnedApps: List<PinnedAppInfo>,
     cachedAppIcons: Map<String, ImageBitmap?>,
+    callAudio: CallAudioUiState,
+    activityActions: CockpitActivityActions,
     onCollapse: () -> Unit,
     onCycleNext: () -> Unit,
     onCyclePrevious: () -> Unit,
@@ -696,8 +747,9 @@ private fun ExpandedCockpitCardContent(
     onVerticalDragDelta: (Float) -> Unit,
     onVerticalDragFinish: (Boolean) -> Unit,
 ) {
-    val haptics = LocalHapticFeedback.current
     val reducedMotion = LocalReducedMotion.current
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     val largeFontStack = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
     val compactWidthStack = largeFontStack ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
@@ -705,55 +757,65 @@ private fun ExpandedCockpitCardContent(
         .coerceAtLeast(CockpitTokens.ExpandedDefaultHeight)
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
-    var verticalDrag by remember { mutableFloatStateOf(0f) }
-    var horizontalDrag by remember { mutableFloatStateOf(0f) }
     var replyDraft by rememberSaveable(primary.id) { mutableStateOf("") }
+    val canSwap = slotState.visibleQueue.size > 1
+    val dragOffset = remember { Animatable(0f) }
+
+    // One axis-locked detector: sideways swaps the activity, upward collapses, never both.
+    val swipeModifier = Modifier.cockpitAxisLockedSwipe(
+        key = primary.id,
+        enableVertical = true,
+        onSwipeNext = {
+            if (canSwap) {
+                CockpitHaptics.performTick(context)
+                onCycleNext()
+            }
+        },
+        onSwipePrevious = {
+            if (canSwap) {
+                CockpitHaptics.performTick(context)
+                onCyclePrevious()
+            }
+        },
+        onHorizontalDrag = { total ->
+            if (canSwap) scope.launch { dragOffset.snapTo(total * CockpitTokens.SWAP_DRAG_DAMPING) }
+        },
+        onHorizontalEnd = { scope.launch { dragOffset.animateTo(0f, spring()) } },
+        onVerticalStart = onVerticalDragStart,
+        onVerticalDrag = onVerticalDragDelta,
+        onVerticalEnd = { shouldCollapse ->
+            if (shouldCollapse) CockpitHaptics.performTick(context)
+            onVerticalDragFinish(shouldCollapse)
+        },
+    )
+    val dragLayerModifier = Modifier.graphicsLayer { translationX = dragOffset.value }
+
+    if (usesDedicatedCard(primary)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = maxCardHeight)
+                .then(swipeModifier)
+                .then(dragLayerModifier)
+                .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
+                .testTag("cockpit-expanded-card"),
+        ) {
+            DedicatedActivityCard(
+                slotState = slotState,
+                callAudio = callAudio,
+                actions = activityActions,
+            )
+        }
+        return
+    }
 
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = maxCardHeight)
             .verticalScroll(rememberScrollState())
-            .pointerInput(primary.id) {
-                detectVerticalDragGestures(
-                    onDragStart = {
-                        verticalDrag = 0f
-                        onVerticalDragStart()
-                    },
-                    onVerticalDrag = { _, delta ->
-                        verticalDrag = (verticalDrag + delta).coerceAtMost(0f)
-                        onVerticalDragDelta(verticalDrag)
-                    },
-                    onDragCancel = {
-                        verticalDrag = 0f
-                        onVerticalDragFinish(false)
-                    },
-                    onDragEnd = {
-                        val shouldCollapse = verticalDrag <= CockpitTokens.EXPAND_SWIPE_COLLAPSE_PX
-                        if (shouldCollapse) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                        }
-                        verticalDrag = 0f
-                        onVerticalDragFinish(shouldCollapse)
-                    },
-                )
-            }
-            .pointerInput(primary.id, slotState.visibleQueue.size) {
-                detectHorizontalDragGestures(
-                    onDragStart = { horizontalDrag = 0f },
-                    onHorizontalDrag = { _, delta -> horizontalDrag += delta },
-                    onDragEnd = {
-                        if (horizontalDrag <= -CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onCycleNext()
-                        } else if (horizontalDrag >= CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
-                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onCyclePrevious()
-                        }
-                        horizontalDrag = 0f
-                    },
-                )
-            }
+            .then(swipeModifier)
+            .then(dragLayerModifier)
             .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
             .testTag("cockpit-expanded-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -1011,6 +1073,28 @@ private fun ExpandedCockpitCardContent(
                     }
                 }
             }
+
+            is CockpitLiveActivity.MediaActivity -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    StatusChip(label = primary.artist.ifBlank { "Playing" }, accent = accent)
+                    Button(
+                        onClick = { onTapActivity(primary) },
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
+                    ) {
+                        Text("Open App", maxLines = 1)
+                    }
+                }
+            }
+
+            // Calls, screen recordings and navigation own the whole island and never reach this card.
+            is CockpitLiveActivity.CallActivity,
+            is CockpitLiveActivity.ScreenRecordingActivity -> Unit
 
             is CockpitLiveActivity.IdleQuickDockActivity -> {
                 Row(
@@ -1768,6 +1852,14 @@ private fun StatusChip(label: String, accent: Color) {
 private fun activityAccentPair(activity: CockpitLiveActivity): Pair<Color, Color> {
     val scheme = MaterialTheme.colorScheme
     return when (activity) {
+        is CockpitLiveActivity.CallActivity ->
+            if (activity.state == CallState.INCOMING) {
+                CockpitLivePalette.Answer.toWideGamutP3() to CockpitLivePalette.Emerald.toWideGamutP3()
+            } else {
+                CockpitLivePalette.Emerald.toWideGamutP3() to CockpitLivePalette.Cyan.toWideGamutP3()
+            }
+        is CockpitLiveActivity.ScreenRecordingActivity ->
+            CockpitLivePalette.Recording.toWideGamutP3() to CockpitLivePalette.Decline.toWideGamutP3()
         is CockpitLiveActivity.TransferActivity ->
             if (activity.isDesktopDrop) {
                 scheme.tertiary.toWideGamutP3() to scheme.secondary.toWideGamutP3()
@@ -1780,6 +1872,8 @@ private fun activityAccentPair(activity: CockpitLiveActivity): Pair<Color, Color
             } else {
                 scheme.secondary.toWideGamutP3() to scheme.tertiary.toWideGamutP3()
             }
+        is CockpitLiveActivity.MediaActivity ->
+            scheme.secondary.toWideGamutP3() to scheme.tertiary.toWideGamutP3()
         is CockpitLiveActivity.MapsNavActivity ->
             scheme.tertiary.toWideGamutP3() to scheme.secondary.toWideGamutP3()
         is CockpitLiveActivity.WhatsAppAlertActivity ->
@@ -1790,10 +1884,14 @@ private fun activityAccentPair(activity: CockpitLiveActivity): Pair<Color, Color
 }
 
 private fun activityIcon(activity: CockpitLiveActivity): ImageVector = when (activity) {
+    is CockpitLiveActivity.CallActivity ->
+        if (activity.isVideo) Icons.Outlined.Videocam else Icons.Outlined.Call
+    is CockpitLiveActivity.ScreenRecordingActivity -> Icons.Outlined.FiberManualRecord
     is CockpitLiveActivity.TransferActivity ->
         if (activity.isDesktopDrop) Icons.Outlined.Devices else Icons.Outlined.CloudUpload
     is CockpitLiveActivity.TimerRecordingActivity ->
         if (activity.isRecording) Icons.Outlined.Mic else Icons.Outlined.Timer
+    is CockpitLiveActivity.MediaActivity -> Icons.Outlined.MusicNote
     is CockpitLiveActivity.MapsNavActivity -> when (activity.turnDirection) {
         MapsTurnDirection.LEFT -> Icons.Outlined.TurnLeft
         MapsTurnDirection.RIGHT -> Icons.Outlined.TurnRight
@@ -1806,8 +1904,11 @@ private fun activityIcon(activity: CockpitLiveActivity): ImageVector = when (act
 }
 
 private fun activityTitle(activity: CockpitLiveActivity): String = when (activity) {
+    is CockpitLiveActivity.CallActivity -> activity.callerName
+    is CockpitLiveActivity.ScreenRecordingActivity -> "Screen Recording"
     is CockpitLiveActivity.TransferActivity -> activity.title
     is CockpitLiveActivity.TimerRecordingActivity -> activity.label
+    is CockpitLiveActivity.MediaActivity -> activity.title
     is CockpitLiveActivity.MapsNavActivity -> activity.maneuverText
     is CockpitLiveActivity.WhatsAppAlertActivity -> activity.senderName
     is CockpitLiveActivity.IdleQuickDockActivity -> "DriveLift Cockpit"
@@ -1817,9 +1918,12 @@ private fun activitySubtitle(
     activity: CockpitLiveActivity,
     telemetry: DriveLiftTelemetrySummary,
 ): String = when (activity) {
+    is CockpitLiveActivity.CallActivity -> activity.sourceLabel
+    is CockpitLiveActivity.ScreenRecordingActivity -> "Recording active"
     is CockpitLiveActivity.TransferActivity -> "${activity.subtitle} (${activity.speedText})"
     is CockpitLiveActivity.TimerRecordingActivity ->
         if (activity.isRecording) "Recording active" else "Timer running"
+    is CockpitLiveActivity.MediaActivity -> activity.artist
     is CockpitLiveActivity.MapsNavActivity ->
         listOf(activity.distanceText, activity.etaText).filter { it.isNotBlank() }.joinToString(" | ")
             .ifEmpty { "Navigation active" }
@@ -1828,16 +1932,22 @@ private fun activitySubtitle(
 }
 
 private fun activityCollapsedLabel(activity: CockpitLiveActivity): String = when (activity) {
+    is CockpitLiveActivity.CallActivity -> activity.callerName
+    is CockpitLiveActivity.ScreenRecordingActivity -> "Recording"
     is CockpitLiveActivity.TransferActivity -> activity.title
     is CockpitLiveActivity.TimerRecordingActivity -> activity.label
+    is CockpitLiveActivity.MediaActivity -> activity.title
     is CockpitLiveActivity.MapsNavActivity -> activity.maneuverText
     is CockpitLiveActivity.WhatsAppAlertActivity -> activity.senderName
     is CockpitLiveActivity.IdleQuickDockActivity -> "Cockpit"
 }
 
 private fun activityCollapsedMetric(activity: CockpitLiveActivity): String = when (activity) {
+    is CockpitLiveActivity.CallActivity -> if (activity.state == CallState.INCOMING) "Incoming" else "Call"
+    is CockpitLiveActivity.ScreenRecordingActivity -> "Rec"
     is CockpitLiveActivity.TransferActivity -> activity.speedText
     is CockpitLiveActivity.TimerRecordingActivity -> activity.timeText
+    is CockpitLiveActivity.MediaActivity -> "Playing"
     is CockpitLiveActivity.MapsNavActivity -> activity.distanceText.ifEmpty { activity.etaText }
     is CockpitLiveActivity.WhatsAppAlertActivity -> if (activity.canInlineReply) "Reply" else "Msg"
     is CockpitLiveActivity.IdleQuickDockActivity -> "Ready"
