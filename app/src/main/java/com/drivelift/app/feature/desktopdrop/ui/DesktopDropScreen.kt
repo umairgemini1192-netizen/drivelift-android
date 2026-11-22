@@ -1,5 +1,6 @@
 package com.drivelift.app.feature.desktopdrop.ui
 
+import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Bitmap
@@ -77,6 +78,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
@@ -98,6 +101,26 @@ import com.drivelift.app.ui.formatBytes
 import com.drivelift.app.ui.formatEta
 
 /**
+ * Uses the caller's Application directly instead of AndroidViewModelFactory.sInstance so Robolectric
+ * test classes that rotate Application instances each read their own Graph's DesktopDropController.
+ */
+@Composable
+private fun defaultDesktopDropViewModel(): DesktopDropViewModel {
+    val app = LocalContext.current.applicationContext as Application
+    val factory = remember(app) {
+        object : ViewModelProvider.Factory {
+            @Suppress("UNCHECKED_CAST")
+            override fun <T : ViewModel> create(modelClass: Class<T>): T =
+                DesktopDropViewModel(app) as T
+        }
+    }
+    return viewModel(
+        key = "desktop-drop-${System.identityHashCode(app)}",
+        factory = factory,
+    )
+}
+
+/**
  * Primary Compose UI for Zero-Config Peer & Desktop Drop following DriveLift's Dark Tactile
  * Glass design system.
  */
@@ -105,7 +128,7 @@ import com.drivelift.app.ui.formatEta
 @Composable
 fun DesktopDropScreen(
     @Suppress("UNUSED_PARAMETER") appViewModel: AppViewModel,
-    vm: DesktopDropViewModel = viewModel(),
+    vm: DesktopDropViewModel = defaultDesktopDropViewModel(),
 ) {
     val context = LocalContext.current
     val snapshot by vm.snapshot.collectAsStateWithLifecycle()
@@ -569,7 +592,13 @@ private fun PairAnotherDevicePill(
     val dropUrl = snapshot.dropUrl ?: return
     val hotspot = snapshot.hotspotCredentials
     // A direct hotspot has to be joined first, so its steps start open; otherwise the QR stays folded.
-    var expanded by rememberSaveable(snapshot.mode) { mutableStateOf(hotspot != null) }
+    var expanded by rememberSaveable(
+        snapshot.mode,
+        hotspot != null,
+        key = "pair-qr-${snapshot.mode.name}",
+    ) {
+        mutableStateOf(hotspot != null)
+    }
     GlassPanel(
         Modifier
             .fillMaxWidth()
