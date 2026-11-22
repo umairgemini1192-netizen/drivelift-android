@@ -110,10 +110,11 @@ data class CockpitActivityActions(
     val onRefreshCallAudio: (CockpitLiveActivity.CallActivity) -> Unit = {},
 )
 
-private val WaveformFrequencies = floatArrayOf(1f, 2f, 1f, 3f)
-private val WaveformPhases = floatArrayOf(0f, 0.27f, 0.58f, 0.83f)
-private const val WAVEFORM_STATIC_PHASE = 0.15f
-private const val WAVEFORM_MIN_FRACTION = 0.28f
+private val WaveformPhases = floatArrayOf(0f, 0.15f, 0.3f, 0.45f)
+private const val WAVEFORM_STATIC_PHASE = 0.1f
+private const val WAVEFORM_MIN_FRACTION = 0.34f
+private const val WAVEFORM_HARMONIC_WEIGHT = 0.25f
+private const val WAVEFORM_HARMONIC_OFFSET = 0.3f
 private const val PULSE_HALO_SCALE = 0.25f
 private const val PULSE_HALO_ALPHA = 0.45f
 private const val SWAP_MIN_ALPHA = 0.2f
@@ -351,7 +352,7 @@ internal fun VoiceWaveform(modifier: Modifier = Modifier) {
         label = "waveform_phase",
     )
     val phase = if (reducedMotion) WAVEFORM_STATIC_PHASE else animatedPhase
-    val barCount = WaveformFrequencies.size
+    val barCount = WaveformPhases.size
     Canvas(
         modifier = modifier
             .size(
@@ -364,7 +365,11 @@ internal fun VoiceWaveform(modifier: Modifier = Modifier) {
         val gap = CockpitTokens.WaveformGap.toPx()
         val minHeight = size.height * WAVEFORM_MIN_FRACTION
         for (index in 0 until barCount) {
-            val wave = 0.5f + 0.5f * sin(2f * PI.toFloat() * (WaveformFrequencies[index] * phase + WaveformPhases[index]))
+            val turn = 2f * PI.toFloat()
+            val base = sin(turn * (phase + WaveformPhases[index]))
+            val harmonic = sin(turn * (2f * (phase + WaveformPhases[index]) + WAVEFORM_HARMONIC_OFFSET))
+            val wave = (0.5f + 0.5f * ((1f - WAVEFORM_HARMONIC_WEIGHT) * base + WAVEFORM_HARMONIC_WEIGHT * harmonic))
+                .coerceIn(0f, 1f)
             val barHeight = minHeight + (size.height - minHeight) * wave
             drawRoundRect(
                 color = if (index % 2 == 0) CockpitLivePalette.Emerald else CockpitLivePalette.Cyan,
@@ -621,7 +626,7 @@ private fun IncomingCallBanner(
             .fillMaxWidth()
             .testTag("cockpit-call-incoming"),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
         CallAvatar(avatar = call.avatar, name = call.callerName, size = CockpitTokens.CallAvatar)
         Column(modifier = Modifier.weight(1f)) {
@@ -637,7 +642,7 @@ private fun IncomingCallBanner(
                 text = call.sourceLabel,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
+                maxLines = 2,
                 overflow = TextOverflow.Ellipsis,
             )
         }
@@ -717,7 +722,7 @@ private fun OngoingCallCard(
                     text = "${call.sourceLabel} · ${CockpitDurationFormat.clock(now - call.startedAtMs)}",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
+                    maxLines = 2,
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("cockpit-call-subtitle"),
                 )

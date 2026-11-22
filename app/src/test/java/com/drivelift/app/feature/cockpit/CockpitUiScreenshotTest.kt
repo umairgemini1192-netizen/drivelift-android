@@ -1399,8 +1399,9 @@ class CockpitUiScreenshotTest {
             // A ringing call opens the island on its own; Answer turns it into an ongoing pill.
             compose.onNodeWithTag("cockpit-preview-incoming-call").performClick()
             pump(24)
-            compose.onNodeWithTag("cockpit-call-incoming").assertIsDisplayed()
-            compose.onNodeWithTag("cockpit-call-answer").performClick()
+            // The expanded preview panel is clickable, so its children only exist in the unmerged tree.
+            compose.onNodeWithTag("cockpit-call-incoming", useUnmergedTree = true).assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-call-answer", useUnmergedTree = true).performClick()
             pump(24)
             compose.onNodeWithTag("cockpit-call-timer", useUnmergedTree = true).assertIsDisplayed()
 
