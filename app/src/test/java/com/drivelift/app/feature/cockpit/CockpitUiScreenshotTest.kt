@@ -1232,7 +1232,7 @@ class CockpitUiScreenshotTest {
                 val hairline = compose.onNodeWithTag("cockpit-nav-progress").assertIsDisplayed().getBoundsInRoot()
                 assertTrue("trip text sits below the turn header", tripText.top >= header.bottom)
                 assertTrue("hairline is the last line of the card", hairline.top >= tripText.bottom)
-                assertEquals("hairline is 2dp", 2f, hairline.height.value, 0.6f)
+                assertEquals("hairline is 2dp", 2f, (hairline.bottom - hairline.top).value, 0.6f)
             },
         )
     }
