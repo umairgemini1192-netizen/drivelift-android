@@ -1,6 +1,9 @@
 package com.drivelift.app.feature.cleaner.cache
 
+import android.app.AppOpsManager
 import android.app.usage.UsageStatsManager
+import android.content.Context
+import android.os.Process
 import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.drivelift.app.DriveLiftApp
@@ -12,6 +15,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 
 @RunWith(RobolectricTestRunner::class)
@@ -53,6 +57,13 @@ class AndroidAppStorageStatsSourceTest {
     @Test
     fun gracefullyDegradesWhenUsageAccessNotGranted() = runBlocking {
         val app = ApplicationProvider.getApplicationContext<DriveLiftApp>()
+        val appOps = app.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        shadowOf(appOps).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            app.packageName,
+            AppOpsManager.MODE_ERRORED,
+        )
         val source = AndroidAppStorageStatsSource(app, nowMs = { 1_760_000_000_000L })
 
         assertFalse(source.hasUsageStatsAccess())
