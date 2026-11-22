@@ -28,7 +28,10 @@ import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
+import androidx.compose.ui.test.assertIsOff
+import androidx.compose.ui.test.assertIsOn
 import androidx.compose.ui.test.assertWidthIsAtLeast
+import androidx.compose.ui.test.captureToImage
 import androidx.compose.ui.test.getBoundsInRoot
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
@@ -41,6 +44,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipe
 import androidx.compose.ui.test.swipeLeft
@@ -55,6 +59,8 @@ import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
+import com.drivelift.app.feature.cockpit.alerts.CockpitBiometricStage
+import com.drivelift.app.feature.cockpit.alerts.CockpitSystemAlert
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
@@ -71,6 +77,8 @@ import com.drivelift.app.feature.cockpit.hardware.WifiTileState
 import com.drivelift.app.feature.cockpit.notifications.CallAudioOutput
 import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
+import com.drivelift.app.feature.cockpit.notifications.LiveNotificationParser
+import com.drivelift.app.feature.cockpit.notifications.NotificationSnapshot
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
 import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
@@ -79,6 +87,8 @@ import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.LocalCockpitNowMs
 import com.drivelift.app.feature.cockpit.ui.LocalIdleNetworkOverride
+import com.drivelift.app.feature.cockpit.ui.ManeuverIconContrast
+import com.drivelift.app.feature.cockpit.ui.ManeuverIconStyle
 import com.drivelift.app.feature.cockpit.ui.PermissionRow
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
@@ -821,11 +831,11 @@ class CockpitUiScreenshotTest {
         )
 
         assertEquals(
-            "DriveLift 1.0.0-preview.40 (build 39)",
+            "DriveLift 1.0.0-preview.41 (build 40)",
             appVersionLabel(app, buildStamp = ""),
         )
         assertEquals(
-            "DriveLift 1.0.0-preview.40 (build 39 \u00B7 PR #78 @ a1d8b31)",
+            "DriveLift 1.0.0-preview.41 (build 40 \u00B7 PR #78 @ a1d8b31)",
             appVersionLabel(app, buildStamp = "PR #78 @ a1d8b31"),
         )
     }
@@ -1459,6 +1469,366 @@ class CockpitUiScreenshotTest {
         }
     }
 
+
+    // ------------------------------------------------------------------------------------------
+    // Cockpit v3.2: transient system alerts on the island, the Hub controls and chips for them,
+    // and the Google Maps fixes seen on a Pixel 8 Pro. Images go to build/outputs/screenshots/v3/.
+    // ------------------------------------------------------------------------------------------
+
+    private fun v3AlertSlot(
+        alert: CockpitSystemAlert,
+        queue: List<CockpitLiveActivity> = emptyList(),
+    ): CockpitSlotState =
+        if (queue.isEmpty()) CockpitSlotState(transientAlert = alert) else v3Slot(queue).copy(transientAlert = alert)
+
+    /** Every pill stays on screen and never grows past the width that clears the status bar icons. */
+    private fun assertPillsClearTheStatusIcons(count: Int) {
+        val root = compose.onRoot().getBoundsInRoot()
+        val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+        for (index in 0 until count) {
+            val bounds = pills[index].assertIsDisplayed().getBoundsInRoot()
+            assertTrue("pill $index stays on screen", bounds.left >= root.left && bounds.right <= root.right)
+            assertTrue(
+                "pill $index is at most ${CockpitTokens.StatusClearPillMaxWidth}",
+                (bounds.right - bounds.left).value <= CockpitTokens.StatusClearPillMaxWidth.value + 0.5f,
+            )
+        }
+    }
+
+    private fun assertAlertTitle(index: Int, title: String) {
+        compose.onAllNodesWithTag("cockpit-system-alert-title", useUnmergedTree = true)[index]
+            .assert(hasText(title))
+            .assertIsDisplayed()
+    }
+
+    private fun assertAlertDetail(index: Int, detail: String) {
+        compose.onAllNodesWithTag("cockpit-system-alert-detail", useUnmergedTree = true)[index]
+            .assert(hasText(detail))
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun v3BatteryAndEarbudsAlertsShowAsCrispPillsThatClearTheStatusIcons() {
+        val alerts = listOf(
+            "Charging, fast" to CockpitSystemAlert.BatteryCharging(82, isFastCharging = true, estimatedFullMinutes = 40L),
+            "Battery full" to CockpitSystemAlert.BatteryFull(100),
+            "Battery low" to CockpitSystemAlert.BatteryLow(15, isCritical = false),
+            "Earbuds connected" to CockpitSystemAlert.EarbudsConnected("Pixel Buds Pro", batteryPercent = 76),
+            "Earbuds low battery" to CockpitSystemAlert.EarbudsLowBattery("Pixel Buds Pro", batteryPercent = 12),
+        )
+        launchAndAssert(
+            name = "cockpit-v3-alerts-battery-earbuds",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    alerts.forEach { (caption, alert) -> V3Section(caption) { V3Pill(v3AlertSlot(alert)) } }
+                }
+            },
+            verify = {
+                assertAlertTitle(0, "Fast charging")
+                assertAlertDetail(0, "82%")
+                assertAlertTitle(1, "Battery full")
+                assertAlertDetail(1, "100%")
+                assertAlertTitle(2, "Battery low")
+                assertAlertDetail(2, "15%")
+                assertAlertTitle(3, "Pixel Buds Pro")
+                assertAlertDetail(3, "76%")
+                assertAlertTitle(4, "Pixel Buds Pro")
+                assertAlertDetail(4, "12% low")
+                assertPillsClearTheStatusIcons(alerts.size)
+            },
+        )
+    }
+
+    @Test
+    fun v3AirplaneBiometricTransferRadarAndRingerAlertsShowTitleAndDetailWithoutClipping() {
+        val longName = "IMG_20261123_083412_burst_042_original_edit.jpg"
+        val alerts = listOf(
+            "Airplane mode on" to CockpitSystemAlert.AirplaneModeChanged(enabled = true),
+            "Biometric knock" to CockpitSystemAlert.BiometricFeedback(CockpitBiometricStage.SCANNING),
+            "Transfer done, long file name" to CockpitSystemAlert.DriveLiftTransfer(longName, 100, isCompleted = true),
+            "Desktop Drop radar" to CockpitSystemAlert.DriveLiftRadarConnected("Work laptop"),
+            "Ringer silent" to CockpitSystemAlert.RingerModeChanged(
+                com.drivelift.app.feature.cockpit.alerts.CockpitRingerMode.SILENT,
+            ),
+        )
+        launchAndAssert(
+            name = "cockpit-v3-alerts-airplane-biometric-drivelift-ringer",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    alerts.forEach { (caption, alert) -> V3Section(caption) { V3Pill(v3AlertSlot(alert)) } }
+                }
+            },
+            verify = {
+                assertAlertTitle(0, "Airplane mode")
+                assertAlertDetail(0, "On")
+                assertAlertTitle(1, "Approve laptop")
+                assertAlertDetail(1, "Scanning")
+                // The long file name shrinks with an ellipsis; "Done" stays inside the pill.
+                assertAlertDetail(2, "Done")
+                assertAlertTitle(3, "Work laptop")
+                assertAlertDetail(3, "Connected")
+                assertAlertTitle(4, "Silent")
+                assertEquals(
+                    "Silent has no detail",
+                    4,
+                    compose.onAllNodesWithTag("cockpit-system-alert-detail", useUnmergedTree = true)
+                        .fetchSemanticsNodes().size,
+                )
+                assertPillsClearTheStatusIcons(alerts.size)
+                val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+                val details = compose.onAllNodesWithTag("cockpit-system-alert-detail", useUnmergedTree = true)
+                for (index in 0..3) {
+                    val pill = pills[index].getBoundsInRoot()
+                    val detail = details[index].getBoundsInRoot()
+                    assertTrue("detail $index stays inside its pill", detail.right.value <= pill.right.value + 0.5f)
+                }
+            },
+        )
+    }
+
+    @Test
+    fun v3AlertOverACallKeepsTheCallAsTheSatelliteAndTheIslandReturnsToItAfterwards() {
+        val queue = listOf(v3Call(CallState.ONGOING), v3Navigation())
+        launchAndAssert(
+            name = "cockpit-v3-alert-over-activity",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Battery low over an ongoing call") {
+                        V3Pill(v3AlertSlot(CockpitSystemAlert.BatteryLow(15, isCritical = false), queue))
+                    }
+                    V3Section("The same island once the alert has ended") { V3Pill(v3Slot(queue)) }
+                    V3Section("Charging over the idle island") {
+                        V3Pill(v3AlertSlot(CockpitSystemAlert.BatteryCharging(82, true, 40L)))
+                    }
+                }
+            },
+            verify = {
+                assertAlertTitle(0, "Battery low")
+                assertAlertTitle(1, "Fast charging")
+                // The call timer shows only in the second island: the alert took the first one's pill.
+                assertEquals(
+                    1,
+                    compose.onAllNodesWithTag("cockpit-call-timer", useUnmergedTree = true)
+                        .fetchSemanticsNodes().size,
+                )
+                // Over the call the satellite shows the call; afterwards it shows navigation; idle has none.
+                val bubbles = compose.onAllNodesWithTag("cockpit-secondary-bubble")
+                assertEquals(2, bubbles.fetchSemanticsNodes().size)
+                val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+                for (index in 0..1) {
+                    val pill = pills[index].getBoundsInRoot()
+                    val bubble = bubbles[index].assertIsDisplayed().getBoundsInRoot()
+                    assertTrue("satellite $index sits beside its pill", pill.right <= bubble.left)
+                }
+            },
+        )
+    }
+
+    /** A dark grey arrow on a transparent background, like the one Google Maps sends as its large icon. */
+    private fun googleMapsDarkArrow(): Bitmap =
+        Bitmap.createBitmap(128, 128, Bitmap.Config.ARGB_8888).apply {
+            val arrow = android.graphics.Path().apply {
+                moveTo(64f, 16f)
+                lineTo(100f, 64f)
+                lineTo(78f, 64f)
+                lineTo(78f, 112f)
+                lineTo(50f, 112f)
+                lineTo(50f, 64f)
+                lineTo(28f, 64f)
+                close()
+            }
+            Canvas(this).drawPath(arrow, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0xFF3C4043.toInt() })
+        }
+
+    @Test
+    fun v3GoogleMapsTowardsHeadlineShowsTimeAndDistanceWithAVisibleManeuverArrow() {
+        val arrow = googleMapsDarkArrow()
+        assertEquals(ManeuverIconStyle.WHITE_TINT, ManeuverIconContrast.classify(arrow))
+        val nav = LiveNotificationParser.parse(
+            NotificationSnapshot(
+                key = "0|com.google.android.apps.maps|7|null|1020",
+                packageName = LiveNotificationParser.PKG_MAPS,
+                title = "towards Main University Rd",
+                text = "38 min",
+                subText = "20 km • 12:20 am",
+                category = android.app.Notification.CATEGORY_NAVIGATION,
+                isOngoing = true,
+                updatedAtMs = FIXED_TIME_MS,
+                maneuverIcon = arrow,
+            ),
+        ) as CockpitLiveActivity.MapsNavActivity
+        val slot = v3Slot(listOf(nav))
+        launchAndAssert(
+            name = "cockpit-v3-maps-towards-headline",
+            directory = v3Directory,
+            content = {
+                V3Frame {
+                    V3Section("Collapsed pill: time and distance, nothing dropped") { V3Pill(slot) }
+                    V3Section("Expanded card: dark Maps arrow drawn white") { V3Card(slot) }
+                }
+            },
+            verify = {
+                val headline = "38 min · 20 km"
+                compose.onNodeWithTag("cockpit-nav-distance", useUnmergedTree = true).assert(hasText(headline))
+                compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true)
+                    .assert(hasText(headline))
+                    .assertIsDisplayed()
+                assertEquals(
+                    "the generic fallback must not appear",
+                    0,
+                    compose.onAllNodesWithText("Navigating", useUnmergedTree = true).fetchSemanticsNodes().size,
+                )
+                compose.onNodeWithText("Main University Rd").assertIsDisplayed()
+                assertPillsClearTheStatusIcons(1)
+
+                // The dark arrow must be visible against the tile: the tile now holds light pixels.
+                val tile = compose.onNodeWithTag("cockpit-nav-maneuver-tile", useUnmergedTree = true)
+                    .assertIsDisplayed()
+                    .captureToImage()
+                val pixels = IntArray(tile.width * tile.height)
+                tile.readPixels(pixels)
+                val light = pixels.count { argb ->
+                    ((argb shr 16) and 0xFF) >= 200 && ((argb shr 8) and 0xFF) >= 200 && (argb and 0xFF) >= 200
+                }
+                assertTrue("arrow shows as light pixels on the dark tile, found $light", light >= 40)
+            },
+        )
+    }
+
+    @androidx.compose.runtime.Composable
+    private fun V3SetupHub(prefs: CockpitPrefsState) {
+        CockpitSetupContent(
+            prefs = prefs,
+            telemetry = syntheticTelemetry,
+            alarm = syntheticAlarm,
+            clockTimeLabel = "11:15 PM",
+            clockDateLabel = "Sat, Nov 21",
+            freeStorageLabel = "118 GB free",
+            batteryLabel = "84% batt",
+            torchOn = false,
+            hasOverlay = true,
+            hasNotifications = true,
+            hasBatteryExemption = true,
+            hasAccessibilityOverlay = true,
+            hasLocationPermission = true,
+            hasUsageAccess = true,
+            hasBluetoothPermission = true,
+            hasDndAccess = true,
+            onGrantAccessibilityOverlay = {},
+            quickControls = syntheticQuickControls,
+            launchableApps = syntheticPinned,
+            pinnedApps = syntheticPinned,
+            onBack = {},
+            onToggleMaster = {},
+            onToggleCategory = { _, _ -> },
+            onCalibrationChange = { _, _, _ -> },
+            onResetCalibration = {},
+            onTogglePinnedApp = {},
+            onGrantOverlay = {},
+            onGrantNotifications = {},
+            onGrantBattery = {},
+            onToggleTorch = {},
+            onToggleDrop = {},
+        )
+    }
+
+    @Test
+    fun v3HubSystemAlertsSectionOffersThreeSwitchesWithLedFlashOffByDefault() {
+        launchAndAssert(
+            name = "cockpit-v3-hub-system-alerts-section",
+            directory = v3Directory,
+            content = { V3SetupHub(CockpitPrefsState(masterEnabled = true)) },
+            verify = {
+                // Scroll to the section header so the whole panel sits below it in the picture.
+                compose.onNodeWithTag("cockpit-setup-list")
+                    .performScrollToNode(hasText("System Alerts & LED Flash"))
+                pump(8)
+                compose.onNodeWithText("System Alerts & LED Flash").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-toggle-system-alerts").assertIsOn()
+                compose.onNodeWithTag("cockpit-toggle-led-flash").assertIsOff()
+                compose.onNodeWithTag("cockpit-toggle-led-suppress").assertIsOn()
+                for (tag in listOf("cockpit-toggle-system-alerts", "cockpit-toggle-led-flash", "cockpit-toggle-led-suppress")) {
+                    compose.onNodeWithTag(tag).assertHeightIsAtLeast(Tokens.TouchTarget)
+                }
+            },
+        )
+    }
+
+    @Test
+    fun v3HubChipsSimulateSystemAlertsOverThePreviewIsland() {
+        // A taller phone keeps the island preview and both chip rows on screen together.
+        RuntimeEnvironment.setQualifiers("w360dp-h1000dp-xhdpi")
+        RuntimeEnvironment.setFontScale(1f)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            V3SetupHub(CockpitPrefsState(masterEnabled = true))
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            compose.onNodeWithTag("cockpit-preview-alert-chips").assertIsDisplayed()
+            for (preview in com.drivelift.app.feature.cockpit.ui.CockpitPreviewAlert.entries) {
+                compose.onNodeWithTag(preview.tag).assertExists()
+            }
+
+            compose.onNodeWithTag("cockpit-preview-alert-charging").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-system-alert-title", useUnmergedTree = true).assert(hasText("Fast charging"))
+            compose.onNodeWithTag("cockpit-system-alert-detail", useUnmergedTree = true).assert(hasText("82%"))
+            if (record) {
+                java.io.File("build/outputs/screenshots/$v3Directory/").mkdirs()
+                compose.onRoot().captureRoboImage(
+                    "build/outputs/screenshots/$v3Directory/cockpit-v3-hub-system-alert-preview-standard.png",
+                )
+            }
+
+            // A second chip replaces the first.
+            compose.onNodeWithTag("cockpit-preview-alert-earbuds").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-system-alert-title", useUnmergedTree = true).assert(hasText("Pixel Buds Pro"))
+            compose.onNodeWithTag("cockpit-system-alert-detail", useUnmergedTree = true).assert(hasText("76%"))
+
+            compose.onNodeWithTag("cockpit-preview-alert-ringer").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-system-alert-title", useUnmergedTree = true).assert(hasText("Silent"))
+
+            // The alert sits over a simulated activity, which moves to the satellite bubble.
+            compose.onNodeWithTag("cockpit-preview-navigation").performClick()
+            pump(18)
+            compose.onNodeWithTag("cockpit-system-alert-title", useUnmergedTree = true).assert(hasText("Silent"))
+            compose.onNodeWithTag("cockpit-secondary-bubble").assertIsDisplayed()
+
+            // A ringing call takes the whole island, so the alert steps aside and returns afterwards.
+            compose.onNodeWithTag("cockpit-preview-incoming-call").performClick()
+            pump(24)
+            assertEquals(
+                0,
+                compose.onAllNodesWithTag("cockpit-system-alert", useUnmergedTree = true).fetchSemanticsNodes().size,
+            )
+            compose.onNodeWithTag("cockpit-preview-incoming-call").performClick()
+            pump(24)
+            compose.onNodeWithTag("cockpit-system-alert-title", useUnmergedTree = true).assert(hasText("Silent"))
+
+            // Tapping the selected chip clears the alert.
+            compose.onNodeWithTag("cockpit-preview-alert-ringer").performClick()
+            pump(18)
+            assertEquals(
+                0,
+                compose.onAllNodesWithTag("cockpit-system-alert", useUnmergedTree = true).fetchSemanticsNodes().size,
+            )
+        }
+    }
 
     private val manyPinned by lazy {
         listOf(

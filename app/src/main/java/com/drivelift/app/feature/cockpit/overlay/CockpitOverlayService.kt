@@ -106,6 +106,7 @@ class CockpitOverlayService :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
         cockpit.quickControlsController.start()
         cockpit.telemetryMonitor.acquire()
+        cockpit.acquireSystemAlerts(this)
         controller?.attachIfNeeded(serviceScope)
         return START_NOT_STICKY
     }
@@ -119,6 +120,7 @@ class CockpitOverlayService :
         runCatching {
             val cockpit = Graph.get(this).cockpit
             cockpit.telemetryMonitor.release()
+            cockpit.releaseSystemAlerts(this)
             cockpit.quickControlsController.stop()
         }
         controller?.detach()

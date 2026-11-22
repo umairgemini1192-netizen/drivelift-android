@@ -307,6 +307,11 @@ fun CockpitSetupScreen(
         onToggleCategory = { cat, enabled ->
             cockpit.prefsRepo.setActivityEnabledAsync(cat, enabled)
         },
+        onToggleSystemAlerts = { enabled -> cockpit.prefsRepo.setSystemAlertsEnabledAsync(enabled) },
+        onToggleLedFlash = { enabled -> cockpit.prefsRepo.setLedFlashEnabledAsync(enabled) },
+        onToggleLedSuppressWhenScreenOn = { suppress ->
+            cockpit.prefsRepo.setLedFlashSuppressWhenScreenOnAsync(suppress)
+        },
         onCalibrationChange = { dx, dy, dw ->
             cockpit.prefsRepo.setCutoutCalibrationAsync(dx, dy, dw)
         },
@@ -410,7 +415,11 @@ fun CockpitSetupContent(
     onTapBluetooth: () -> Unit = {},
     onCycleRingerMode: () -> Unit = {},
     onTapAlarm: () -> Unit = {},
+    onToggleSystemAlerts: (Boolean) -> Unit = {},
+    onToggleLedFlash: (Boolean) -> Unit = {},
+    onToggleLedSuppressWhenScreenOn: (Boolean) -> Unit = {},
 ) {
+    var previewAlertChoice by rememberSaveable { mutableStateOf<CockpitPreviewAlert?>(null) }
     var previewExpanded by rememberSaveable { mutableStateOf(false) }
     var previewScenario by rememberSaveable { mutableStateOf(CockpitPreviewScenario.DEFAULT) }
     var previewIndex by rememberSaveable { mutableStateOf(0) }
@@ -530,6 +539,13 @@ fun CockpitSetupContent(
                                 isExpanded = previewExpanded,
                                 activeIndex = previewActive,
                                 swapDirection = previewDirection,
+                                // Like the real island, an alert shows only while the island is collapsed
+                                // and never while a call is ringing.
+                                transientAlert = previewAlertChoice
+                                    ?.takeIf {
+                                        !previewExpanded && previewScenario != CockpitPreviewScenario.INCOMING_CALL
+                                    }
+                                    ?.let { CockpitPreviewAlerts.alert(it) },
                             ),
                             telemetry = telemetry,
                             torchState = torchState.copy(isOn = torchOn, available = torchAvailable),
@@ -588,6 +604,23 @@ fun CockpitSetupContent(
                     CockpitPreviewScenarioChips(
                         selected = previewScenario,
                         onSelect = selectPreviewScenario,
+                    )
+                }
+            }
+
+            item(key = "preview-alerts") {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                    Text(
+                        text = "Simulate a system alert",
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    CockpitPreviewAlertChips(
+                        selected = previewAlertChoice,
+                        onSelect = { choice ->
+                            previewAlertChoice = choice
+                            if (choice != null) previewExpanded = false
+                        },
                     )
                 }
             }
@@ -715,6 +748,38 @@ fun CockpitSetupContent(
                             checked = prefs.whatsappEnabled,
                             onCheckedChange = { onToggleCategory(CockpitActivityCategory.WHATSAPP_ALERTS, it) },
                             tag = "cockpit-toggle-whatsapp",
+                        )
+                    }
+                }
+            }
+
+            item(key = "system-alerts-header") {
+                SectionLabel("System Alerts & LED Flash")
+            }
+
+            item(key = "system-alerts-panel") {
+                GlassPanel(Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(horizontal = Tokens.Gutter)) {
+                        CockpitSwitchRow(
+                            title = "Transient system alerts",
+                            subtitle = "Charging, battery, earbuds, ringer, airplane mode, unlock and DriveLift events appear briefly on the island.",
+                            checked = prefs.systemAlertsEnabled,
+                            onCheckedChange = onToggleSystemAlerts,
+                            tag = "cockpit-toggle-system-alerts",
+                        )
+                        CockpitSwitchRow(
+                            title = "Rear LED flash alerts",
+                            subtitle = "Flashes the camera light for a ringing call, an urgent alert and a finished transfer. Off by default.",
+                            checked = prefs.ledFlashEnabled,
+                            onCheckedChange = onToggleLedFlash,
+                            tag = "cockpit-toggle-led-flash",
+                        )
+                        CockpitSwitchRow(
+                            title = "Keep LED dark while the screen is on",
+                            subtitle = "Applies when the rear LED flash is on. Skips the flash while you are looking at the phone.",
+                            checked = prefs.ledFlashSuppressWhenScreenOn,
+                            onCheckedChange = onToggleLedSuppressWhenScreenOn,
+                            tag = "cockpit-toggle-led-suppress",
                         )
                     }
                 }

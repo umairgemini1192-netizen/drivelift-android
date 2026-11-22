@@ -24,9 +24,16 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 
+/** The imperative hooks DriveLift features use to raise a transient alert. */
+interface CockpitAlertSink {
+    fun emitBiometric(stage: CockpitBiometricStage)
+    fun emitTransfer(fileName: String, progressPercent: Int, isCompleted: Boolean)
+    fun emitRadarConnected(peerName: String)
+}
+
 /**
- * Standalone lifecycle-aware monitor for Phase 2 system alerts.
- * Ready to be wired into CockpitStateCoordinator after PR A merges.
+ * Lifecycle-aware monitor for system alerts. [CockpitModule] starts and stops it together with
+ * the Cockpit telemetry and mirrors [activeAlert] into the state coordinator.
  */
 class CockpitSystemAlertsMonitor(
     private val context: Context,
@@ -34,7 +41,7 @@ class CockpitSystemAlertsMonitor(
     private val reducer: CockpitSystemAlertReducer = CockpitSystemAlertReducer(),
     private val flashController: CockpitLedFlashAlertController? = null,
     private val clockMs: () -> Long = { System.currentTimeMillis() },
-) {
+) : CockpitAlertSink {
     private val _activeAlert = MutableStateFlow<CockpitSystemAlert?>(null)
     val activeAlert: StateFlow<CockpitSystemAlert?> = _activeAlert.asStateFlow()
 
@@ -90,14 +97,14 @@ class CockpitSystemAlertsMonitor(
         }
     }
 
-    fun emitBiometric(stage: CockpitBiometricStage) {
+    override fun emitBiometric(stage: CockpitBiometricStage) {
         dispatchEvent(CockpitSystemAlertEvent.BiometricFeedback(stage = stage))
         if (stage == CockpitBiometricStage.ERROR) {
             flashController?.trigger(CockpitFlashPattern.URGENT_ALERT)
         }
     }
 
-    fun emitTransfer(fileName: String, progressPercent: Int, isCompleted: Boolean) {
+    override fun emitTransfer(fileName: String, progressPercent: Int, isCompleted: Boolean) {
         dispatchEvent(
             CockpitSystemAlertEvent.DriveLiftTransfer(
                 fileName = fileName,
@@ -110,7 +117,7 @@ class CockpitSystemAlertsMonitor(
         }
     }
 
-    fun emitRadarConnected(peerName: String) {
+    override fun emitRadarConnected(peerName: String) {
         dispatchEvent(CockpitSystemAlertEvent.DriveLiftRadarConnected(peerName = peerName))
     }
 

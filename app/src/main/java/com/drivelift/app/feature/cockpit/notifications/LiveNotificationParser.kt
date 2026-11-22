@@ -76,7 +76,9 @@ object LiveNotificationParser {
         RegexOption.IGNORE_CASE,
     )
     private val clockTimeRegex = Regex("""\b\d{1,2}:\d{2}\s*(?:AM|PM)?""", RegexOption.IGNORE_CASE)
-    private val etaHintRegex = Regex("""\d+\s*(?:min|hr|h)\b|\beta\b|\barriv""", RegexOption.IGNORE_CASE)
+    /** A bullet or middle dot: Google Maps joins trip facts with one, for example "20 km - 12:20 am". */
+    private val summarySeparatorRegex = Regex("[\\u2022\\u00B7]")
+    private val etaHintRegex =Regex("""\d+\s*(?:min|hr|h)\b|\beta\b|\barriv""", RegexOption.IGNORE_CASE)
     private val roadRegex = Regex("""\b(?:onto|on|toward|towards|to|via)\s+(.+)$""", RegexOption.IGNORE_CASE)
     private val leadingDistanceRegex = Regex(
         """^\d+(?:\.\d+)?\s*(?:km|mi|ft|yd|m)\s*(?:-|on|toward)?\s*""",
@@ -301,7 +303,9 @@ object LiveNotificationParser {
         val distance = extractDistance(title, text)
         val maneuver = cleanManeuver(title, text)
         val eta = extractEta(text, subText)
-        val direction = inferTurnDirection("$title $text")
+        // A trip summary such as "20 km - 12:20 am" says nothing about the next turn, so it is
+        // kept out of the turn direction.
+        val direction = inferTurnDirection("$title ${text.takeUnless { isTripSummary(it) }.orEmpty()}")
         val trip = extractRemainingTrip(title, text, subText)
 
         return CockpitLiveActivity.MapsNavActivity(
@@ -313,16 +317,17 @@ object LiveNotificationParser {
             packageName = snapshot.packageName,
             notificationKey = snapshot.key,
             roadText = extractRoad(maneuver),
-            destinationText = subText.takeIf { it.isNotEmpty() && !etaHintRegex.containsMatchIn(it) }.orEmpty(),
+            destinationText = subText.takeIf { it.isNotEmpty() && !isTripSummary(it) }.orEmpty(),
             maneuverIcon = snapshot.maneuverIcon,
             remainingTripKm = trip?.km,
             tripUsesMiles = trip?.imperial == true,
+            tripDistanceText = trip?.text.orEmpty(),
             updatedAtMs = snapshot.updatedAtMs,
         )
     }
 
     /** A distance read from notification text, in kilometres. */
-    data class TripDistance(val km: Double, val imperial: Boolean)
+    data class TripDistance(val km: Double, val imperial: Boolean, val text: String = "")
 
     /**
      * The distance left on the whole trip. The sub text is searched first, then the text; the
@@ -335,11 +340,12 @@ object LiveNotificationParser {
             for (match in tripDistanceRegex.findAll(source)) {
                 if (match.value.replace(" ", "").lowercase() == nextTurn) continue
                 val value = match.groupValues[1].toDoubleOrNull() ?: continue
+                val shown = "${match.groupValues[1]} ${match.groupValues[2]}"
                 return when (match.groupValues[2].lowercase()) {
-                    "km" -> TripDistance(value, imperial = false)
-                    "m" -> TripDistance(value / 1000.0, imperial = false)
-                    "mi" -> TripDistance(value * 1.609344, imperial = true)
-                    "ft" -> TripDistance(value * 0.0003048, imperial = true)
+                    "km" -> TripDistance(value, imperial = false, text = shown)
+                    "m" -> TripDistance(value / 1000.0, imperial = false, text = shown)
+                    "mi" -> TripDistance(value * 1.609344, imperial = true, text = shown)
+                    "ft" -> TripDistance(value * 0.0003048, imperial = true, text = shown)
                     else -> null
                 }
             }
@@ -430,17 +436,30 @@ object LiveNotificationParser {
         )
     }
 
+    /**
+     * The distance to the next turn: the one in the title, else one in a text line that is an
+     * instruction. A trip summary line ("20 km - 12:20 am", "14 min (6.2 km)") is never read as
+     * the next turn, so a title such as "towards Main University Rd" gives no turn distance.
+     */
     private fun extractDistance(title: String, text: String): String {
-        return distanceRegex.find(title)?.value ?: distanceRegex.find(text)?.value ?: ""
+        distanceRegex.find(title)?.takeUnless { summarySeparatorRegex.containsMatchIn(title) }?.let { return it.value }
+        if (isTripSummary(text)) return ""
+        return distanceRegex.find(text)?.value ?: ""
     }
+
+    /** True for a line of trip facts (time left, arrival clock, distance left) rather than an instruction. */
+    private fun isTripSummary(line: String): Boolean =
+        summarySeparatorRegex.containsMatchIn(line) ||
+            clockTimeRegex.containsMatchIn(line) ||
+            etaHintRegex.containsMatchIn(line)
 
     /** The instruction without its leading distance. When the title is only a distance, the text carries the instruction. */
     private fun cleanManeuver(title: String, text: String): String {
         val fromTitle = title.replace(leadingDistanceRegex, "").trim()
         if (fromTitle.isNotEmpty()) return fromTitle
         val fromText = text.replace(leadingDistanceRegex, "").trim()
-        if (fromText.isNotEmpty() && !etaHintRegex.containsMatchIn(fromText)) return fromText
-        return title.ifEmpty { text }
+        if (fromText.isNotEmpty() && !isTripSummary(fromText)) return fromText
+        return title.ifEmpty { text.takeUnless { isTripSummary(it) }.orEmpty() }
     }
 
     /** The road name after "onto", "on" or "toward"; otherwise the whole instruction, for example "North". */

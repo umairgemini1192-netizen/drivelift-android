@@ -14,6 +14,9 @@ object CockpitTokens {
     val BubbleSize = 36.dp
     val PillMinWidth = 176.dp
     val PillMaxWidth = 272.dp
+    /** Collapsed navigation and alert pills stop here so their right edge clears the status bar icons on a Pixel 8 Pro. */
+    val StatusClearPillMaxWidth = 224.dp
+    val StatusClearPillPadding = 10.dp
     val SplitGap = 8.dp
     val ExpandedMaxWidth = 348.dp
     val ExpandedDefaultHeight = 360.dp

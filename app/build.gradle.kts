@@ -15,8 +15,8 @@ android {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
-        versionCode = 39
-        versionName = "1.0.0-preview.40"
+        versionCode = 40
+        versionName = "1.0.0-preview.41"
         buildConfigField(
             "String",
             "BUILD_STAMP",
