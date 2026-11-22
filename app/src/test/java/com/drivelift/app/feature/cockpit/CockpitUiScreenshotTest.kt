@@ -821,11 +821,11 @@ class CockpitUiScreenshotTest {
         )
 
         assertEquals(
-            "DriveLift 1.0.0-preview.38 (build 37)",
+            "DriveLift 1.0.0-preview.39 (build 38)",
             appVersionLabel(app, buildStamp = ""),
         )
         assertEquals(
-            "DriveLift 1.0.0-preview.38 (build 37 \u00B7 PR #78 @ a1d8b31)",
+            "DriveLift 1.0.0-preview.39 (build 38 \u00B7 PR #78 @ a1d8b31)",
             appVersionLabel(app, buildStamp = "PR #78 @ a1d8b31"),
         )
     }
