@@ -549,7 +549,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 modifier = GlanceModifier.size(CockpitTokens.WidgetBadgeIconSize),
                 colorFilter = ColorFilter.tint(fg),
             )
-            Spacer(GlanceModifier.height(Tokens.Micro))
+            Spacer(GlanceModifier.height(Tokens.Stroke))
             Text(
                 text = label,
                 style = TextStyle(
