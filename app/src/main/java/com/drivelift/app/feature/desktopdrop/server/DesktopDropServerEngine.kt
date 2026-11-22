@@ -37,6 +37,7 @@ import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
+import io.ktor.server.response.respondTextWriter
 import io.ktor.server.routing.delete
 import io.ktor.server.routing.get
 import io.ktor.server.routing.patch
@@ -278,67 +279,97 @@ class DesktopDropServerEngine(
 
             routing {
                 get("/") {
-                    val token = call.request.queryParameters["token"]
-                    val ua = call.request.userAgent().orEmpty()
-                    val remoteIp = call.request.local.remoteAddress
-                    if (!authManager.requireApproval && authManager.isValidToken(token)) {
-                        val res = authManager.requestAccess(remoteIp, ua, token)
-                        if (res?.issuedCookie != null) {
-                            appendSessionCookie(call, res.issuedCookie)
-                        }
-                        notifyChanged()
-                    }
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
                     call.respondText(htmlProvider(), ContentType.Text.Html)
                 }
 
-                post("/api/auth/request") {
-                    val bodyText = runCatching { call.receiveText() }.getOrDefault("")
-                    val json = runCatching { DropJson.parseObject(bodyText) }.getOrNull()
-                    val token = json?.get("token")?.toString() ?: call.request.queryParameters["token"]
+                get("/api/auth/session") {
+                    val peer = authManager.verifyCookie(call.request.cookies[SessionAuthManager.SESSION_COOKIE_NAME])
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
+                    if (peer == null) {
+                        call.respondText(
+                            """{"authenticated":false}""",
+                            ContentType.Application.Json,
+                            HttpStatusCode.Unauthorized,
+                        )
+                    } else {
+                        call.respondText(
+                            """{"authenticated":true,"deviceLabel":${DropJson.quoted(peer.deviceLabel)},"trusted":${peer.trusted}}""",
+                            ContentType.Application.Json,
+                        )
+                    }
+                }
+
+                post("/api/auth/knock") {
                     val ua = call.request.userAgent().orEmpty()
                     val remoteIp = call.request.local.remoteAddress
-                    val result = authManager.requestAccess(remoteIp, ua, token)
-                    if (result == null) {
+                    val knock = authManager.openKnock(remoteIp, ua)
+                    notifyChanged()
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
+                    call.respondText(
+                        """{"knockId":${DropJson.quoted(knock.sessionId)},"matchCode":${DropJson.quoted(knock.matchCode)},"deviceLabel":${DropJson.quoted(knock.deviceLabel)},"status":${DropJson.quoted(knockStatusName(knock.status))}}""",
+                        ContentType.Application.Json,
+                        HttpStatusCode.Accepted,
+                    )
+                }
+
+                get("/api/auth/wait") {
+                    val knockId = call.request.queryParameters["knockId"].orEmpty()
+                    val remoteIp = call.request.local.remoteAddress
+                    val initial = authManager.knockState(knockId)
+                    if (initial == null || initial.peerIp != remoteIp) {
                         call.respondText(
-                            """{"error":"Invalid or expired session token"}""",
+                            """{"error":"Unknown knock"}""",
+                            ContentType.Application.Json,
+                            HttpStatusCode.NotFound,
+                        )
+                        return@get
+                    }
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
+                    call.response.header("X-Accel-Buffering", "no")
+                    call.respondTextWriter(ContentType.Text.EventStream) {
+                        write("retry: 1500\n\n")
+                        flush()
+                        var lastSent: String? = null
+                        var ticks = 0
+                        while (true) {
+                            val name = knockStatusName(authManager.knockState(knockId)?.status)
+                            if (name != lastSent) {
+                                write("event: status\ndata: {\"status\":\"$name\"}\n\n")
+                                flush()
+                                lastSent = name
+                            }
+                            if (name != "PENDING") break
+                            delay(KNOCK_POLL_MS)
+                            ticks++
+                            if (ticks % KEEPALIVE_TICKS == 0) {
+                                write(": keepalive\n\n")
+                                flush()
+                            }
+                        }
+                    }
+                }
+
+                post("/api/auth/claim") {
+                    val bodyText = runCatching { call.receiveText() }.getOrDefault("")
+                    val json = runCatching { DropJson.parseObject(bodyText) }.getOrNull()
+                    val knockId = json?.get("knockId")?.toString().orEmpty()
+                    val remoteIp = call.request.local.remoteAddress
+                    val issued = authManager.claimCookie(knockId, remoteIp)
+                    if (issued == null) {
+                        call.respondText(
+                            """{"error":"Not approved on the phone yet, or already claimed"}""",
                             ContentType.Application.Json,
                             HttpStatusCode.Unauthorized,
                         )
                         return@post
                     }
+                    appendSessionCookie(call, issued.value, issued.maxAgeSeconds)
                     notifyChanged()
-                    val statusCode = if (result.session.status == PeerApprovalStatus.APPROVED) {
-                        result.issuedCookie?.let { appendSessionCookie(call, it) }
-                        HttpStatusCode.OK
-                    } else {
-                        HttpStatusCode.Accepted
-                    }
+                    call.response.header(HttpHeaders.CacheControl, "no-store")
                     call.respondText(
-                        """{"status":${DropJson.quoted(result.session.status.name)},"peerId":${DropJson.quoted(result.session.sessionId)},"deviceLabel":${DropJson.quoted(result.session.deviceLabel)}}""",
+                        """{"status":"APPROVED","deviceLabel":${DropJson.quoted(issued.session.deviceLabel)},"trusted":${issued.session.trusted}}""",
                         ContentType.Application.Json,
-                        statusCode,
-                    )
-                }
-
-                get("/api/auth/status") {
-                    val peerId = call.request.queryParameters["peerId"].orEmpty()
-                    val token = call.request.queryParameters["token"]
-                    val result = authManager.checkPeerStatus(peerId, token)
-                    if (result == null) {
-                        call.respondText(
-                            """{"error":"Unauthorized peer status query"}""",
-                            ContentType.Application.Json,
-                            HttpStatusCode.Unauthorized,
-                        )
-                        return@get
-                    }
-                    if (result.session.status == PeerApprovalStatus.APPROVED && result.issuedCookie != null) {
-                        appendSessionCookie(call, result.issuedCookie)
-                    }
-                    call.respondText(
-                        """{"status":${DropJson.quoted(result.session.status.name)},"peerId":${DropJson.quoted(result.session.sessionId)}}""",
-                        ContentType.Application.Json,
-                        if (result.session.status == PeerApprovalStatus.REVOKED) HttpStatusCode.Forbidden else HttpStatusCode.OK,
                     )
                 }
 
@@ -618,11 +649,19 @@ class DesktopDropServerEngine(
         return peer
     }
 
-    private fun appendSessionCookie(call: ApplicationCall, cookieValue: String) {
+    private fun knockStatusName(status: PeerApprovalStatus?): String = when (status) {
+        PeerApprovalStatus.PENDING -> "PENDING"
+        PeerApprovalStatus.APPROVED -> "APPROVED"
+        PeerApprovalStatus.EXPIRED -> "EXPIRED"
+        else -> "DENIED"
+    }
+
+    private fun appendSessionCookie(call: ApplicationCall, cookieValue: String, maxAgeSeconds: Int?) {
         call.response.cookies.append(
             Cookie(
                 name = SessionAuthManager.SESSION_COOKIE_NAME,
                 value = cookieValue,
+                maxAge = maxAgeSeconds ?: 0,
                 httpOnly = true,
                 path = "/",
                 extensions = mapOf("SameSite" to "Strict"),
@@ -929,5 +968,7 @@ class DesktopDropServerEngine(
         val PORT_FALLBACKS = listOf(8080, 8081, 8888)
         const val STREAM_BUFFER_BYTES = 512 * 1024
         const val TELEMETRY_THROTTLE_MS = 300L
+        const val KNOCK_POLL_MS = 75L
+        const val KEEPALIVE_TICKS = 200
     }
 }

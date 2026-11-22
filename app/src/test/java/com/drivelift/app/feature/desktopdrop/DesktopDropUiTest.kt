@@ -20,6 +20,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
 import com.drivelift.app.feature.desktopdrop.model.DropTransferProgress
@@ -76,6 +77,7 @@ class DesktopDropUiTest {
 
     @After
     fun tearDown() {
+        Graph.get(app).desktopDrop.prefs.setGateMode(BiometricGateMode.APPROVE_EVERY_START)
         Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(DesktopDropSnapshot())
         Graph.get(app).clock = System::currentTimeMillis
         RuntimeEnvironment.setFontScale(1f)
@@ -94,6 +96,7 @@ class DesktopDropUiTest {
                 connectedAtMs = FIXED_TIME_MS,
                 lastSeenMs = FIXED_TIME_MS,
                 status = PeerApprovalStatus.PENDING,
+                matchCode = "74-29",
             )
         } else {
             null
@@ -104,8 +107,8 @@ class DesktopDropUiTest {
                 mode = ConnectivityMode.SAME_WIFI,
                 bindIp = "192.168.1.44",
                 port = 8080,
-                sessionToken = "DL84KM2P",
-                dropUrl = "http://192.168.1.44:8080/?token=DL84KM2P",
+                dropUrl = "http://192.168.1.44:8080",
+                bookmarkUrl = "http://drivelift.local:8080",
                 peers = listOf(
                     PeerSession(
                         sessionId = "peer-1",
@@ -115,6 +118,7 @@ class DesktopDropUiTest {
                         connectedAtMs = FIXED_TIME_MS - 30_000L,
                         lastSeenMs = FIXED_TIME_MS,
                         status = PeerApprovalStatus.APPROVED,
+                        trusted = true,
                     ),
                 ),
                 pendingApproval = pending,
@@ -156,8 +160,8 @@ class DesktopDropUiTest {
                 mode = ConnectivityMode.DIRECT_HOTSPOT,
                 bindIp = "192.168.43.1",
                 port = 8080,
-                sessionToken = "HS72VN9Q",
-                dropUrl = "http://192.168.43.1:8080/?token=HS72VN9Q",
+                dropUrl = "http://192.168.43.1:8080",
+                bookmarkUrl = "http://drivelift.local:8080",
                 hotspotCredentials = HotspotCredentials(
                     ssid = "AndroidShare_9421",
                     passphrase = "synth-pass-8410",
@@ -219,7 +223,11 @@ class DesktopDropUiTest {
                 pump(4)
                 compose.onNodeWithText("Desktop drop").assertIsDisplayed()
                 compose.onNodeWithTag("dd-server-toggle").assertHeightIsAtLeast(Tokens.TouchTarget)
-                compose.onNodeWithTag("dd-url-qr").assertExists()
+                // The bookmarkable address leads the screen, with no token in it.
+                compose.onNodeWithTag("dd-address-card").assertExists()
+                compose.onNodeWithTag("dd-bookmark-chip").assertExists()
+                compose.onNodeWithText("http://drivelift.local:8080").assertExists()
+                assertTrue(compose.onAllNodesWithTag("dd-url-qr").fetchSemanticsNodes().isEmpty())
 
                 if (recordDd) {
                     compose.onRoot().captureRoboImage(
@@ -228,6 +236,31 @@ class DesktopDropUiTest {
                 }
 
                 if (variant == Variant.STANDARD) {
+                    // The LAN IP fallback chip carries no token, and the pill unfolds the QR.
+                    compose.onNodeWithTag("dd-lan-chip").assertExists()
+                    compose.onNodeWithText("http://192.168.1.44:8080").assertExists()
+                    compose.onNodeWithTag("dd-list").performScrollToKey("qr-flow")
+                    pump(4)
+                    compose.onNodeWithTag("dd-pair-pill").assertHeightIsAtLeast(Tokens.TouchTarget)
+                    compose.onNodeWithTag("dd-pair-pill").performClick()
+                    waitForTag("dd-url-qr")
+                    compose.onNodeWithTag("dd-pair-pill").performClick()
+                    pump(4)
+                    assertTrue(compose.onAllNodesWithTag("dd-url-qr").fetchSemanticsNodes().isEmpty())
+
+                    // The Biometric gate offers both modes and changes the saved mode.
+                    compose.onNodeWithTag("dd-list").performScrollToKey("gate")
+                    pump(4)
+                    compose.onNodeWithTag("dd-gate-panel").assertExists()
+                    compose.onNodeWithText("Approve on every Start").assertExists()
+                    compose.onNodeWithText("Trust this browser (7 days)").assertExists()
+                    compose.onNodeWithTag("dd-gate-TRUST_7_DAYS").performClick()
+                    pump(4)
+                    assertTrue(Graph.get(app).desktopDrop.prefs.current.gateMode == BiometricGateMode.TRUST_7_DAYS)
+                    Graph.get(app).desktopDrop.prefs.setGateMode(BiometricGateMode.APPROVE_EVERY_START)
+                    seedWifiRunning(withPendingPeer = false)
+                    pump(4)
+
                     // Expand troubleshooting banner and verify VPN tip + Direct Hotspot switch CTA.
                     compose.onNodeWithTag("dd-list").performScrollToKey("troubleshoot")
                     pump(4)
@@ -259,8 +292,11 @@ class DesktopDropUiTest {
                     // Verify One-Tap Peer Approval dialog renders cleanly.
                     seedWifiRunning(withPendingPeer = true)
                     waitForTag("dd-peer-approval-dialog")
-                    compose.onNodeWithText("Allow laptop connection?").assertIsDisplayed()
+                    compose.onNodeWithText("Approve laptop with biometrics?").assertIsDisplayed()
                     compose.onNodeWithText("Chrome on Windows").assertIsDisplayed()
+                    compose.onNodeWithTag("dd-match-code").assertIsDisplayed()
+                    compose.onNodeWithText("Match code 74-29").assertIsDisplayed()
+                    compose.onNodeWithTag("dd-verify-biometric").assertHeightIsAtLeast(Tokens.TouchTarget)
                     compose.onNodeWithText("Deny").performClick()
                     pump(4)
                     assertTrue(compose.onAllNodesWithTag("dd-peer-approval-dialog").fetchSemanticsNodes().isEmpty())

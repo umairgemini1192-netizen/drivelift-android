@@ -5,6 +5,7 @@ import android.net.Uri
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -40,8 +41,13 @@ class DesktopDropViewModel(app: Application) : AndroidViewModel(app) {
         controller.switchMode(mode)
     }
 
-    fun approvePeer(sessionId: String) {
-        controller.approvePeer(sessionId)
+    /** Only after the phone's biometric prompt succeeded. */
+    fun approveKnockAfterBiometric(sessionId: String) {
+        controller.approveKnockAfterBiometric(sessionId)
+    }
+
+    fun setGateMode(mode: BiometricGateMode) {
+        controller.setGateMode(mode)
     }
 
     fun revokePeer(sessionId: String) {
@@ -72,8 +78,8 @@ class DesktopDropViewModel(app: Application) : AndroidViewModel(app) {
         controller.resetDestinationToDefault()
     }
 
-    fun updateSettings(preferredPort: Int, requireApproval: Boolean, idleTimeoutMinutes: Int) {
-        controller.updateSettings(preferredPort, requireApproval, idleTimeoutMinutes)
+    fun updateSettings(preferredPort: Int, idleTimeoutMinutes: Int) {
+        controller.updateSettings(preferredPort, idleTimeoutMinutes)
     }
 
     fun notifyMessage(text: String) {

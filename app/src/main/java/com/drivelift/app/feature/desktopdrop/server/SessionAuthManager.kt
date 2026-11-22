@@ -1,146 +1,193 @@
 package com.drivelift.app.feature.desktopdrop.server
 
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.PeerApprovalStatus
 import com.drivelift.app.feature.desktopdrop.model.PeerSession
 import java.net.Inet4Address
 import java.net.InetAddress
+import java.security.MessageDigest
 import java.security.SecureRandom
+import java.util.Base64
+import java.util.Locale
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 /**
- * Manages the per-server ephemeral 8-character session token, browser peer approval states,
- * HttpOnly session cookies, and private LAN IP enforcement.
+ * Knock-to-approve browser sessions for Desktop Drop.
+ *
+ * A browser that opens the fixed address "knocks": it gets a random match code and waits. The
+ * session only becomes usable after the owner approves it on the phone, and the UI must call
+ * [approveKnock] only after a successful BiometricPrompt. Approval mints a signed HttpOnly cookie
+ * that the browser collects exactly once ([claimCookie]).
+ *
+ * Cookie value: base64url(payload) "." base64url(HMAC-SHA256(payload)), payload
+ * `v1:sessionId:issuedMs:expiresMs:S|T:serverEpoch`. A cookie is accepted only when its MAC
+ * verifies, it has not expired, and the session is approved and not revoked. "S" cookies also need
+ * the current server epoch, so they die when the server stops. "T" (trusted 7 days) cookies
+ * survive a restart through the [TrustStore].
  */
 class SessionAuthManager(
     private val clock: () -> Long = System::currentTimeMillis,
     private val allowLoopbackForTest: Boolean = false,
+    private val signer: CookieSigner = JvmHmacCookieSigner(),
+    private val trustStore: TrustStore = InMemoryTrustStore(),
 ) {
     private val rng = SecureRandom()
     private val lock = Any()
     private val sessionsById = LinkedHashMap<String, InternalPeer>()
-    private val cookieToPeerId = ConcurrentHashMap<String, String>()
 
     @Volatile
-    var sessionToken: String = generateToken()
-        private set
+    var gateMode: BiometricGateMode = BiometricGateMode.APPROVE_EVERY_START
 
     @Volatile
-    var requireApproval: Boolean = true
+    private var serverEpoch: String = randomHex(EPOCH_BYTES)
 
-    private data class InternalPeer(
+    private class InternalPeer(
         var session: PeerSession,
         var cookieValue: String?,
     )
 
-    fun rotateToken(): String {
-        synchronized(lock) {
-            sessionsById.clear()
-            cookieToPeerId.clear()
-            sessionToken = generateToken()
-            return sessionToken
-        }
-    }
-
+    /** Ends every session of this server run. Trusted browsers stay in the [TrustStore]. */
     fun resetSessions() {
         synchronized(lock) {
             sessionsById.clear()
-            cookieToPeerId.clear()
+            serverEpoch = randomHex(EPOCH_BYTES)
         }
     }
 
     fun isAllowedRemoteIp(remoteHost: String): Boolean =
         isPrivateLanIp(remoteHost, allowLoopback = allowLoopbackForTest)
 
-    fun isValidToken(candidate: String?): Boolean {
-        if (candidate.isNullOrBlank()) return false
-        return constantTimeEquals(candidate.trim(), sessionToken)
-    }
-
-    data class AuthAttemptResult(
-        val session: PeerSession,
-        val issuedCookie: String?,
-    )
-
     /**
-     * Registers or looks up a peer presenting a validated ephemeral token. When [requireApproval]
-     * is disabled, immediately approves the peer and mints an HttpOnly session cookie.
+     * Registers a browser waiting for approval. A browser that reloads the page gets the same
+     * pending knock (same match code) back instead of a second one.
      */
-    fun requestAccess(peerIp: String, userAgent: String, suppliedToken: String?): AuthAttemptResult? {
-        if (!isValidToken(suppliedToken)) return null
+    fun openKnock(peerIp: String, userAgent: String): PeerSession {
         val now = clock()
-        val label = parseDeviceLabel(userAgent)
         synchronized(lock) {
+            expireStaleLocked(now)
             val existing = sessionsById.values.firstOrNull {
-                it.session.peerIp == peerIp && it.session.userAgent == userAgent && it.session.status != PeerApprovalStatus.REVOKED
+                it.session.status == PeerApprovalStatus.PENDING &&
+                    it.session.peerIp == peerIp && it.session.userAgent == userAgent
             }
             if (existing != null) {
                 existing.session = existing.session.copy(lastSeenMs = now)
-                if (!requireApproval && existing.session.status == PeerApprovalStatus.PENDING) {
-                    return approveLocked(existing)
-                }
-                return AuthAttemptResult(existing.session, existing.cookieValue)
+                return existing.session
             }
-            val initialStatus = if (requireApproval) PeerApprovalStatus.PENDING else PeerApprovalStatus.APPROVED
+            val pending = sessionsById.values.filter { it.session.status == PeerApprovalStatus.PENDING }
+            if (pending.size >= MAX_PENDING_KNOCKS) {
+                pending.first().let { it.session = it.session.copy(status = PeerApprovalStatus.EXPIRED, lastSeenMs = now) }
+            }
             val id = UUID.randomUUID().toString()
             val session = PeerSession(
                 sessionId = id,
                 peerIp = peerIp,
                 userAgent = userAgent,
-                deviceLabel = label,
+                deviceLabel = parseDeviceLabel(userAgent),
                 connectedAtMs = now,
                 lastSeenMs = now,
-                status = initialStatus,
+                status = PeerApprovalStatus.PENDING,
+                matchCode = newMatchCode(),
             )
-            val entry = InternalPeer(session, null)
-            sessionsById[id] = entry
-            return if (initialStatus == PeerApprovalStatus.APPROVED) {
-                approveLocked(entry)
-            } else {
-                AuthAttemptResult(session, null)
+            sessionsById[id] = InternalPeer(session, null)
+            return session
+        }
+    }
+
+    /** The current state of a knock, applying expiry first. Null for an unknown id. */
+    fun knockState(knockId: String): PeerSession? {
+        val now = clock()
+        synchronized(lock) {
+            expireStaleLocked(now)
+            return sessionsById[knockId]?.session
+        }
+    }
+
+    /**
+     * Call only after the owner passed the phone's biometric check. Only a pending knock can be
+     * approved; a denied, expired or revoked one never comes back.
+     */
+    fun approveKnock(knockId: String): PeerSession? {
+        val now = clock()
+        synchronized(lock) {
+            expireStaleLocked(now)
+            val entry = sessionsById[knockId] ?: return null
+            if (entry.session.status != PeerApprovalStatus.PENDING) return null
+            val trusted = gateMode == BiometricGateMode.TRUST_7_DAYS
+            entry.cookieValue = mintCookie(entry.session.sessionId, trusted, now)
+            entry.session = entry.session.copy(
+                status = PeerApprovalStatus.APPROVED,
+                trusted = trusted,
+                lastSeenMs = now,
+            )
+            if (trusted) {
+                trustStore.put(
+                    TrustedBrowser(
+                        sessionId = entry.session.sessionId,
+                        deviceLabel = entry.session.deviceLabel,
+                        peerIp = entry.session.peerIp,
+                        userAgent = entry.session.userAgent,
+                        expiresMs = now + TRUST_TTL_MS,
+                    ),
+                )
             }
+            return entry.session
         }
     }
 
-    fun checkPeerStatus(peerId: String, suppliedToken: String?): AuthAttemptResult? {
-        if (!isValidToken(suppliedToken)) return null
-        synchronized(lock) {
-            val entry = sessionsById[peerId] ?: return null
-            entry.session = entry.session.copy(lastSeenMs = clock())
-            return AuthAttemptResult(
-                session = entry.session,
-                issuedCookie = if (entry.session.status == PeerApprovalStatus.APPROVED) entry.cookieValue else null,
-            )
-        }
-    }
+    data class IssuedCookie(val value: String, val session: PeerSession, val maxAgeSeconds: Int?)
 
-    fun approvePeer(sessionId: String): PeerSession? {
+    /** Hands the approved browser its cookie once. A second claim, or another IP, gets null. */
+    fun claimCookie(knockId: String, peerIp: String): IssuedCookie? {
         synchronized(lock) {
-            val entry = sessionsById[sessionId] ?: return null
-            if (entry.session.status == PeerApprovalStatus.REVOKED) return null
-            return approveLocked(entry).session
-        }
-    }
-
-    fun revokePeer(sessionId: String): PeerSession? {
-        synchronized(lock) {
-            val entry = sessionsById[sessionId] ?: return null
-            entry.cookieValue?.let { cookieToPeerId.remove(it) }
+            val entry = sessionsById[knockId] ?: return null
+            if (entry.session.status != PeerApprovalStatus.APPROVED) return null
+            if (entry.session.peerIp != peerIp) return null
+            val cookie = entry.cookieValue ?: return null
             entry.cookieValue = null
-            entry.session = entry.session.copy(status = PeerApprovalStatus.REVOKED, lastSeenMs = clock())
+            val maxAge = if (entry.session.trusted) (TRUST_TTL_MS / 1000L).toInt() else null
+            return IssuedCookie(cookie, entry.session, maxAge)
+        }
+    }
+
+    /** Disconnect, or deny a pending knock. Also forgets a trusted browser immediately. */
+    fun revokePeer(sessionId: String): PeerSession? {
+        val now = clock()
+        synchronized(lock) {
+            trustStore.remove(sessionId)
+            val entry = sessionsById[sessionId] ?: return null
+            entry.cookieValue = null
+            entry.session = entry.session.copy(status = PeerApprovalStatus.REVOKED, trusted = false, lastSeenMs = now)
             return entry.session
         }
     }
 
     fun verifyCookie(cookieValue: String?): PeerSession? {
         if (cookieValue.isNullOrBlank()) return null
-        val peerId = cookieToPeerId[cookieValue] ?: return null
+        val now = clock()
+        val claims = parseCookie(cookieValue, now) ?: return null
         synchronized(lock) {
-            val entry = sessionsById[peerId] ?: return null
-            if (entry.session.status != PeerApprovalStatus.APPROVED) return null
-            if (entry.cookieValue != cookieValue) return null
-            entry.session = entry.session.copy(lastSeenMs = clock())
-            return entry.session
+            val entry = sessionsById[claims.sessionId]
+            if (entry != null) {
+                if (entry.session.status != PeerApprovalStatus.APPROVED) return null
+                if (!claims.trusted && claims.epoch != serverEpoch) return null
+                entry.session = entry.session.copy(lastSeenMs = now)
+                return entry.session
+            }
+            // After a restart only a trusted browser still on the trust list comes back.
+            if (!claims.trusted) return null
+            val trusted = trustStore.get(claims.sessionId, now) ?: return null
+            val session = PeerSession(
+                sessionId = trusted.sessionId,
+                peerIp = trusted.peerIp,
+                userAgent = trusted.userAgent,
+                deviceLabel = trusted.deviceLabel,
+                connectedAtMs = now,
+                lastSeenMs = now,
+                status = PeerApprovalStatus.APPROVED,
+                trusted = true,
+            )
+            sessionsById[trusted.sessionId] = InternalPeer(session, null)
+            return session
         }
     }
 
@@ -148,33 +195,82 @@ class SessionAuthManager(
         sessionsById.values.map { it.session }
     }
 
-    fun pendingApproval(): PeerSession? = synchronized(lock) {
-        sessionsById.values.firstOrNull { it.session.status == PeerApprovalStatus.PENDING }?.session
-    }
-
-    private fun approveLocked(entry: InternalPeer): AuthAttemptResult {
-        val cookie = entry.cookieValue ?: generateCookieValue().also { newCookie ->
-            entry.cookieValue = newCookie
-            cookieToPeerId[newCookie] = entry.session.sessionId
+    fun pendingApproval(): PeerSession? {
+        val now = clock()
+        return synchronized(lock) {
+            expireStaleLocked(now)
+            sessionsById.values.firstOrNull { it.session.status == PeerApprovalStatus.PENDING }?.session
         }
-        entry.session = entry.session.copy(status = PeerApprovalStatus.APPROVED, lastSeenMs = clock())
-        return AuthAttemptResult(entry.session, cookie)
     }
 
-    private fun generateToken(): String = buildString(TOKEN_LENGTH) {
-        repeat(TOKEN_LENGTH) { append(TOKEN_ALPHABET[rng.nextInt(TOKEN_ALPHABET.length)]) }
+    private fun expireStaleLocked(now: Long) {
+        for (entry in sessionsById.values) {
+            val s = entry.session
+            if (s.status == PeerApprovalStatus.PENDING && now - s.connectedAtMs >= KNOCK_TTL_MS) {
+                entry.session = s.copy(status = PeerApprovalStatus.EXPIRED, lastSeenMs = now)
+            }
+        }
+        sessionsById.values.removeAll {
+            (it.session.status == PeerApprovalStatus.REVOKED || it.session.status == PeerApprovalStatus.EXPIRED) &&
+                now - it.session.lastSeenMs > RETAIN_TERMINAL_MS
+        }
     }
 
-    private fun generateCookieValue(): String {
-        val bytes = ByteArray(24)
-        rng.nextBytes(bytes)
-        return bytes.joinToString("") { "%02x".format(it) }
+    private fun newMatchCode(): String =
+        String.format(Locale.ROOT, "%02d-%02d", rng.nextInt(100), rng.nextInt(100))
+
+    private fun randomHex(bytes: Int): String {
+        val raw = ByteArray(bytes)
+        rng.nextBytes(raw)
+        return raw.joinToString("") { "%02x".format(it) }
+    }
+
+    internal fun mintCookie(sessionId: String, trusted: Boolean, now: Long): String {
+        val expires = now + if (trusted) TRUST_TTL_MS else SESSION_TTL_MS
+        val payload = "v1:$sessionId:$now:$expires:${if (trusted) "T" else "S"}:$serverEpoch"
+        val encoded = ENCODER.encodeToString(payload.toByteArray(Charsets.UTF_8))
+        val mac = ENCODER.encodeToString(signer.sign(encoded.toByteArray(Charsets.US_ASCII)))
+        return "$encoded.$mac"
+    }
+
+    private data class CookieClaims(
+        val sessionId: String,
+        val expiresMs: Long,
+        val trusted: Boolean,
+        val epoch: String,
+    )
+
+    private fun parseCookie(value: String, now: Long): CookieClaims? {
+        val dot = value.indexOf('.')
+        if (dot <= 0 || dot == value.length - 1) return null
+        val encoded = value.substring(0, dot)
+        val presentedMac = runCatching { DECODER.decode(value.substring(dot + 1)) }.getOrNull() ?: return null
+        val expectedMac = signer.sign(encoded.toByteArray(Charsets.US_ASCII))
+        if (!MessageDigest.isEqual(expectedMac, presentedMac)) return null
+        val payload = runCatching { String(DECODER.decode(encoded), Charsets.UTF_8) }.getOrNull() ?: return null
+        val fields = payload.split(':')
+        if (fields.size != PAYLOAD_FIELDS || fields[0] != "v1") return null
+        val expires = fields[3].toLongOrNull() ?: return null
+        if (now >= expires) return null
+        return CookieClaims(
+            sessionId = fields[1],
+            expiresMs = expires,
+            trusted = fields[4] == "T",
+            epoch = fields[5],
+        )
     }
 
     companion object {
         const val SESSION_COOKIE_NAME = "dl_drop_session"
-        private const val TOKEN_LENGTH = 8
-        private const val TOKEN_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
+        const val KNOCK_TTL_MS = 120_000L
+        const val SESSION_TTL_MS = 12L * 60L * 60L * 1000L
+        const val TRUST_TTL_MS = 7L * 24L * 60L * 60L * 1000L
+        private const val MAX_PENDING_KNOCKS = 8
+        private const val RETAIN_TERMINAL_MS = 600_000L
+        private const val EPOCH_BYTES = 8
+        private const val PAYLOAD_FIELDS = 6
+        private val ENCODER = Base64.getUrlEncoder().withoutPadding()
+        private val DECODER = Base64.getUrlDecoder()
 
         fun isPrivateLanIp(rawHost: String, allowLoopback: Boolean = false): Boolean {
             var host = rawHost.trim().trimStart('/').substringBefore('%')
@@ -224,13 +320,6 @@ class SessionAuthManager(
                 else -> "LAN device"
             }
             return "$browser on $os"
-        }
-
-        private fun constantTimeEquals(a: String, b: String): Boolean {
-            if (a.length != b.length) return false
-            var diff = 0
-            for (i in a.indices) diff = diff or (a[i].code xor b[i].code)
-            return diff == 0
         }
     }
 }

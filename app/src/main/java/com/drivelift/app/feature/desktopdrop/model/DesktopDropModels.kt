@@ -17,6 +17,13 @@ enum class PeerApprovalStatus {
     PENDING,
     APPROVED,
     REVOKED,
+    EXPIRED,
+}
+
+/** How long an approved browser stays signed in. Chosen on the Drop screen. */
+enum class BiometricGateMode(val label: String) {
+    APPROVE_EVERY_START("Approve on every Start"),
+    TRUST_7_DAYS("Trust this browser (7 days)"),
 }
 
 data class PeerSession(
@@ -27,6 +34,10 @@ data class PeerSession(
     val connectedAtMs: Long,
     val lastSeenMs: Long,
     val status: PeerApprovalStatus,
+    /** Random two-pair code (for example 74-29) shown on the browser and in the phone prompt. */
+    val matchCode: String = "",
+    /** True when this browser was approved with the 7 day trust option. */
+    val trusted: Boolean = false,
 )
 
 data class SharedDropItem(
@@ -78,7 +89,7 @@ data class HotspotCredentials(
 
 data class DesktopDropPrefsState(
     val preferredPort: Int = 8080,
-    val requireApproval: Boolean = true,
+    val gateMode: BiometricGateMode = BiometricGateMode.APPROVE_EVERY_START,
     val idleTimeoutMinutes: Int = 15,
     val destinationTreeUri: String? = null,
     val destinationLabel: String = "Downloads/DriveLift Drop",
@@ -89,8 +100,10 @@ data class DesktopDropSnapshot(
     val mode: ConnectivityMode = ConnectivityMode.SAME_WIFI,
     val bindIp: String? = null,
     val port: Int? = null,
-    val sessionToken: String = "",
+    /** Clean LAN address with the IP, no token. Used for the pairing QR code. */
     val dropUrl: String? = null,
+    /** The address to bookmark on the laptop: http://drivelift.local:PORT, no token. */
+    val bookmarkUrl: String? = null,
     val hotspotCredentials: HotspotCredentials? = null,
     val peers: List<PeerSession> = emptyList(),
     val pendingApproval: PeerSession? = null,
