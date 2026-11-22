@@ -6,7 +6,9 @@ import android.content.Intent
 import android.os.BatteryManager
 import android.os.Environment
 import android.os.StatFs
+import android.os.SystemClock
 import android.provider.AlarmClock
+import android.view.View
 import android.widget.RemoteViews
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
@@ -14,9 +16,12 @@ import androidx.compose.ui.unit.DpSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.content.ContextCompat
+import androidx.glance.ColorFilter
 import androidx.glance.GlanceId
 import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
+import androidx.glance.Image
+import androidx.glance.ImageProvider
 import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
@@ -26,7 +31,6 @@ import androidx.glance.appwidget.GlanceAppWidget
 import androidx.glance.appwidget.SizeMode
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
-import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.provideContent
 import androidx.glance.appwidget.updateAll
 import androidx.glance.background
@@ -40,6 +44,7 @@ import androidx.glance.layout.fillMaxSize
 import androidx.glance.layout.fillMaxWidth
 import androidx.glance.layout.height
 import androidx.glance.layout.padding
+import androidx.glance.layout.size
 import androidx.glance.layout.width
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
@@ -53,15 +58,17 @@ import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
+import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.ui.MainActivity
 import com.drivelift.app.ui.Tokens
 
 /**
  * All-in-One Home Screen Dark Tactile Glass Master Widget:
- * - Top Row: Native `<TextClock>` (12h/24h synced, zero wakeups) + Next Alarm & Live `<Chronometer>` countdown
- * - Middle Row: Live DriveLift telemetry, free phone storage GB, and current battery %
- * - Bottom Row: 1-tap Desktop Drop, Flashlight, Dynamic Island toggles, and synced Pinned Apps
+ * - Top Row: Native `<TextClock>` (`hh:mm a` uppercase) + native `<Chronometer>` alarm badge
+ * - Middle Row: Live DriveLift telemetry, free phone storage GB, and current battery % with glass pills & icons
+ * - Controls Row: 1-tap Desktop Drop, Flashlight, Dynamic Island toggles with 1dp glass strokes & icons
+ * - Pinned Row: Dedicated row of synced Pinned Apps showing cached launcher app icons
  */
 class CockpitGlanceWidget : GlanceAppWidget() {
 
@@ -72,26 +79,27 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         val cockpit = Graph.get(context).cockpit
         val prefs = cockpit.prefsRepo.state.value
+        val islandEnabled = cockpit.prefsRepo.readCurrentMasterEnabled()
         val telemetry = cockpit.telemetryAdapter.summary.value
         val alarm = NextAlarmFormatter.readFromSystem(context)
         val torchOn = cockpit.torchController.state.value.isOn
         val freeStorageLabel = readFreeStorageLabel()
         val batteryLabel = readBatteryLabel(context)
-        val pinnedApps = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages).take(3)
+        val pinnedApps = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages).take(4)
 
         provideContent {
             GlanceTheme {
                 val size = LocalSize.current
-                val compact = size.height < SIZE_EXPANDED_4X3.height
+                val maxPinned = if (size.height < SIZE_EXPANDED_4X3.height) 3 else 4
                 MasterWidgetContent(
                     context = context,
-                    compact = compact,
+                    maxPinned = maxPinned,
                     alarm = alarm,
                     telemetry = telemetry,
                     freeStorageLabel = freeStorageLabel,
                     batteryLabel = batteryLabel,
                     torchOn = torchOn,
-                    islandOn = prefs.masterEnabled,
+                    islandOn = islandEnabled,
                     pinnedApps = pinnedApps,
                 )
             }
@@ -103,10 +111,45 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         return ColorProvider(day = c, night = c)
     }
 
+    private fun buildAlarmRemoteViews(context: Context, alarm: NextAlarmUiModel): RemoteViews {
+        val views = RemoteViews(context.packageName, R.layout.cockpit_widget_alarm_chronometer)
+        views.setTextViewText(
+            R.id.cockpit_alarm_time_text,
+            if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
+        )
+        when {
+            alarm.hasAlarm &&
+                alarm.countdownMode == AlarmCountdownMode.CHRONOMETER_UNDER_24H &&
+                alarm.triggerAtMillis != null -> {
+                val remainingMs = (alarm.triggerAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+                val baseElapsed = SystemClock.elapsedRealtime() + remainingMs
+                views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.VISIBLE)
+                views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
+                views.setChronometerCountDown(R.id.cockpit_alarm_chronometer, true)
+                views.setChronometer(
+                    R.id.cockpit_alarm_chronometer,
+                    baseElapsed,
+                    "Rings in %s",
+                    true,
+                )
+            }
+            alarm.hasAlarm -> {
+                views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
+                views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.VISIBLE)
+                views.setTextViewText(R.id.cockpit_alarm_static_countdown, alarm.countdownText)
+            }
+            else -> {
+                views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
+                views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
+            }
+        }
+        return views
+    }
+
     @Composable
     private fun MasterWidgetContent(
         context: Context,
-        compact: Boolean,
+        maxPinned: Int,
         alarm: NextAlarmUiModel,
         telemetry: DriveLiftTelemetrySummary,
         freeStorageLabel: String,
@@ -115,12 +158,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         islandOn: Boolean,
         pinnedApps: List<PinnedAppInfo>,
     ) {
-        val skyBg = resColorProvider(context, R.color.cockpit_sky_top)
-        val surfaceBg = resColorProvider(context, R.color.cockpit_surface)
-        val containerBg = resColorProvider(context, R.color.cockpit_surface_container)
-        val containerHighBg = resColorProvider(context, R.color.cockpit_surface_container_high)
         val primaryText = resColorProvider(context, R.color.cockpit_on_surface)
-        val mutedText = resColorProvider(context, R.color.cockpit_on_surface_variant)
         val cyanAccent = resColorProvider(context, R.color.cockpit_tertiary)
         val coralAccent = resColorProvider(context, R.color.cockpit_primary)
         val violetAccent = resColorProvider(context, R.color.cockpit_secondary)
@@ -128,12 +166,11 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(skyBg)
-                .cornerRadius(Tokens.Section)
+                .background(ImageProvider(R.drawable.cockpit_widget_card_bg))
                 .padding(Tokens.Medium),
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
-            // Top Row: Native TextClock + Next Alarm & Live Countdown
+            // Top Row: Native TextClock (uppercase hh:mm a) + Self-Contained Native Alarm Chronometer
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
@@ -148,50 +185,11 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     )
                 }
 
-                Column(
+                Box(
                     modifier = GlanceModifier
-                        .background(containerBg)
-                        .cornerRadius(Tokens.Gutter)
-                        .clickable(actionRunCallback<OpenNextAlarmAction>())
-                        .padding(horizontal = Tokens.Row, vertical = Tokens.Snug),
-                    horizontalAlignment = Alignment.Horizontal.End,
+                        .clickable(actionRunCallback<OpenNextAlarmAction>()),
                 ) {
-                    Text(
-                        text = if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
-                        style = TextStyle(
-                            color = if (alarm.hasAlarm) primaryText else mutedText,
-                            fontSize = 12.sp,
-                            fontWeight = FontWeight.Medium,
-                        ),
-                        maxLines = 1,
-                    )
-                    if (alarm.countdownMode == AlarmCountdownMode.CHRONOMETER_UNDER_24H &&
-                        alarm.chronometerBaseElapsedMs != null
-                    ) {
-                        val chronoViews = RemoteViews(
-                            context.packageName,
-                            R.layout.cockpit_widget_alarm_chronometer,
-                        ).apply {
-                            setChronometer(
-                                R.id.cockpit_alarm_chronometer,
-                                alarm.chronometerBaseElapsedMs,
-                                "Rings in %s",
-                                true,
-                            )
-                            setChronometerCountDown(R.id.cockpit_alarm_chronometer, true)
-                        }
-                        AndroidRemoteViews(remoteViews = chronoViews)
-                    } else if (alarm.hasAlarm) {
-                        Text(
-                            text = alarm.countdownText,
-                            style = TextStyle(
-                                color = cyanAccent,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                            ),
-                            maxLines = 1,
-                        )
-                    }
+                    AndroidRemoteViews(remoteViews = buildAlarmRemoteViews(context, alarm))
                 }
             }
 
@@ -203,8 +201,8 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 verticalAlignment = Alignment.Vertical.CenterVertically,
             ) {
                 TelemetryChip(
+                    iconRes = R.drawable.ic_cockpit_devices,
                     label = telemetry.statusHeadline,
-                    bg = surfaceBg,
                     accent = if (telemetry.isDesktopDropRunning) cyanAccent else coralAccent,
                     modifier = GlanceModifier
                         .defaultWeight()
@@ -212,15 +210,15 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 )
                 Spacer(GlanceModifier.width(Tokens.Snug))
                 TelemetryChip(
+                    iconRes = R.drawable.ic_cockpit_storage,
                     label = freeStorageLabel,
-                    bg = surfaceBg,
                     accent = violetAccent,
                     modifier = GlanceModifier.defaultWeight(),
                 )
                 Spacer(GlanceModifier.width(Tokens.Snug))
                 TelemetryChip(
+                    iconRes = R.drawable.ic_cockpit_battery,
                     label = batteryLabel,
-                    bg = surfaceBg,
                     accent = primaryText,
                     modifier = GlanceModifier.defaultWeight(),
                 )
@@ -228,59 +226,73 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
             Spacer(GlanceModifier.height(Tokens.Small))
 
-            // Bottom Row: Quick Toggles + Pinned Apps Dock
+            // Row 3: Fixed Quick Controls Row
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
             ) {
                 QuickActionPill(
+                    iconRes = R.drawable.ic_cockpit_devices,
                     label = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
                     active = telemetry.isDesktopDropRunning,
                     activeColor = cyanAccent,
                     inactiveColor = primaryText,
-                    bg = if (telemetry.isDesktopDropRunning) containerHighBg else containerBg,
+                    bgDrawableRes = if (telemetry.isDesktopDropRunning) {
+                        R.drawable.cockpit_widget_pill_active_cyan_bg
+                    } else {
+                        R.drawable.cockpit_widget_pill_inactive_bg
+                    },
                     modifier = GlanceModifier
                         .defaultWeight()
                         .clickable(actionRunCallback<ToggleDesktopDropAction>()),
                 )
                 Spacer(GlanceModifier.width(Tokens.Snug))
                 QuickActionPill(
+                    iconRes = if (torchOn) R.drawable.ic_cockpit_torch_on else R.drawable.ic_cockpit_torch_off,
                     label = if (torchOn) "Torch On" else "Torch",
                     active = torchOn,
                     activeColor = coralAccent,
                     inactiveColor = primaryText,
-                    bg = if (torchOn) containerHighBg else containerBg,
+                    bgDrawableRes = if (torchOn) {
+                        R.drawable.cockpit_widget_pill_active_coral_bg
+                    } else {
+                        R.drawable.cockpit_widget_pill_inactive_bg
+                    },
                     modifier = GlanceModifier
                         .defaultWeight()
                         .clickable(actionRunCallback<ToggleTorchAction>()),
                 )
                 Spacer(GlanceModifier.width(Tokens.Snug))
                 QuickActionPill(
+                    iconRes = R.drawable.ic_cockpit_tile,
                     label = if (islandOn) "Island On" else "Island",
                     active = islandOn,
                     activeColor = violetAccent,
                     inactiveColor = primaryText,
-                    bg = if (islandOn) containerHighBg else containerBg,
+                    bgDrawableRes = if (islandOn) {
+                        R.drawable.cockpit_widget_pill_active_violet_bg
+                    } else {
+                        R.drawable.cockpit_widget_pill_inactive_bg
+                    },
                     modifier = GlanceModifier
                         .defaultWeight()
                         .clickable(actionRunCallback<ToggleIslandAction>()),
                 )
             }
 
-            if (!compact && pinnedApps.isNotEmpty()) {
-                Spacer(GlanceModifier.height(Tokens.Small))
+            // Row 4: Dedicated Pinned Apps Dock Row (always separated from Quick Controls)
+            if (pinnedApps.isNotEmpty()) {
+                Spacer(GlanceModifier.height(Tokens.Snug))
                 Row(
                     modifier = GlanceModifier.fillMaxWidth(),
                     verticalAlignment = Alignment.Vertical.CenterVertically,
                 ) {
-                    pinnedApps.forEachIndexed { index, app ->
+                    pinnedApps.take(maxPinned).forEachIndexed { index, app ->
                         if (index > 0) Spacer(GlanceModifier.width(Tokens.Snug))
-                        QuickActionPill(
-                            label = app.label,
-                            active = false,
-                            activeColor = cyanAccent,
-                            inactiveColor = primaryText,
-                            bg = containerBg,
+                        PinnedAppGlancePill(
+                            app = app,
+                            labelColor = primaryText,
+                            fallbackTint = cyanAccent,
                             modifier = GlanceModifier
                                 .defaultWeight()
                                 .clickable(
@@ -297,18 +309,25 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
     @Composable
     private fun TelemetryChip(
+        iconRes: Int,
         label: String,
-        bg: GlanceColorProvider,
         accent: GlanceColorProvider,
         modifier: GlanceModifier = GlanceModifier,
     ) {
-        Box(
+        Row(
             modifier = modifier
-                .background(bg)
-                .cornerRadius(Tokens.Medium)
+                .background(ImageProvider(R.drawable.cockpit_widget_well_bg))
                 .padding(horizontal = Tokens.Small, vertical = Tokens.Snug),
-            contentAlignment = Alignment.Center,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Image(
+                provider = ImageProvider(iconRes),
+                contentDescription = null,
+                modifier = GlanceModifier.size(CockpitTokens.WidgetBadgeIconSize),
+                colorFilter = ColorFilter.tint(accent),
+            )
+            Spacer(GlanceModifier.width(Tokens.Tiny))
             Text(
                 text = label,
                 style = TextStyle(
@@ -323,25 +342,75 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
     @Composable
     private fun QuickActionPill(
+        iconRes: Int,
         label: String,
         active: Boolean,
         activeColor: GlanceColorProvider,
         inactiveColor: GlanceColorProvider,
-        bg: GlanceColorProvider,
+        bgDrawableRes: Int,
         modifier: GlanceModifier = GlanceModifier,
     ) {
         val fg = if (active) activeColor else inactiveColor
-        Box(
+        Row(
             modifier = modifier
-                .background(bg)
-                .cornerRadius(Tokens.RowLoose)
+                .background(ImageProvider(bgDrawableRes))
                 .padding(horizontal = Tokens.Small, vertical = Tokens.Small),
-            contentAlignment = Alignment.Center,
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
         ) {
+            Image(
+                provider = ImageProvider(iconRes),
+                contentDescription = null,
+                modifier = GlanceModifier.size(CockpitTokens.WidgetBadgeIconSize),
+                colorFilter = ColorFilter.tint(fg),
+            )
+            Spacer(GlanceModifier.width(Tokens.Tiny))
             Text(
                 text = label,
                 style = TextStyle(
                     color = fg,
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                ),
+                maxLines = 1,
+            )
+        }
+    }
+
+    @Composable
+    private fun PinnedAppGlancePill(
+        app: PinnedAppInfo,
+        labelColor: GlanceColorProvider,
+        fallbackTint: GlanceColorProvider,
+        modifier: GlanceModifier = GlanceModifier,
+    ) {
+        val iconBitmap = app.iconBitmap?.takeIf { !it.isRecycled }
+        Row(
+            modifier = modifier
+                .background(ImageProvider(R.drawable.cockpit_widget_pill_inactive_bg))
+                .padding(horizontal = Tokens.Small, vertical = Tokens.Small),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalAlignment = Alignment.CenterHorizontally,
+        ) {
+            if (iconBitmap != null) {
+                Image(
+                    provider = ImageProvider(iconBitmap),
+                    contentDescription = null,
+                    modifier = GlanceModifier.size(CockpitTokens.WidgetAppIconSize),
+                )
+            } else {
+                Image(
+                    provider = ImageProvider(R.drawable.ic_cockpit_app_default),
+                    contentDescription = null,
+                    modifier = GlanceModifier.size(CockpitTokens.WidgetAppIconSize),
+                    colorFilter = ColorFilter.tint(fallbackTint),
+                )
+            }
+            Spacer(GlanceModifier.width(Tokens.Tiny))
+            Text(
+                text = app.label,
+                style = TextStyle(
+                    color = labelColor,
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                 ),
@@ -421,14 +490,13 @@ class ToggleTorchAction : ActionCallback {
 class ToggleIslandAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val cockpit = Graph.get(context).cockpit
-        val current = cockpit.prefsRepo.state.value.masterEnabled
-        if (!cockpit.setDynamicIslandEnabled(!current)) {
+        val current = cockpit.prefsRepo.readCurrentMasterEnabled()
+        if (!cockpit.setDynamicIslandEnabledAndSync(!current)) {
             val intent = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(CockpitOverlayService.EXTRA_OPEN_COCKPIT, true)
             runCatching { context.startActivity(intent) }
         }
-        CockpitGlanceWidget().updateAll(context)
     }
 }
 

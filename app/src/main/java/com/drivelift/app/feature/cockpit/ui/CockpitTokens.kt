@@ -9,6 +9,7 @@ import androidx.compose.ui.unit.dp
  */
 object CockpitTokens {
     val PillHeight = 36.dp
+    val PillTouchTargetHeight = 52.dp
     val BubbleSize = 36.dp
     val PillMinWidth = 176.dp
     val PillMaxWidth = 272.dp
@@ -17,6 +18,8 @@ object CockpitTokens {
     val PreviewBackdropHeight = 96.dp
     val StatusDot = 8.dp
     val AppShortcutTile = 44.dp
+    val WidgetBadgeIconSize = 14.dp
+    val WidgetAppIconSize = 16.dp
     val IslandBadgeShape = RoundedCornerShape(18.dp)
     val ExpandedCardShape = RoundedCornerShape(28.dp)
     val WidgetCardShape = RoundedCornerShape(24.dp)

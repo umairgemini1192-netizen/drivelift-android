@@ -1,4 +1,5 @@
 <resources>
     <string name="app_name">DriveLift</string>
     <string name="cockpit_widget_description">All-in-one glass clock, next alarm countdown, DriveLift telemetry, quick toggles, and pinned apps.</string>
+    <string name="cockpit_accessibility_description">Mounts the DriveLift Cockpit Dynamic Island pill above the top status bar cutout so taps and long-presses respond around the camera punch-hole. Does not read screen content or observe accessibility events.</string>
 </resources>

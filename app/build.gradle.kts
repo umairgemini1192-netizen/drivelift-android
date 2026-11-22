@@ -9,12 +9,19 @@ android {
     namespace = "com.drivelift.app"
     compileSdk = 35
 
+    val buildStamp = providers.gradleProperty("buildStamp").orNull?.trim().orEmpty()
+
     defaultConfig {
         applicationId = "com.drivelift.app"
         minSdk = 30
         targetSdk = 35
         versionCode = 36
         versionName = "1.0.0-preview.37"
+        buildConfigField(
+            "String",
+            "BUILD_STAMP",
+            "\"${buildStamp.replace("\\", "\\\\").replace("\"", "\\\"")}\"",
+        )
     }
 
     signingConfigs {
@@ -47,6 +54,7 @@ android {
     }
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

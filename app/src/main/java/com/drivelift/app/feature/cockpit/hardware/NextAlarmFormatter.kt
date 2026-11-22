@@ -36,14 +36,18 @@ object NextAlarmFormatter {
     private const val MINUTE_MS = 60L * 1000L
     private const val SECOND_MS = 1000L
 
-    fun readFromSystem(context: Context): NextAlarmUiModel {
+    fun readFromSystem(
+        context: Context,
+        nowMillis: Long = System.currentTimeMillis(),
+        elapsedRealtimeMillis: Long = SystemClock.elapsedRealtime(),
+    ): NextAlarmUiModel {
         val alarmManager = context.getSystemService(AlarmManager::class.java)
         val nextClock = runCatching { alarmManager?.nextAlarmClock }.getOrNull()
         val is24Hour = runCatching { DateFormat.is24HourFormat(context) }.getOrDefault(false)
         return formatNextAlarm(
             triggerAtMillis = nextClock?.triggerTime,
-            nowMillis = System.currentTimeMillis(),
-            elapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+            nowMillis = nowMillis,
+            elapsedRealtimeMillis = elapsedRealtimeMillis,
             is24Hour = is24Hour,
         )
     }

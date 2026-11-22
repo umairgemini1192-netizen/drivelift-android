@@ -176,7 +176,7 @@ fun DynamicIslandOverlay(
             CollapsedSplitIslandRow(
                 slotState = slotState,
                 widthDeltaDp = widthDeltaDp,
-                onTapPrimary = onTapPrimary,
+                onTapPrimary = { onExpand() },
                 onTapSecondary = onTapSecondary,
                 onLongPressExpand = onExpand,
                 onCycleNext = onCycleNext,
@@ -230,59 +230,70 @@ fun CollapsedSplitIslandRow(
         horizontalArrangement = Arrangement.spacedBy(CockpitTokens.SplitGap),
     ) {
         // Primary Pill melting into the Pixel camera punch-hole with pure OLED #000000 core.
-        Row(
+        // Outer hit box meets >= 52 dp height below the cutout to clear Pixel status-bar dead zones.
+        Box(
             modifier = Modifier
-                .widthIn(min = minPillWidth, max = maxPillWidth)
-                .height(CockpitTokens.PillHeight)
-                .clip(Tokens.PillShape)
-                .background(MaterialTheme.colorScheme.scrim)
-                .cockpitSpecularRim(
-                    shape = Tokens.PillShape,
-                    primaryAccent = primaryAccent,
-                    secondaryAccent = secondaryAccent,
-                    intensity = if (primary is CockpitLiveActivity.IdleQuickDockActivity) 0.55f else 1.0f,
-                    animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
-                )
+                .defaultMinSize(minHeight = CockpitTokens.PillTouchTargetHeight)
                 .combinedClickable(
-                    onClickLabel = "Open ${activityTitle(primary)}",
+                    onClickLabel = "Expand ${activityTitle(primary)}",
                     onLongClickLabel = "Expand DriveLift Cockpit",
-                    onClick = { onTapPrimary(primary) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onTapPrimary(primary)
+                    },
                     onLongClick = {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         onLongPressExpand()
                     },
                 )
-                .padding(horizontal = Tokens.Medium)
+                .padding(top = Tokens.Tiny, bottom = Tokens.Small)
                 .testTag("cockpit-primary-pill"),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            contentAlignment = Alignment.TopCenter,
         ) {
             Row(
-                modifier = Modifier.weight(1f, fill = false),
+                modifier = Modifier
+                    .widthIn(min = minPillWidth, max = maxPillWidth)
+                    .height(CockpitTokens.PillHeight)
+                    .clip(Tokens.PillShape)
+                    .background(MaterialTheme.colorScheme.scrim)
+                    .cockpitSpecularRim(
+                        shape = Tokens.PillShape,
+                        primaryAccent = primaryAccent,
+                        secondaryAccent = secondaryAccent,
+                        intensity = if (primary is CockpitLiveActivity.IdleQuickDockActivity) 0.55f else 1.0f,
+                        animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
+                    )
+                    .padding(horizontal = Tokens.Medium),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                horizontalArrangement = Arrangement.SpaceBetween,
             ) {
-                Icon(
-                    imageVector = activityIcon(primary),
-                    contentDescription = null,
-                    tint = primaryAccent,
-                    modifier = Modifier.size(Tokens.IconSmall),
-                )
+                Row(
+                    modifier = Modifier.weight(1f, fill = false),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                ) {
+                    Icon(
+                        imageVector = activityIcon(primary),
+                        contentDescription = null,
+                        tint = primaryAccent,
+                        modifier = Modifier.size(Tokens.IconSmall),
+                    )
+                    Text(
+                        text = activityCollapsedLabel(primary),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                Spacer(Modifier.width(Tokens.Small))
                 Text(
-                    text = activityCollapsedLabel(primary),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.onSurface,
+                    text = activityCollapsedMetric(primary),
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = primaryAccent,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
                 )
             }
-            Spacer(Modifier.width(Tokens.Small))
-            Text(
-                text = activityCollapsedMetric(primary),
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
-                color = primaryAccent,
-                maxLines = 1,
-            )
         }
 
         // Detached Secondary Circular Bubble for simultaneous 2-activity split mode.
@@ -290,34 +301,47 @@ fun CollapsedSplitIslandRow(
             val (bubblePrimary, bubbleSecondary) = activityAccentPair(secondary)
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.BubbleSize)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.scrim)
-                    .cockpitSpecularRim(
-                        shape = CircleShape,
-                        primaryAccent = bubblePrimary,
-                        secondaryAccent = bubbleSecondary,
-                        intensity = 0.95f,
-                        animateOnActive = true,
+                    .defaultMinSize(
+                        minWidth = Tokens.TouchTarget,
+                        minHeight = CockpitTokens.PillTouchTargetHeight,
                     )
                     .combinedClickable(
                         onClickLabel = "Switch to ${activityTitle(secondary)}",
                         onLongClickLabel = "Expand DriveLift Cockpit",
-                        onClick = { onTapSecondary(secondary) },
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onTapSecondary(secondary)
+                        },
                         onLongClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onLongPressExpand()
                         },
                     )
+                    .padding(top = Tokens.Tiny, bottom = Tokens.Small)
                     .testTag("cockpit-secondary-bubble"),
-                contentAlignment = Alignment.Center,
+                contentAlignment = Alignment.TopCenter,
             ) {
-                Icon(
-                    imageVector = activityIcon(secondary),
-                    contentDescription = activityTitle(secondary),
-                    tint = bubblePrimary,
-                    modifier = Modifier.size(Tokens.IconSmall),
-                )
+                Box(
+                    modifier = Modifier
+                        .size(CockpitTokens.BubbleSize)
+                        .clip(CircleShape)
+                        .background(MaterialTheme.colorScheme.scrim)
+                        .cockpitSpecularRim(
+                            shape = CircleShape,
+                            primaryAccent = bubblePrimary,
+                            secondaryAccent = bubbleSecondary,
+                            intensity = 0.95f,
+                            animateOnActive = true,
+                        ),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        imageVector = activityIcon(secondary),
+                        contentDescription = activityTitle(secondary),
+                        tint = bubblePrimary,
+                        modifier = Modifier.size(Tokens.IconSmall),
+                    )
+                }
             }
         }
     }
@@ -530,7 +554,9 @@ fun ExpandedCockpitCard(
                 ) {
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
                     ) {
                         Text(if (primary.isDesktopDrop) "Open Drop" else "Open Transfers", maxLines = 1)
                     }
@@ -560,7 +586,9 @@ fun ExpandedCockpitCard(
                 ) {
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
                     ) {
                         Text("Open Chat", maxLines = 1)
                     }
@@ -631,9 +659,11 @@ fun ExpandedCockpitCard(
                     Spacer(Modifier.weight(1f))
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
                     ) {
-                        Text("Maps")
+                        Text("Open Maps", maxLines = 1)
                     }
                 }
             }
@@ -647,9 +677,11 @@ fun ExpandedCockpitCard(
                     StatusChip(label = primary.timeText, accent = accent)
                     Button(
                         onClick = { onTapActivity(primary) },
-                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
                     ) {
-                        Text("Open")
+                        Text("Open App", maxLines = 1)
                     }
                 }
             }
@@ -663,9 +695,11 @@ fun ExpandedCockpitCard(
                     StatusChip(label = telemetry.statusHeadline, accent = accent)
                     OutlinedButton(
                         onClick = onOpenDriveLiftCockpit,
-                        modifier = Modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+                        modifier = Modifier
+                            .defaultMinSize(minHeight = Tokens.TouchTarget)
+                            .testTag("cockpit-expanded-open-app"),
                     ) {
-                        Text("Cockpit Hub")
+                        Text("Cockpit Hub", maxLines = 1)
                         Spacer(Modifier.width(Tokens.Tiny))
                         Icon(
                             imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
