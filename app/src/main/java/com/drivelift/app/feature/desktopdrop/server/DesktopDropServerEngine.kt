@@ -560,7 +560,12 @@ class DesktopDropServerEngine(
                     val uploadId = call.parameters["uploadId"].orEmpty()
                     try {
                         val committed = uploadStore.completeUpload(uploadId, destinationWriter)
-                        markTransferCompleted(uploadId, actualSizeOverride = committed.sizeBytes)
+                        markTransferCompleted(
+                            uploadId,
+                            actualSizeOverride = committed.sizeBytes,
+                            savedUri = committed.uriString,
+                            mimeType = committed.mimeType,
+                        )
                         call.respondText(
                             """{"uploadId":${DropJson.quoted(uploadId)},"savedName":${DropJson.quoted(committed.savedName)},"destinationLabel":${DropJson.quoted(committed.destinationLabel)},"sizeBytes":${committed.sizeBytes}}""",
                             ContentType.Application.Json,
@@ -821,7 +826,12 @@ class DesktopDropServerEngine(
         if (dirty) notifyChanged()
     }
 
-    internal fun markTransferCompleted(id: String, actualSizeOverride: Long? = null) {
+    internal fun markTransferCompleted(
+        id: String,
+        actualSizeOverride: Long? = null,
+        savedUri: String? = null,
+        mimeType: String? = null,
+    ) {
         val existing = activeTransfers[id] ?: return
         val tracker = progressTrackers.remove(id)
         val trackedBytes = tracker?.let { synchronized(it) { it.transferredBytes } }
@@ -834,6 +844,8 @@ class DesktopDropServerEngine(
             status = DropTransferStatus.COMPLETED,
             errorMessage = null,
             updatedAtMs = clock(),
+            savedUri = savedUri ?: existing.savedUri,
+            mimeType = mimeType ?: existing.mimeType,
         )
         notifyChanged()
     }

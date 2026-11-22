@@ -132,7 +132,7 @@ class CockpitModule(
         val shouldFallback = CockpitOverlayService.shouldMountFallbackOverlay(
             masterEnabled = effectiveEnabled,
             hasOverlayPermission = hasOverlayPermission(),
-            accessibilityOverlayActive = CockpitAccessibilityService.isRunning() || hasAccessibilityOverlay(),
+            accessibilityOverlayActive = CockpitAccessibilityService.isConnected,
         )
         val intent = Intent(app, CockpitOverlayService::class.java)
         if (shouldFallback) {

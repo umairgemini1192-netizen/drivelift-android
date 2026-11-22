@@ -28,6 +28,7 @@ class CockpitStateCoordinator {
     private var pendingSwapDirection = 0
     private var expanded = false
     private var inlineReplyOpen = false
+    private val tripTracker = NavigationTripTracker()
 
     private val _slotState = MutableStateFlow(CockpitSlotState())
     val slotState: StateFlow<CockpitSlotState> = _slotState.asStateFlow()
@@ -39,9 +40,10 @@ class CockpitStateCoordinator {
         }
     }
 
-    fun upsertActivity(activity: CockpitLiveActivity) {
-        if (activity is CockpitLiveActivity.IdleQuickDockActivity) return
+    fun upsertActivity(incoming: CockpitLiveActivity) {
+        if (incoming is CockpitLiveActivity.IdleQuickDockActivity) return
         synchronized(lock) {
+            val activity = if (incoming is CockpitLiveActivity.MapsNavActivity) withTripProgress(incoming) else incoming
             val previous = activitiesById[activity.id]
             val isNew = previous == null
             val currentPrimaryPriority = _slotState.value.primary.priority
@@ -173,6 +175,7 @@ class CockpitStateCoordinator {
     fun clearAllForTest() {
         synchronized(lock) {
             activitiesById.clear()
+            tripTracker.reset()
             softDismissedIds.clear()
             manualFocusId = null
             clearRestoreLocked()
@@ -181,6 +184,13 @@ class CockpitStateCoordinator {
             inlineReplyOpen = false
             recomputeLocked()
         }
+    }
+
+    /** Adds how far the driver has come, measured from the first distance seen in this session. */
+    private fun withTripProgress(nav: CockpitLiveActivity.MapsNavActivity): CockpitLiveActivity.MapsNavActivity {
+        val routeKey = "${nav.packageName}|${nav.destinationText}|${nav.tripUsesMiles}"
+        val progress = tripTracker.update(nav.remainingTripKm, routeKey)
+        return nav.copy(droveTripKm = progress?.droveKm)
     }
 
     private fun clearRestoreLocked() {
@@ -205,6 +215,7 @@ class CockpitStateCoordinator {
         var removedRingingCall = false
         for (id in ids) {
             val removed = activitiesById.remove(id)
+            if (removed is CockpitLiveActivity.MapsNavActivity) tripTracker.reset()
             if ((removed as? CockpitLiveActivity.CallActivity)?.state == CallState.INCOMING) {
                 removedRingingCall = true
             }

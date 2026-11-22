@@ -20,7 +20,8 @@
             android:includeFontPadding="false"
             android:singleLine="true"
             android:textColor="@color/cockpit_on_surface"
-            android:textSize="26sp"
+            android:textFontWeight="800"
+            android:textSize="34sp"
             android:textStyle="bold" />
 
         <TextClock
@@ -28,7 +29,7 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_marginStart="4dp"
-            android:layout_marginBottom="3dp"
+            android:layout_marginBottom="5dp"
             android:background="@drawable/cockpit_widget_pill_inactive_bg"
             android:fontFeatureSettings="tnum"
             android:format12Hour="a"
@@ -39,7 +40,7 @@
             android:singleLine="true"
             android:textAllCaps="true"
             android:textColor="@color/cockpit_tertiary"
-            android:textSize="10sp"
+            android:textSize="11sp"
             android:textStyle="bold" />
     </LinearLayout>
 
@@ -54,5 +55,5 @@
         android:includeFontPadding="false"
         android:singleLine="true"
         android:textColor="@color/cockpit_on_surface_variant"
-        android:textSize="11sp" />
+        android:textSize="12sp" />
 </LinearLayout>

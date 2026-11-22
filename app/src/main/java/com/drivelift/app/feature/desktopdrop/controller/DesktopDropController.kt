@@ -24,8 +24,12 @@ import com.drivelift.app.feature.desktopdrop.server.KeystoreHmacCookieSigner
 import com.drivelift.app.feature.desktopdrop.server.PrefsTrustStore
 import com.drivelift.app.feature.desktopdrop.server.ResumableUploadStore
 import com.drivelift.app.feature.desktopdrop.server.SessionAuthManager
+import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
 import com.drivelift.app.feature.desktopdrop.service.DesktopDropService
+import com.drivelift.app.feature.desktopdrop.service.DesktopDropTrampolineActivity
 import com.drivelift.app.feature.desktopdrop.service.DropApprovalNotifier
+import android.util.Log
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -52,10 +56,25 @@ class DesktopDropController(
     private val lanMonitor: LanNetworkMonitor,
     private val hotspotController: LocalHotspotController,
     private val clock: () -> Long = System::currentTimeMillis,
+    /** Told whenever the server flips between running and stopped, so the Home Screen widget can flip Drop and Stop. */
+    private val onRunningChanged: (Boolean) -> Unit = { running -> CockpitGlanceWidget.syncDropState(app, running) },
 ) {
+    /**
+     * Nothing launched here may take the app process down: the same process hosts the Cockpit
+     * accessibility service, so an unhandled exception in a Drop coroutine would also kill the
+     * Dynamic Island.
+     */
     private val scope: CoroutineScope by lazy {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO)
+        CoroutineScope(
+            SupervisorJob() + Dispatchers.IO +
+                CoroutineExceptionHandler { _, error ->
+                    runCatching { Log.e(TAG, "Desktop Drop task failed: ${error.javaClass.simpleName}") }
+                },
+        )
     }
+
+    @Volatile
+    private var lastReportedRunning = false
     private val partsDir = File(app.cacheDir, "desktop_drop_parts")
     private val authManager = SessionAuthManager(
         clock = clock,
@@ -109,7 +128,16 @@ class DesktopDropController(
 
     private fun updateSnapshot(transform: (DesktopDropSnapshot) -> DesktopDropSnapshot) {
         val updated = _snapshot.updateAndGet(transform)
-        _isServerRunning.value = updated.status == ServerStatus.RUNNING || updated.status == ServerStatus.STARTING
+        val running = updated.status == ServerStatus.RUNNING || updated.status == ServerStatus.STARTING
+        _isServerRunning.value = running
+        reportRunningTransition(running)
+    }
+
+    private fun reportRunningTransition(running: Boolean) {
+        val changed = synchronized(this) {
+            if (running == lastReportedRunning) false else { lastReportedRunning = running; true }
+        }
+        if (changed) runCatching { onRunningChanged(running) }
     }
 
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 8)
@@ -154,7 +182,10 @@ class DesktopDropController(
                 statusNote = "Starting server...",
             )
         }
-        DesktopDropService.startService(app)
+        var serviceNote: String? = null
+        if (!DesktopDropService.startService(app) && !DesktopDropTrampolineActivity.launch(app)) {
+            serviceNote = "Android blocked the background service, keep DriveLift open while you transfer"
+        }
 
         try {
             val hotspotCreds = if (mode == ConnectivityMode.DIRECT_HOTSPOT) {
@@ -173,10 +204,11 @@ class DesktopDropController(
             }
 
             val actualPort = engine.start(bindIp, prefs.current.preferredPort)
+            // Name discovery is optional. Neither call may stop the server from running.
             if (mode == ConnectivityMode.SAME_WIFI) {
-                lanMonitor.registerMdns(actualPort)
+                runCatching { lanMonitor.registerMdns(actualPort) }
             }
-            val nameResolves = mdnsResponder.start(bindIp)
+            val nameResolves = startMdnsSafely(bindIp)
             val lanUrl = "http://$bindIp:$actualPort"
             val bookmarkUrl = "http://${DropMdnsResponder.HOST_NAME}:$actualPort"
             val notes = buildList {
@@ -184,6 +216,7 @@ class DesktopDropController(
                     add("Port ${prefs.current.preferredPort} was busy, using $actualPort")
                 }
                 if (!nameResolves) add("${DropMdnsResponder.HOST_NAME} is unavailable, use the IP address")
+                serviceNote?.let { add(it) }
             }
             updateSnapshot {
                 it.copy(
@@ -203,10 +236,10 @@ class DesktopDropController(
             }
             syncSnapshot()
         } catch (e: Exception) {
-            hotspotController.stopHotspot()
-            mdnsResponder.stop()
-            lanMonitor.unregisterMdns()
-            engine.stop()
+            runCatching { hotspotController.stopHotspot() }
+            runCatching { mdnsResponder.stop() }
+            runCatching { lanMonitor.unregisterMdns() }
+            runCatching { engine.stop() }
             DesktopDropService.stopService(app)
             val msg = e.message ?: "Could not start Desktop Drop server"
             updateSnapshot {
@@ -234,13 +267,22 @@ class DesktopDropController(
         return null
     }
 
+    /** True when drivelift.local is being answered. Any failure is swallowed and reported as false. */
+    private fun startMdnsSafely(bindIp: String): Boolean = try {
+        mdnsResponder.start(bindIp)
+    } catch (e: Throwable) {
+        runCatching { Log.w(TAG, "mDNS responder crashed on start: ${e.javaClass.simpleName}") }
+        runCatching { mdnsResponder.stop() }
+        false
+    }
+
     private fun stopServerInternal(note: String?) {
-        mdnsResponder.stop()
-        lanMonitor.unregisterMdns()
-        hotspotController.stopHotspot()
-        engine.stop()
-        authManager.resetSessions()
-        uploadStore.cleanupAllParts()
+        runCatching { mdnsResponder.stop() }
+        runCatching { lanMonitor.unregisterMdns() }
+        runCatching { hotspotController.stopHotspot() }
+        runCatching { engine.stop() }
+        runCatching { authManager.resetSessions() }
+        runCatching { uploadStore.cleanupAllParts() }
         DesktopDropService.stopService(app)
         updateSnapshot {
             it.copy(
@@ -472,5 +514,9 @@ class DesktopDropController(
                 prefs = prefs.current,
             )
         }
+    }
+
+    private companion object {
+        const val TAG = "DesktopDropController"
     }
 }

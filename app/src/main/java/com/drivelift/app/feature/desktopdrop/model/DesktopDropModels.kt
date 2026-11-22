@@ -76,6 +76,9 @@ data class DropTransferProgress(
     val status: DropTransferStatus,
     val errorMessage: String? = null,
     val updatedAtMs: Long = 0L,
+    /** Where a completed PC to Phone upload was saved, so Recent transfers can open it. */
+    val savedUri: String? = null,
+    val mimeType: String? = null,
 ) {
     val fraction: Float
         get() = if (totalBytes <= 0L) 0f else (transferredBytes.toFloat() / totalBytes.toFloat()).coerceIn(0f, 1f)

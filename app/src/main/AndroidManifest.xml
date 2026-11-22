@@ -22,6 +22,11 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
+    <!-- Desktop Drop hosts a LAN server for a connected laptop. connectedDevice has no six hour
+         Android 15 timeout and is backed by CHANGE_WIFI_STATE below. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
+    <!-- Lets a received APK in Desktop Drop's Recent transfers open Android's package installer. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
 
     <!-- Local LAN and LocalOnlyHotspot discovery without location prompts on Android 13+. -->
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -92,7 +97,17 @@
         <service
             android:name=".feature.desktopdrop.service.DesktopDropService"
             android:exported="false"
-            android:foregroundServiceType="dataSync" />
+            android:foregroundServiceType="connectedDevice|dataSync" />
+
+        <!-- Invisible, immediate-finish activity that lets Desktop Drop start its foreground
+             service from a visible context when Android refuses a background start. -->
+        <activity
+            android:name=".feature.desktopdrop.service.DesktopDropTrampolineActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:noHistory="true"
+            android:taskAffinity=""
+            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
 
         <service
             android:name=".feature.cockpit.overlay.CockpitOverlayService"

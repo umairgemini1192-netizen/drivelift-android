@@ -71,6 +71,10 @@ object LiveNotificationParser {
 
     private val distanceRegex = Regex("""\b\d+(?:\.\d+)?\s*(?:km|mi|ft|yd|m)\b""", RegexOption.IGNORE_CASE)
     private val etaRegex = Regex("""\b\d+\s*(?:min|hr|h)\b(?:\s*\([^)]+\))?""", RegexOption.IGNORE_CASE)
+    private val tripDistanceRegex = Regex(
+        """(\d+(?:\.\d+)?)\s*(km|mi|m|ft)\b""",
+        RegexOption.IGNORE_CASE,
+    )
     private val clockTimeRegex = Regex("""\b\d{1,2}:\d{2}\s*(?:AM|PM)?""", RegexOption.IGNORE_CASE)
     private val etaHintRegex = Regex("""\d+\s*(?:min|hr|h)\b|\beta\b|\barriv""", RegexOption.IGNORE_CASE)
     private val roadRegex = Regex("""\b(?:onto|on|toward|towards|to|via)\s+(.+)$""", RegexOption.IGNORE_CASE)
@@ -298,6 +302,7 @@ object LiveNotificationParser {
         val maneuver = cleanManeuver(title, text)
         val eta = extractEta(text, subText)
         val direction = inferTurnDirection("$title $text")
+        val trip = extractRemainingTrip(title, text, subText)
 
         return CockpitLiveActivity.MapsNavActivity(
             id = CockpitLiveActivity.ID_MAPS,
@@ -310,8 +315,36 @@ object LiveNotificationParser {
             roadText = extractRoad(maneuver),
             destinationText = subText.takeIf { it.isNotEmpty() && !etaHintRegex.containsMatchIn(it) }.orEmpty(),
             maneuverIcon = snapshot.maneuverIcon,
+            remainingTripKm = trip?.km,
+            tripUsesMiles = trip?.imperial == true,
             updatedAtMs = snapshot.updatedAtMs,
         )
+    }
+
+    /** A distance read from notification text, in kilometres. */
+    data class TripDistance(val km: Double, val imperial: Boolean)
+
+    /**
+     * The distance left on the whole trip. The sub text is searched first, then the text; the
+     * title is skipped because it carries the distance to the next turn. A distance equal to the
+     * next-turn distance is ignored so it is never mistaken for the trip.
+     */
+    fun extractRemainingTrip(title: String, text: String, subText: String): TripDistance? {
+        val nextTurn = extractDistance(title, text).replace(" ", "").lowercase()
+        for (source in listOf(subText, text)) {
+            for (match in tripDistanceRegex.findAll(source)) {
+                if (match.value.replace(" ", "").lowercase() == nextTurn) continue
+                val value = match.groupValues[1].toDoubleOrNull() ?: continue
+                return when (match.groupValues[2].lowercase()) {
+                    "km" -> TripDistance(value, imperial = false)
+                    "m" -> TripDistance(value / 1000.0, imperial = false)
+                    "mi" -> TripDistance(value * 1.609344, imperial = true)
+                    "ft" -> TripDistance(value * 0.0003048, imperial = true)
+                    else -> null
+                }
+            }
+        }
+        return null
     }
 
     private fun parseClockOrTimer(snapshot: NotificationSnapshot): CockpitLiveActivity.TimerRecordingActivity? {
