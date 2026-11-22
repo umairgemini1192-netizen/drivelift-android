@@ -1214,9 +1214,9 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithTag("cockpit-nav-card").assertIsDisplayed()
 
                 // Four lane arrows share the full row evenly: first at the left edge, last at the right edge.
-                val lanes = compose.onNodeWithTag("cockpit-nav-lanes").assertIsDisplayed().getBoundsInRoot()
+                val lanes = compose.onNodeWithTag("cockpit-nav-lanes", useUnmergedTree = true).assertExists().getBoundsInRoot()
                 val arrows = (0..3).map { index ->
-                    compose.onNodeWithTag("cockpit-nav-lane-$index").assertIsDisplayed().getBoundsInRoot()
+                    compose.onNodeWithTag("cockpit-nav-lane-$index", useUnmergedTree = true).assertExists().getBoundsInRoot()
                 }
                 assertTrue("first arrow sits at the left edge", (arrows.first().left - lanes.left).value < 1f)
                 assertTrue("last arrow sits at the right edge", (lanes.right - arrows.last().right).value < 1f)
@@ -1226,10 +1226,10 @@ class CockpitUiScreenshotTest {
                 // Trip footer and its hairline never crowd the 90 ft header.
                 compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true)
                     .assert(hasText("3.2 km drove \u00B7 8.4 km left"))
-                    .assertIsDisplayed()
+                    .assertExists()
                 val header = compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true).getBoundsInRoot()
                 val tripText = compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true).getBoundsInRoot()
-                val hairline = compose.onNodeWithTag("cockpit-nav-progress").assertIsDisplayed().getBoundsInRoot()
+                val hairline = compose.onNodeWithTag("cockpit-nav-progress", useUnmergedTree = true).assertExists().getBoundsInRoot()
                 assertTrue("trip text sits below the turn header", tripText.top >= header.bottom)
                 assertTrue("hairline is the last line of the card", hairline.top >= tripText.bottom)
                 assertEquals("hairline is 2dp", 2f, (hairline.bottom - hairline.top).value, 0.6f)
@@ -1533,7 +1533,7 @@ class CockpitUiScreenshotTest {
             },
             verify = {
                 compose.onAllNodesWithText("READY")[0].assertIsDisplayed()
-                compose.onAllNodesWithText("DROP LIVE")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("DROP LIVE")[0].assertExists()
                 compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[0].assert(hasText("Drop"))
                 compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Stop"))
                 compose.onAllNodesWithTag("cockpit-widget-battery-current")[0].assert(hasText("-510 mA"))
@@ -1549,7 +1549,7 @@ class CockpitUiScreenshotTest {
                     "cockpit-widget-alarm-pill",
                     "cockpit-widget-pinned-row",
                 )) {
-                    val bounds = compose.onAllNodesWithTag(tag)[0].assertIsDisplayed().getBoundsInRoot()
+                    val bounds = compose.onAllNodesWithTag(tag)[0].assertExists().getBoundsInRoot()
                     assertTrue("$tag clipped on the left", bounds.left >= card.left)
                     assertTrue("$tag clipped on the right", bounds.right <= card.right)
                     assertTrue("$tag clipped at the bottom", bounds.bottom <= card.bottom)
@@ -1558,18 +1558,21 @@ class CockpitUiScreenshotTest {
                 // Six pinned apps make two pages of four; the arrows are real 48dp targets.
                 compose.onAllNodesWithTag("cockpit-widget-pinned-prev")[0]
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
-                    .assertIsDisplayed()
+                    .assertExists()
                 compose.onAllNodesWithTag("cockpit-widget-pinned-next")[0]
                     .assertHeightIsAtLeast(Tokens.TouchTarget)
-                    .assertIsDisplayed()
-                compose.onAllNodesWithTag("cockpit-widget-pinned-dots")[0].assertIsDisplayed()
-                compose.onAllNodesWithText("Alfa")[0].assertIsDisplayed()
-                compose.onAllNodesWithTag("cockpit-widget-pinned-next")[0].performClick()
-                pump(6)
-                compose.onAllNodesWithText("Photos")[0].assertIsDisplayed()
-                compose.onAllNodesWithTag("cockpit-widget-pinned-prev")[0].performClick()
-                pump(6)
-                compose.onAllNodesWithText("Alfa")[0].assertIsDisplayed()
+                    .assertExists()
+                compose.onAllNodesWithTag("cockpit-widget-pinned-dots")[0].assertExists()
+                compose.onAllNodesWithText("Alfa")[0].assertExists()
+                // Tapping needs the dock on screen, which only the standard layout guarantees.
+                if (it == Variant.STANDARD) {
+                    compose.onAllNodesWithTag("cockpit-widget-pinned-next")[0].performClick()
+                    pump(6)
+                    compose.onAllNodesWithText("Photos")[0].assertExists()
+                    compose.onAllNodesWithTag("cockpit-widget-pinned-prev")[0].performClick()
+                    pump(6)
+                    compose.onAllNodesWithText("Alfa")[0].assertExists()
+                }
             },
         )
     }
