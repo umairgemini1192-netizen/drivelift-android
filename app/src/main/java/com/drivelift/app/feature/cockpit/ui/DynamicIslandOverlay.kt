@@ -1,43 +1,57 @@
 package com.drivelift.app.feature.cockpit.ui
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.spring
+import androidx.compose.animation.core.tween
 import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.requiredWidth
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Apps
+import androidx.compose.material.icons.outlined.Bluetooth
+import androidx.compose.material.icons.outlined.BluetoothConnected
+import androidx.compose.material.icons.outlined.BluetoothDisabled
 import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
@@ -48,13 +62,19 @@ import androidx.compose.material.icons.outlined.FlashlightOn
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.Navigation
+import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Restore
+import androidx.compose.material.icons.outlined.SignalCellularAlt
 import androidx.compose.material.icons.outlined.Sms
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TurnLeft
 import androidx.compose.material.icons.outlined.TurnRight
 import androidx.compose.material.icons.outlined.UTurnLeft
+import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.VisibilityOff
+import androidx.compose.material.icons.outlined.Wifi
+import androidx.compose.material.icons.outlined.WifiOff
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
@@ -63,14 +83,15 @@ import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -78,21 +99,33 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.progressBarRangeInfo
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.lerp
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
+import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.cockpitSpecularRim
@@ -100,12 +133,17 @@ import com.drivelift.app.feature.cockpit.overlay.toWideGamutP3
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
+import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * System-wide HDR+ Tactile Glass Dynamic Island UI:
  * - Collapsed Single Pill or Simultaneous 2-Activity Split Pill (Primary Pill + Detached Bubble)
- * - Expanded HDR+ Glass Cockpit Card (Live Controls, WhatsApp Inline Reply, Hardware Torch Slider,
- *   Desktop Drop / Transfer Actions, and Pinned Apps Quick Dock)
+ * - Single-surface Material 3 Expressive spatial spring morph (`Animatable(0f..1f)`) with
+ *   width-locked expanded content and continuous swipe-up collapse interpolation
+ * - Expanded 5-Control Tactile Glass Quick Deck (Wi-Fi marquee SSID, Monthly Mobile Data,
+ *   Bluetooth device count, 3-state Ringer Mode, icon-only Flash -> Liquid-Glass slider + SOS)
+ * - Real cached app icons in the quick dock and live activity actions
  */
 @Composable
 fun DynamicIslandOverlay(
@@ -131,32 +169,158 @@ fun DynamicIslandOverlay(
     onToggleTorchSos: () -> Unit,
     onLaunchPinnedApp: (String) -> Unit,
     modifier: Modifier = Modifier,
+    quickControls: CockpitQuickControlsState = CockpitQuickControlsState(),
+    onCollapseAnimationFinished: () -> Unit = {},
+    onTapWifi: () -> Unit = {},
+    onLongPressWifi: () -> Unit = {},
+    onTapMobileData: () -> Unit = {},
+    onLongPressMobileData: () -> Unit = {},
+    onTapBluetooth: () -> Unit = {},
+    onCycleRingerMode: () -> Unit = {},
 ) {
     val reducedMotion = LocalReducedMotion.current
-    val expandSpec = remember(reducedMotion) {
-        if (reducedMotion) snap<androidx.compose.ui.unit.IntSize>()
-        else spring(dampingRatio = Spring.DampingRatioMediumBouncy, stiffness = Spring.StiffnessMediumLow)
+    val density = LocalDensity.current
+    val scope = rememberCoroutineScope()
+    val morphSpec = remember(reducedMotion) {
+        if (reducedMotion) {
+            snap<Float>()
+        } else {
+            spring(
+                dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
+                stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+            )
+        }
     }
 
-    AnimatedContent(
-        targetState = slotState.isExpanded,
-        modifier = modifier,
-        transitionSpec = {
-            if (reducedMotion) {
-                fadeIn(snap()) togetherWith fadeOut(snap())
-            } else {
-                (fadeIn() + expandVertically(animationSpec = expandSpec)) togetherWith
-                    (fadeOut() + shrinkVertically(animationSpec = expandSpec))
+    // Pre-resolve cached app icon ImageBitmaps so expanding the Island never flickers.
+    val cachedAppIcons = remember(pinnedApps) {
+        pinnedApps.associate { app ->
+            app.packageName to app.iconBitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
+        }
+    }
+
+    val morphProgress = remember { Animatable(if (slotState.isExpanded) 1f else 0f) }
+    var isDraggingCollapse by remember { mutableStateOf(false) }
+
+    LaunchedEffect(slotState.isExpanded) {
+        val target = if (slotState.isExpanded) 1f else 0f
+        if (morphProgress.value != target) {
+            morphProgress.animateTo(target, animationSpec = morphSpec)
+        }
+        isDraggingCollapse = false
+        if (!slotState.isExpanded) {
+            onCollapseAnimationFinished()
+        }
+    }
+
+    val progress = morphProgress.value.coerceIn(0f, 1f)
+    val settledCollapsed = !slotState.isExpanded && progress <= 0.001f && !isDraggingCollapse
+
+    if (settledCollapsed) {
+        CollapsedSplitIslandRow(
+            slotState = slotState,
+            widthDeltaDp = widthDeltaDp,
+            onTapPrimary = { onExpand() },
+            onTapSecondary = onTapSecondary,
+            onLongPressExpand = onExpand,
+            onCycleNext = onCycleNext,
+            onCyclePrevious = onCyclePrevious,
+            modifier = modifier,
+        )
+        return
+    }
+
+    val primary = slotState.primary
+    val (accent, secondaryAccent) = activityAccentPair(primary)
+    val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp)
+        .coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
+    val collapsedSurfaceWidth = if (slotState.secondary != null) {
+        minPillWidth + CockpitTokens.SplitGap + CockpitTokens.BubbleSize
+    } else {
+        minPillWidth
+    }
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
+    val maxAvailableWidth = (screenWidthDp - (CockpitTokens.MorphBackdropHorizontalPad * 2))
+        .coerceAtLeast(minPillWidth)
+    val expandedCardWidth = minOf(CockpitTokens.ExpandedMaxWidth, maxAvailableWidth)
+
+    var measuredExpandedHeight by remember { mutableStateOf(CockpitTokens.ExpandedDefaultHeight) }
+    val currentWidth = lerp(collapsedSurfaceWidth, expandedCardWidth, progress)
+    val currentHeight = lerp(CockpitTokens.PillHeight, measuredExpandedHeight, progress)
+    val currentCornerRadius = lerp(
+        CockpitTokens.MorphCollapsedCornerRadius,
+        CockpitTokens.MorphExpandedCornerRadius,
+        progress,
+    )
+    val currentShape = RoundedCornerShape(currentCornerRadius)
+    val slideOffsetPx = with(density) { Tokens.Medium.toPx() }
+    val collapseDragRangePx = with(density) { (measuredExpandedHeight * 0.65f).toPx().coerceAtLeast(160f) }
+
+    val settledExpanded = slotState.isExpanded && progress >= 0.999f && !isDraggingCollapse
+    val surfaceSizeModifier = if (settledExpanded) {
+        Modifier.width(expandedCardWidth)
+    } else {
+        Modifier
+            .width(currentWidth)
+            .height(currentHeight)
+    }
+
+    Box(
+        modifier = modifier
+            .then(surfaceSizeModifier)
+            .clip(currentShape)
+            .background(
+                Brush.verticalGradient(
+                    listOf(
+                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
+                        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
+                    ),
+                ),
+            )
+            .cockpitSpecularRim(
+                shape = currentShape,
+                primaryAccent = accent,
+                secondaryAccent = secondaryAccent,
+                intensity = 0.95f,
+                animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
+            ),
+        contentAlignment = Alignment.TopCenter,
+    ) {
+        if (progress < 0.4f) {
+            Box(
+                modifier = Modifier
+                    .graphicsLayer {
+                        alpha = (1f - (progress / 0.4f)).coerceIn(0f, 1f)
+                    },
+            ) {
+                CollapsedPillSurfaceContent(
+                    primary = primary,
+                    primaryAccent = accent,
+                )
             }
-        },
-        label = "dynamic_island_morph",
-    ) { expanded ->
-        if (expanded) {
-            ExpandedCockpitCard(
+        }
+
+        Box(
+            modifier = Modifier
+                .requiredWidth(expandedCardWidth)
+                .onSizeChanged { size ->
+                    val measuredDp = with(density) { size.height.toDp() }
+                    if (measuredDp > CockpitTokens.PillHeight) {
+                        measuredExpandedHeight = measuredDp
+                    }
+                }
+                .graphicsLayer {
+                    alpha = ((progress - 0.14f) / 0.86f).coerceIn(0f, 1f)
+                    translationY = (1f - progress) * -slideOffsetPx
+                },
+        ) {
+            ExpandedCockpitCardContent(
                 slotState = slotState,
                 telemetry = telemetry,
                 torchState = torchState,
+                quickControls = quickControls,
                 pinnedApps = pinnedApps,
+                cachedAppIcons = cachedAppIcons,
                 onCollapse = onCollapse,
                 onCycleNext = onCycleNext,
                 onCyclePrevious = onCyclePrevious,
@@ -167,22 +331,75 @@ fun DynamicIslandOverlay(
                 onOpenDriveLiftCockpit = onOpenDriveLiftCockpit,
                 onToggleInlineReply = onToggleInlineReply,
                 onSendWhatsAppReply = onSendWhatsAppReply,
+                onTapWifi = onTapWifi,
+                onLongPressWifi = onLongPressWifi,
+                onTapMobileData = onTapMobileData,
+                onLongPressMobileData = onLongPressMobileData,
+                onTapBluetooth = onTapBluetooth,
+                onCycleRingerMode = onCycleRingerMode,
                 onToggleTorch = onToggleTorch,
                 onTorchBrightnessChange = onTorchBrightnessChange,
                 onToggleTorchSos = onToggleTorchSos,
                 onLaunchPinnedApp = onLaunchPinnedApp,
-            )
-        } else {
-            CollapsedSplitIslandRow(
-                slotState = slotState,
-                widthDeltaDp = widthDeltaDp,
-                onTapPrimary = { onExpand() },
-                onTapSecondary = onTapSecondary,
-                onLongPressExpand = onExpand,
-                onCycleNext = onCycleNext,
-                onCyclePrevious = onCyclePrevious,
+                onVerticalDragStart = {
+                    isDraggingCollapse = true
+                },
+                onVerticalDragDelta = { totalDragPx ->
+                    val draggedProgress = (1f + (totalDragPx / collapseDragRangePx)).coerceIn(0.18f, 1f)
+                    scope.launch { morphProgress.snapTo(draggedProgress) }
+                },
+                onVerticalDragFinish = { shouldCollapse ->
+                    isDraggingCollapse = false
+                    if (shouldCollapse) {
+                        onCollapse()
+                    } else {
+                        scope.launch { morphProgress.animateTo(1f, animationSpec = morphSpec) }
+                    }
+                },
             )
         }
+    }
+}
+
+@Composable
+private fun CollapsedPillSurfaceContent(
+    primary: CockpitLiveActivity,
+    primaryAccent: Color,
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(CockpitTokens.PillHeight)
+            .padding(horizontal = Tokens.Medium),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween,
+    ) {
+        Row(
+            modifier = Modifier.weight(1f, fill = false),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+        ) {
+            Icon(
+                imageVector = activityIcon(primary),
+                contentDescription = null,
+                tint = primaryAccent,
+                modifier = Modifier.size(Tokens.IconSmall),
+            )
+            Text(
+                text = activityCollapsedLabel(primary),
+                style = MaterialTheme.typography.labelMedium,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.width(Tokens.Small))
+        Text(
+            text = activityCollapsedMetric(primary),
+            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+            color = primaryAccent,
+            maxLines = 1,
+        )
     }
 }
 
@@ -202,7 +419,8 @@ fun CollapsedSplitIslandRow(
     val primary = slotState.primary
     val secondary = slotState.secondary
     val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
-    val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp).coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
+    val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp)
+        .coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
     val maxPillWidth = (CockpitTokens.PillMaxWidth + widthDeltaDp.dp).coerceAtLeast(minPillWidth)
 
     var horizontalDrag by remember { mutableFloatStateOf(0f) }
@@ -347,7 +565,10 @@ fun CollapsedSplitIslandRow(
     }
 }
 
-@OptIn(ExperimentalLayoutApi::class)
+/**
+ * Standalone Expanded Cockpit Card composable kept for direct Roborazzi snapshot verification and
+ * shared internal layout with [DynamicIslandOverlay].
+ */
 @Composable
 fun ExpandedCockpitCard(
     slotState: CockpitSlotState,
@@ -369,17 +590,23 @@ fun ExpandedCockpitCard(
     onToggleTorchSos: () -> Unit,
     onLaunchPinnedApp: (String) -> Unit,
     modifier: Modifier = Modifier,
+    quickControls: CockpitQuickControlsState = CockpitQuickControlsState(),
+    onTapWifi: () -> Unit = {},
+    onLongPressWifi: () -> Unit = {},
+    onTapMobileData: () -> Unit = {},
+    onLongPressMobileData: () -> Unit = {},
+    onTapBluetooth: () -> Unit = {},
+    onCycleRingerMode: () -> Unit = {},
 ) {
-    val haptics = LocalHapticFeedback.current
-    val stackCompact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
-    var verticalDrag by remember { mutableFloatStateOf(0f) }
-    var horizontalDrag by remember { mutableFloatStateOf(0f) }
-    var replyDraft by rememberSaveable(primary.id) { mutableStateOf("") }
+    val cachedAppIcons = remember(pinnedApps) {
+        pinnedApps.associate { app ->
+            app.packageName to app.iconBitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
+        }
+    }
 
-    Column(
+    Box(
         modifier = modifier
             .widthIn(max = CockpitTokens.ExpandedMaxWidth)
             .fillMaxWidth()
@@ -387,8 +614,8 @@ fun ExpandedCockpitCard(
             .background(
                 Brush.verticalGradient(
                     listOf(
-                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.94f),
-                        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.92f),
+                        MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
+                        MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
                     ),
                 ),
             )
@@ -398,17 +625,109 @@ fun ExpandedCockpitCard(
                 secondaryAccent = secondaryAccent,
                 intensity = 0.95f,
                 animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
-            )
+            ),
+    ) {
+        ExpandedCockpitCardContent(
+            slotState = slotState,
+            telemetry = telemetry,
+            torchState = torchState,
+            quickControls = quickControls,
+            pinnedApps = pinnedApps,
+            cachedAppIcons = cachedAppIcons,
+            onCollapse = onCollapse,
+            onCycleNext = onCycleNext,
+            onCyclePrevious = onCyclePrevious,
+            onSoftDismiss = onSoftDismiss,
+            onRestoreDismissed = onRestoreDismissed,
+            onTapActivity = onTapActivity,
+            onStopDesktopDrop = onStopDesktopDrop,
+            onOpenDriveLiftCockpit = onOpenDriveLiftCockpit,
+            onToggleInlineReply = onToggleInlineReply,
+            onSendWhatsAppReply = onSendWhatsAppReply,
+            onTapWifi = onTapWifi,
+            onLongPressWifi = onLongPressWifi,
+            onTapMobileData = onTapMobileData,
+            onLongPressMobileData = onLongPressMobileData,
+            onTapBluetooth = onTapBluetooth,
+            onCycleRingerMode = onCycleRingerMode,
+            onToggleTorch = onToggleTorch,
+            onTorchBrightnessChange = onTorchBrightnessChange,
+            onToggleTorchSos = onToggleTorchSos,
+            onLaunchPinnedApp = onLaunchPinnedApp,
+            onVerticalDragStart = {},
+            onVerticalDragDelta = {},
+            onVerticalDragFinish = { shouldCollapse -> if (shouldCollapse) onCollapse() },
+        )
+    }
+}
+
+@OptIn(ExperimentalLayoutApi::class, ExperimentalFoundationApi::class)
+@Composable
+private fun ExpandedCockpitCardContent(
+    slotState: CockpitSlotState,
+    telemetry: DriveLiftTelemetrySummary,
+    torchState: TorchUiState,
+    quickControls: CockpitQuickControlsState,
+    pinnedApps: List<PinnedAppInfo>,
+    cachedAppIcons: Map<String, ImageBitmap?>,
+    onCollapse: () -> Unit,
+    onCycleNext: () -> Unit,
+    onCyclePrevious: () -> Unit,
+    onSoftDismiss: (String) -> Unit,
+    onRestoreDismissed: () -> Unit,
+    onTapActivity: (CockpitLiveActivity) -> Unit,
+    onStopDesktopDrop: () -> Unit,
+    onOpenDriveLiftCockpit: () -> Unit,
+    onToggleInlineReply: (Boolean) -> Unit,
+    onSendWhatsAppReply: (notificationKey: String, replyText: String) -> Unit,
+    onTapWifi: () -> Unit,
+    onLongPressWifi: () -> Unit,
+    onTapMobileData: () -> Unit,
+    onLongPressMobileData: () -> Unit,
+    onTapBluetooth: () -> Unit,
+    onCycleRingerMode: () -> Unit,
+    onToggleTorch: () -> Unit,
+    onTorchBrightnessChange: (Int) -> Unit,
+    onToggleTorchSos: () -> Unit,
+    onLaunchPinnedApp: (String) -> Unit,
+    onVerticalDragStart: () -> Unit,
+    onVerticalDragDelta: (Float) -> Unit,
+    onVerticalDragFinish: (Boolean) -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    val reducedMotion = LocalReducedMotion.current
+    val stackCompact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+    val primary = slotState.primary
+    val (accent, secondaryAccent) = activityAccentPair(primary)
+    var verticalDrag by remember { mutableFloatStateOf(0f) }
+    var horizontalDrag by remember { mutableFloatStateOf(0f) }
+    var replyDraft by rememberSaveable(primary.id) { mutableStateOf("") }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
             .pointerInput(primary.id) {
                 detectVerticalDragGestures(
-                    onDragStart = { verticalDrag = 0f },
-                    onVerticalDrag = { _, delta -> verticalDrag += delta },
+                    onDragStart = {
+                        verticalDrag = 0f
+                        onVerticalDragStart()
+                    },
+                    onVerticalDrag = { _, delta ->
+                        verticalDrag = (verticalDrag + delta).coerceAtMost(0f)
+                        onVerticalDragDelta(verticalDrag)
+                    },
+                    onDragCancel = {
+                        verticalDrag = 0f
+                        onVerticalDragFinish(false)
+                    },
                     onDragEnd = {
-                        if (verticalDrag <= CockpitTokens.EXPAND_SWIPE_COLLAPSE_PX) {
+                        val shouldCollapse = verticalDrag <= CockpitTokens.EXPAND_SWIPE_COLLAPSE_PX
+                        if (shouldCollapse) {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onCollapse()
                         }
                         verticalDrag = 0f
+                        onVerticalDragFinish(shouldCollapse)
                     },
                 )
             }
@@ -432,7 +751,7 @@ fun ExpandedCockpitCard(
             .testTag("cockpit-expanded-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
     ) {
-        // Header row: active badge, title, optional queue switcher, hide & collapse controls.
+        // Header row: active badge, title with full weight(1f), hide & collapse controls.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
@@ -711,105 +1030,27 @@ fun ExpandedCockpitCard(
             }
         }
 
-        // Hardware Flashlight Strip (ON/OFF + API 33+ Brightness Slider + SOS strobe).
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(Tokens.PanelShape)
-                .background(GlassPalette.Well)
-                .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PanelShape)
-                .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
-            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
-        ) {
-            val torchLabelBlock: @Composable (Modifier) -> Unit = { colMod ->
-                Column(colMod) {
-                    Text(
-                        text = if (torchState.sosActive) "Flashlight SOS" else if (torchState.isOn) "Flashlight on" else "Flashlight off",
-                        style = MaterialTheme.typography.labelLarge,
-                    )
-                    Text(
-                        text = if (torchState.supportsBrightnessSlider) {
-                            "Level ${torchState.brightnessLevel} of ${torchState.maxLevel}"
-                        } else if (torchState.available) {
-                            "Standard hardware toggle"
-                        } else {
-                            "No flash hardware detected"
-                        },
-                        style = MaterialTheme.typography.bodySmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-            }
-            val sosButton: @Composable () -> Unit = {
-                OutlinedButton(
-                    onClick = onToggleTorchSos,
-                    enabled = torchState.available,
-                    modifier = Modifier
-                        .defaultMinSize(minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-torch-sos"),
-                ) {
-                    Icon(Icons.Outlined.Bolt, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
-                    Spacer(Modifier.width(Tokens.Tiny))
-                    Text(if (torchState.sosActive) "SOS On" else "SOS", maxLines = 1)
-                }
-            }
-            if (stackCompact) {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    IconButton(
-                        onClick = onToggleTorch,
-                        modifier = Modifier
-                            .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-torch-toggle"),
-                    ) {
-                        Icon(
-                            imageVector = if (torchState.isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                            contentDescription = if (torchState.isOn) "Turn flashlight off" else "Turn flashlight on",
-                            tint = if (torchState.isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    torchLabelBlock(Modifier.weight(1f))
-                }
-                sosButton()
-            } else {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    IconButton(
-                        onClick = onToggleTorch,
-                        modifier = Modifier
-                            .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-torch-toggle"),
-                    ) {
-                        Icon(
-                            imageVector = if (torchState.isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                            contentDescription = if (torchState.isOn) "Turn flashlight off" else "Turn flashlight on",
-                            tint = if (torchState.isOn) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                    torchLabelBlock(Modifier.weight(1f))
-                    sosButton()
-                }
-            }
-            if (torchState.supportsBrightnessSlider && torchState.maxLevel > 1) {
-                Slider(
-                    value = torchState.brightnessLevel.toFloat(),
-                    onValueChange = { onTorchBrightnessChange(it.toInt().coerceIn(1, torchState.maxLevel)) },
-                    valueRange = 1f..torchState.maxLevel.toFloat(),
-                    steps = (torchState.maxLevel - 2).coerceAtLeast(0),
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("cockpit-torch-slider"),
-                )
-            }
-        }
+        // 5-Control Tactile Glass Quick Deck (Android 17 Pixel Style):
+        // Row 1: Wi-Fi (marquee SSID) + Mobile Data (monthly usage)
+        // Row 2: Bluetooth (connected count) + Ringer Mode (3-state) + Icon-Only Flash button
+        // Torch ON springs open full-width Liquid-Glass Pill Brightness Scrubber + SOS chip.
+        QuickDeckSection(
+            torchState = torchState,
+            quickControls = quickControls,
+            stackCompact = stackCompact,
+            reducedMotion = reducedMotion,
+            onTapWifi = onTapWifi,
+            onLongPressWifi = onLongPressWifi,
+            onTapMobileData = onTapMobileData,
+            onLongPressMobileData = onLongPressMobileData,
+            onTapBluetooth = onTapBluetooth,
+            onCycleRingerMode = onCycleRingerMode,
+            onToggleTorch = onToggleTorch,
+            onTorchBrightnessChange = onTorchBrightnessChange,
+            onToggleTorchSos = onToggleTorchSos,
+        )
 
-        // Pinned Apps Quick Dock.
+        // Pinned Apps Quick Dock with pre-resolved real app icons.
         Column(verticalArrangement = Arrangement.spacedBy(Tokens.Snug)) {
             Text(
                 text = "Pinned Apps",
@@ -830,6 +1071,7 @@ fun ExpandedCockpitCard(
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                 ) {
                     pinnedApps.forEach { app ->
+                        val iconBmp = cachedAppIcons[app.packageName]
                         Box(
                             modifier = Modifier
                                 .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
@@ -847,12 +1089,23 @@ fun ExpandedCockpitCard(
                                 verticalAlignment = Alignment.CenterVertically,
                                 horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
                             ) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Apps,
-                                    contentDescription = null,
-                                    tint = MaterialTheme.colorScheme.tertiary,
-                                    modifier = Modifier.size(Tokens.IconSmall),
-                                )
+                                if (iconBmp != null) {
+                                    Image(
+                                        bitmap = iconBmp,
+                                        contentDescription = null,
+                                        contentScale = ContentScale.Crop,
+                                        modifier = Modifier
+                                            .size(Tokens.IconSmall)
+                                            .clip(CircleShape),
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Apps,
+                                        contentDescription = null,
+                                        tint = MaterialTheme.colorScheme.tertiary,
+                                        modifier = Modifier.size(Tokens.IconSmall),
+                                    )
+                                }
                                 Text(
                                     text = app.label,
                                     style = MaterialTheme.typography.labelMedium,
@@ -866,6 +1119,621 @@ fun ExpandedCockpitCard(
                 }
             }
         }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@Composable
+private fun QuickDeckSection(
+    torchState: TorchUiState,
+    quickControls: CockpitQuickControlsState,
+    stackCompact: Boolean,
+    reducedMotion: Boolean,
+    onTapWifi: () -> Unit,
+    onLongPressWifi: () -> Unit,
+    onTapMobileData: () -> Unit,
+    onLongPressMobileData: () -> Unit,
+    onTapBluetooth: () -> Unit,
+    onCycleRingerMode: () -> Unit,
+    onToggleTorch: () -> Unit,
+    onTorchBrightnessChange: (Int) -> Unit,
+    onToggleTorchSos: () -> Unit,
+) {
+    val wifiActive = quickControls.wifi.isEnabled
+    val wifiAccent = if (quickControls.wifi.isConnected) {
+        GlassPalette.HudElectricCyan
+    } else if (wifiActive) {
+        MaterialTheme.colorScheme.tertiary
+    } else {
+        MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val dataActive = quickControls.mobileData.isEnabled
+    val dataAccent = when {
+        !quickControls.mobileData.hasUsageAccess -> MaterialTheme.colorScheme.primary
+        dataActive -> GlassPalette.HudEmerald
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val btActive = quickControls.bluetooth.isEnabled
+    val btAccent = when {
+        !quickControls.bluetooth.hasPermission -> MaterialTheme.colorScheme.primary
+        quickControls.bluetooth.connectedCount > 0 -> GlassPalette.HudElectricCyan
+        btActive -> GlassPalette.HudVioletBlue
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+
+    val (ringerIcon, ringerAccent) = when (quickControls.ringer.mode) {
+        CockpitRingerMode.NORMAL -> Icons.Outlined.NotificationsActive to GlassPalette.HudEmerald
+        CockpitRingerMode.VIBRATE -> Icons.Outlined.Vibration to GlassPalette.HudElectricCyan
+        CockpitRingerMode.SILENT -> Icons.Outlined.NotificationsOff to GlassPalette.HudCoral
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("cockpit-quick-deck"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        // Row 1: Wi-Fi (marquee SSID) + Mobile Data (monthly consumption)
+        if (stackCompact) {
+            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                TactileGlassTile(
+                    icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
+                    title = "Wi-Fi",
+                    subtitle = quickControls.wifi.label,
+                    active = wifiActive,
+                    accent = wifiAccent,
+                    useMarqueeSubtitle = true,
+                    onClick = onTapWifi,
+                    onLongClick = onLongPressWifi,
+                    clickLabel = "Open internet controls",
+                    longClickLabel = "Open Wi-Fi settings",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-tile-wifi"),
+                )
+                TactileGlassTile(
+                    icon = Icons.Outlined.SignalCellularAlt,
+                    title = "Mobile Data",
+                    subtitle = quickControls.mobileData.label,
+                    active = dataActive && quickControls.mobileData.hasUsageAccess,
+                    accent = dataAccent,
+                    isShimmerLoading = quickControls.mobileData.isLoadingInitial,
+                    onClick = onTapMobileData,
+                    onLongClick = onLongPressMobileData,
+                    clickLabel = "Open mobile data controls",
+                    longClickLabel = "Open data usage settings",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-tile-data"),
+                )
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                TactileGlassTile(
+                    icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
+                    title = "Wi-Fi",
+                    subtitle = quickControls.wifi.label,
+                    active = wifiActive,
+                    accent = wifiAccent,
+                    useMarqueeSubtitle = true,
+                    onClick = onTapWifi,
+                    onLongClick = onLongPressWifi,
+                    clickLabel = "Open internet controls",
+                    longClickLabel = "Open Wi-Fi settings",
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("cockpit-tile-wifi"),
+                )
+                TactileGlassTile(
+                    icon = Icons.Outlined.SignalCellularAlt,
+                    title = "Mobile Data",
+                    subtitle = quickControls.mobileData.label,
+                    active = dataActive && quickControls.mobileData.hasUsageAccess,
+                    accent = dataAccent,
+                    isShimmerLoading = quickControls.mobileData.isLoadingInitial,
+                    onClick = onTapMobileData,
+                    onLongClick = onLongPressMobileData,
+                    clickLabel = "Open mobile data controls",
+                    longClickLabel = "Open data usage settings",
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("cockpit-tile-data"),
+                )
+            }
+        }
+
+        // Row 2: Bluetooth + Ringer Mode + Icon-Only Flash Toggle
+        if (stackCompact) {
+            FlowRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                TactileGlassTile(
+                    icon = when {
+                        !btActive -> Icons.Outlined.BluetoothDisabled
+                        quickControls.bluetooth.connectedCount > 0 -> Icons.Outlined.BluetoothConnected
+                        else -> Icons.Outlined.Bluetooth
+                    },
+                    title = "Bluetooth",
+                    subtitle = quickControls.bluetooth.label,
+                    active = btActive,
+                    accent = btAccent,
+                    onClick = onTapBluetooth,
+                    clickLabel = "Open Bluetooth settings",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-tile-bluetooth"),
+                )
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    TactileGlassTile(
+                        icon = ringerIcon,
+                        title = "Sound",
+                        subtitle = quickControls.ringer.label,
+                        active = true,
+                        accent = ringerAccent,
+                        onClick = onCycleRingerMode,
+                        clickLabel = "Cycle ringer mode",
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("cockpit-tile-ringer"),
+                    )
+                    IconOnlyTorchTile(
+                        torchState = torchState,
+                        onToggleTorch = onToggleTorch,
+                    )
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TactileGlassTile(
+                    icon = when {
+                        !btActive -> Icons.Outlined.BluetoothDisabled
+                        quickControls.bluetooth.connectedCount > 0 -> Icons.Outlined.BluetoothConnected
+                        else -> Icons.Outlined.Bluetooth
+                    },
+                    title = "Bluetooth",
+                    subtitle = quickControls.bluetooth.label,
+                    active = btActive,
+                    accent = btAccent,
+                    onClick = onTapBluetooth,
+                    clickLabel = "Open Bluetooth settings",
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("cockpit-tile-bluetooth"),
+                )
+                TactileGlassTile(
+                    icon = ringerIcon,
+                    title = "Sound",
+                    subtitle = quickControls.ringer.label,
+                    active = true,
+                    accent = ringerAccent,
+                    onClick = onCycleRingerMode,
+                    clickLabel = "Cycle ringer mode",
+                    modifier = Modifier
+                        .weight(1f)
+                        .testTag("cockpit-tile-ringer"),
+                )
+                IconOnlyTorchTile(
+                    torchState = torchState,
+                    onToggleTorch = onToggleTorch,
+                )
+            }
+        }
+
+        // Torch ON smoothly reveals Liquid-Glass Pill Brightness Scrubber + SOS chip.
+        val sliderEnter = if (reducedMotion) {
+            fadeIn(snap())
+        } else {
+            expandVertically(
+                animationSpec = spring(
+                    dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
+                    stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                ),
+            ) + fadeIn()
+        }
+        val sliderExit = if (reducedMotion) {
+            fadeOut(snap())
+        } else {
+            shrinkVertically(
+                animationSpec = spring(
+                    dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
+                    stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                ),
+            ) + fadeOut()
+        }
+
+        AnimatedVisibility(
+            visible = torchState.isOn,
+            enter = sliderEnter,
+            exit = sliderExit,
+        ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("cockpit-torch-controls-row"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                LiquidGlassTorchScrubber(
+                    torchState = torchState,
+                    onBrightnessChange = onTorchBrightnessChange,
+                    modifier = Modifier.weight(1f),
+                )
+                TorchSosPillButton(
+                    sosActive = torchState.sosActive,
+                    enabled = torchState.available,
+                    onClick = onToggleTorchSos,
+                )
+            }
+        }
+
+        // Subtle inline status confirmation pill.
+        AnimatedVisibility(visible = !quickControls.statusConfirmation.isNullOrBlank()) {
+            quickControls.statusConfirmation?.let { msg ->
+                Text(
+                    text = msg,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = GlassPalette.HudElectricCyan,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(Tokens.PillShape)
+                        .background(GlassPalette.HudTileRecessed)
+                        .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.PillShape)
+                        .padding(horizontal = Tokens.Medium, vertical = Tokens.Tiny)
+                        .testTag("cockpit-quick-status"),
+                )
+            }
+        }
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
+@Composable
+private fun TactileGlassTile(
+    icon: ImageVector,
+    title: String,
+    subtitle: String,
+    active: Boolean,
+    accent: Color,
+    onClick: () -> Unit,
+    clickLabel: String,
+    modifier: Modifier = Modifier,
+    onLongClick: (() -> Unit)? = null,
+    longClickLabel: String? = null,
+    useMarqueeSubtitle: Boolean = false,
+    isShimmerLoading: Boolean = false,
+) {
+    val haptics = LocalHapticFeedback.current
+    val reducedMotion = LocalReducedMotion.current
+    val fillBrush = if (active) {
+        Brush.verticalGradient(
+            listOf(
+                accent.copy(alpha = 0.22f),
+                GlassPalette.HudTileRecessed,
+            ),
+        )
+    } else {
+        Brush.verticalGradient(
+            listOf(
+                GlassPalette.Well,
+                GlassPalette.HudTileRecessed,
+            ),
+        )
+    }
+    val borderColor = if (active) accent.copy(alpha = 0.52f) else GlassPalette.WellEdge
+
+    val interactiveMod = if (onLongClick != null) {
+        Modifier.combinedClickable(
+            role = Role.Button,
+            onClickLabel = clickLabel,
+            onLongClickLabel = longClickLabel,
+            onClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onClick()
+            },
+            onLongClick = {
+                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                onLongClick()
+            },
+        )
+    } else {
+        Modifier.clickable(
+            role = Role.Button,
+            onClickLabel = clickLabel,
+        ) {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        }
+    }
+
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = CockpitTokens.QuickTileMinHeight)
+            .clip(CockpitTokens.QuickDeckShape)
+            .background(fillBrush)
+            .border(Tokens.Hairline, borderColor, CockpitTokens.QuickDeckShape)
+            .then(interactiveMod)
+            .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Icon(
+            imageVector = icon,
+            contentDescription = null,
+            tint = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            modifier = Modifier.size(Tokens.IconSmall),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (isShimmerLoading) {
+                ShimmerLoadingBar(reducedMotion = reducedMotion)
+            } else {
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                    color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = if (useMarqueeSubtitle) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = if (useMarqueeSubtitle) Modifier.basicMarquee() else Modifier,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ShimmerLoadingBar(reducedMotion: Boolean) {
+    val shimmerAlpha = if (reducedMotion) {
+        0.24f
+    } else {
+        val transition = rememberInfiniteTransition(label = "quick_deck_shimmer")
+        val value by transition.animateFloat(
+            initialValue = 0.14f,
+            targetValue = 0.34f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "shimmer_alpha",
+        )
+        value
+    }
+    Box(
+        modifier = Modifier
+            .padding(top = Tokens.Tiny)
+            .fillMaxWidth(0.75f)
+            .height(Tokens.Small)
+            .clip(Tokens.PillShape)
+            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = shimmerAlpha)),
+    )
+}
+
+@Composable
+private fun IconOnlyTorchTile(
+    torchState: TorchUiState,
+    onToggleTorch: () -> Unit,
+) {
+    val haptics = LocalHapticFeedback.current
+    val enabled = torchState.available
+    val isOn = torchState.isOn && enabled
+    val bgColor = when {
+        !enabled -> GlassPalette.HudTileDisabled
+        isOn -> GlassPalette.HudAmberGlow
+        else -> GlassPalette.Well
+    }
+    val borderColor = when {
+        !enabled -> GlassPalette.HudTileDisabledBorder
+        isOn -> GlassPalette.HudAmber
+        else -> GlassPalette.WellEdge
+    }
+    val iconTint = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        isOn -> GlassPalette.HudAmber
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val contentDesc = when {
+        !enabled -> "Flashlight unavailable while camera is in use"
+        isOn -> "Turn flashlight off"
+        else -> "Turn flashlight on"
+    }
+
+    Box(
+        modifier = Modifier
+            .size(CockpitTokens.QuickTileMinHeight)
+            .clip(CockpitTokens.QuickDeckShape)
+            .background(bgColor)
+            .border(
+                width = if (isOn) Tokens.Stroke else Tokens.Hairline,
+                color = borderColor,
+                shape = CockpitTokens.QuickDeckShape,
+            )
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = contentDesc,
+            ) {
+                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                onToggleTorch()
+            }
+            .testTag("cockpit-torch-toggle"),
+        contentAlignment = Alignment.Center,
+    ) {
+        Icon(
+            imageVector = if (isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+            contentDescription = contentDesc,
+            tint = iconTint,
+            modifier = Modifier.size(Tokens.Icon),
+        )
+    }
+}
+
+@Composable
+private fun LiquidGlassTorchScrubber(
+    torchState: TorchUiState,
+    onBrightnessChange: (Int) -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val maxLevel = torchState.maxLevel.coerceAtLeast(1)
+    val interactive = torchState.supportsBrightnessSlider && maxLevel > 1
+    val fraction = if (maxLevel <= 1) {
+        1f
+    } else {
+        (torchState.brightnessLevel.toFloat() / maxLevel.toFloat()).coerceIn(0.05f, 1f)
+    }
+    var trackWidthPx by remember { mutableFloatStateOf(1f) }
+
+    fun fractionToLevel(xPx: Float): Int {
+        val ratio = (xPx / trackWidthPx.coerceAtLeast(1f)).coerceIn(0f, 1f)
+        return (1 + (ratio * (maxLevel - 1)).roundToInt()).coerceIn(1, maxLevel)
+    }
+
+    BoxWithConstraints(
+        modifier = modifier
+            .height(CockpitTokens.LiquidSliderHeight)
+            .clip(Tokens.PillShape)
+            .background(GlassPalette.HudTileRecessed)
+            .border(Tokens.Hairline, GlassPalette.HudAmber.copy(alpha = 0.65f), Tokens.PillShape)
+            .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
+            .semantics {
+                progressBarRangeInfo = ProgressBarRangeInfo(
+                    current = torchState.brightnessLevel.toFloat(),
+                    range = 1f..maxLevel.toFloat(),
+                )
+                if (interactive) {
+                    setProgress { target ->
+                        onBrightnessChange(target.roundToInt().coerceIn(1, maxLevel))
+                        true
+                    }
+                }
+            }
+            .then(
+                if (interactive) {
+                    Modifier
+                        .pointerInput(maxLevel) {
+                            detectTapGestures { offset ->
+                                onBrightnessChange(fractionToLevel(offset.x))
+                            }
+                        }
+                        .pointerInput(maxLevel) {
+                            detectHorizontalDragGestures { change, _ ->
+                                change.consume()
+                                onBrightnessChange(fractionToLevel(change.position.x))
+                            }
+                        }
+                } else {
+                    Modifier
+                },
+            )
+            .testTag("cockpit-torch-slider"),
+        contentAlignment = Alignment.CenterStart,
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth(fraction)
+                .fillMaxHeight()
+                .clip(Tokens.PillShape)
+                .background(
+                    Brush.horizontalGradient(
+                        listOf(
+                            GlassPalette.HudAmberGlow,
+                            GlassPalette.HudAmber.copy(alpha = 0.72f),
+                        ),
+                    ),
+                ),
+        )
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = Tokens.Medium),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween,
+        ) {
+            Icon(
+                imageVector = Icons.Outlined.FlashlightOn,
+                contentDescription = null,
+                tint = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.size(Tokens.IconSmall),
+            )
+            Text(
+                text = "${torchState.brightnessPercent}%",
+                style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+            )
+        }
+    }
+}
+
+@Composable
+private fun TorchSosPillButton(
+    sosActive: Boolean,
+    enabled: Boolean,
+    onClick: () -> Unit,
+) {
+    val bgColor = when {
+        !enabled -> GlassPalette.HudTileDisabled
+        sosActive -> MaterialTheme.colorScheme.errorContainer
+        else -> GlassPalette.Well
+    }
+    val fgColor = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        sosActive -> MaterialTheme.colorScheme.error
+        else -> MaterialTheme.colorScheme.onSurface
+    }
+    val borderColor = if (sosActive) MaterialTheme.colorScheme.error else GlassPalette.WellEdge
+
+    Row(
+        modifier = Modifier
+            .defaultMinSize(minWidth = CockpitTokens.SosPillMinWidth, minHeight = CockpitTokens.LiquidSliderHeight)
+            .clip(Tokens.PillShape)
+            .background(bgColor)
+            .border(Tokens.Hairline, borderColor, Tokens.PillShape)
+            .clickable(
+                enabled = enabled,
+                role = Role.Button,
+                onClickLabel = if (sosActive) "Stop flashlight SOS" else "Start flashlight SOS",
+                onClick = onClick,
+            )
+            .padding(horizontal = Tokens.Medium)
+            .testTag("cockpit-torch-sos"),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.Center,
+    ) {
+        Icon(
+            imageVector = Icons.Outlined.Bolt,
+            contentDescription = null,
+            tint = fgColor,
+            modifier = Modifier.size(Tokens.IconSmall),
+        )
+        Spacer(Modifier.width(Tokens.Tiny))
+        Text(
+            text = "SOS",
+            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+            color = fgColor,
+            maxLines = 1,
+        )
     }
 }
 

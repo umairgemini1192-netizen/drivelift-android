@@ -1,12 +1,22 @@
 package com.drivelift.app.feature.cockpit.ui
 
+import android.Manifest
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -28,28 +38,27 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.wrapContentWidth
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.selection.toggleable
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.outlined.Alarm
 import androidx.compose.material.icons.outlined.Apps
-import androidx.compose.material.icons.outlined.BatteryChargingFull
 import androidx.compose.material.icons.outlined.Check
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.FlashlightOff
 import androidx.compose.material.icons.outlined.FlashlightOn
 import androidx.compose.material.icons.outlined.Layers
 import androidx.compose.material.icons.outlined.Pin
-import androidx.compose.material.icons.outlined.Storage
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
@@ -57,6 +66,7 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableLongStateOf
@@ -70,10 +80,13 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.SpanStyle
@@ -89,12 +102,13 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
-import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.data.CockpitActivityCategory
 import com.drivelift.app.feature.cockpit.data.CockpitPreferencesRepository
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsController
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
@@ -104,8 +118,10 @@ import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
 import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
 import com.drivelift.app.feature.cockpit.widget.RamHudMetric
+import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
+import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.delay
 
@@ -116,49 +132,116 @@ fun CockpitSetupScreen(
 ) {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
-    val cockpit = remember(context) { Graph.get(context).cockpit }
+    val graph = remember(context) { Graph.get(context) }
+    val cockpit = remember(graph) { graph.cockpit }
     val prefs by cockpit.prefsRepo.state.collectAsStateWithLifecycle()
     val telemetry by cockpit.telemetryAdapter.summary.collectAsStateWithLifecycle()
     val torchState by cockpit.torchController.state.collectAsStateWithLifecycle()
+    val quickControls by cockpit.quickControlsController.state.collectAsStateWithLifecycle()
+    val hudSnapshot by cockpit.telemetryMonitor.snapshot.collectAsStateWithLifecycle()
+    val dropSnapshot by graph.desktopDrop.controller.snapshot.collectAsStateWithLifecycle()
 
     var hasAccessibilityOverlay by remember { mutableStateOf(cockpit.hasAccessibilityOverlay()) }
     var hasOverlay by remember { mutableStateOf(cockpit.hasOverlayPermission()) }
     var hasNotifications by remember { mutableStateOf(cockpit.hasNotificationAccess()) }
     var hasBatteryExemption by remember { mutableStateOf(cockpit.isIgnoringBatteryOptimizations()) }
-    var nowMs by remember(context) { mutableLongStateOf(Graph.get(context).clock()) }
+    var hasLocationPermission by remember {
+        mutableStateOf(CockpitQuickControlsController.hasLocationPermission(context))
+    }
+    var hasUsageAccess by remember {
+        mutableStateOf(CockpitQuickControlsController.hasUsageStatsPermission(context))
+    }
+    var hasBluetoothPermission by remember {
+        mutableStateOf(CockpitQuickControlsController.hasBluetoothConnectPermission(context))
+    }
+    var hasDndAccess by remember {
+        mutableStateOf(CockpitQuickControlsController.hasDndPolicyAccess(context))
+    }
+    var nowMs by remember(context) { mutableLongStateOf(graph.clock()) }
     var alarmModel by remember { mutableStateOf(NextAlarmFormatter.readFromSystem(context, nowMillis = nowMs)) }
     var freeStorageLabel by remember { mutableStateOf(CockpitGlanceWidget.readFreeStorageLabel()) }
-    var batteryMetric by remember { mutableStateOf(CockpitGlanceWidget.readBatteryMetric(context)) }
-    var ramMetric by remember { mutableStateOf(CockpitGlanceWidget.readRamMetric(context)) }
+    var warmBatteryMetric by remember { mutableStateOf(CockpitGlanceWidget.readBatteryMetric(context)) }
+    var warmRamMetric by remember { mutableStateOf(CockpitGlanceWidget.readRamMetric(context)) }
     val launchableApps = remember(cockpit) { cockpit.pinnedAppsRepo.listLaunchableApps() }
+
+    val locationPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hasLocationPermission = granted || CockpitQuickControlsController.hasLocationPermission(context)
+        cockpit.quickControlsController.refreshAll()
+        if (!hasLocationPermission) {
+            openAppDetailsSettings(context)
+        }
+    }
+
+    val bluetoothPermLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        hasBluetoothPermission = granted || CockpitQuickControlsController.hasBluetoothConnectPermission(context)
+        cockpit.quickControlsController.refreshAll()
+        if (!hasBluetoothPermission) {
+            openAppDetailsSettings(context)
+        }
+    }
+
+    DisposableEffect(cockpit) {
+        cockpit.quickControlsController.start()
+        cockpit.telemetryMonitor.acquire()
+        onDispose {
+            cockpit.telemetryMonitor.release()
+            cockpit.quickControlsController.stop()
+        }
+    }
 
     LaunchedEffect(context) {
         CockpitGlanceWidget.registerGeneratedPreviewsIfSupported(context)
     }
 
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
-        val current = Graph.get(context).clock()
+        val current = graph.clock()
         nowMs = current
         hasAccessibilityOverlay = cockpit.hasAccessibilityOverlay()
         hasOverlay = cockpit.hasOverlayPermission()
         hasNotifications = cockpit.hasNotificationAccess()
         hasBatteryExemption = cockpit.isIgnoringBatteryOptimizations()
+        hasLocationPermission = CockpitQuickControlsController.hasLocationPermission(context)
+        hasUsageAccess = CockpitQuickControlsController.hasUsageStatsPermission(context)
+        hasBluetoothPermission = CockpitQuickControlsController.hasBluetoothConnectPermission(context)
+        hasDndAccess = CockpitQuickControlsController.hasDndPolicyAccess(context)
+        cockpit.quickControlsController.refreshAll()
+        cockpit.telemetryMonitor.evaluateNow(pushWidget = false)
         alarmModel = NextAlarmFormatter.readFromSystem(context, nowMillis = current)
         freeStorageLabel = CockpitGlanceWidget.readFreeStorageLabel()
-        batteryMetric = CockpitGlanceWidget.readBatteryMetric(context)
-        ramMetric = CockpitGlanceWidget.readRamMetric(context)
+        warmBatteryMetric = CockpitGlanceWidget.readBatteryMetric(context)
+        warmRamMetric = CockpitGlanceWidget.readRamMetric(context)
     }
 
     LaunchedEffect(lifecycleOwner, context) {
         lifecycleOwner.repeatOnLifecycle(Lifecycle.State.RESUMED) {
             while (true) {
-                val current = Graph.get(context).clock()
+                val current = graph.clock()
                 nowMs = current
                 alarmModel = NextAlarmFormatter.readFromSystem(context, nowMillis = current)
                 delay(1_000L)
             }
         }
     }
+
+    val effectiveBattery = if (!hudSnapshot.isLoadingInitial && hudSnapshot.battery.valueText != "--%") {
+        hudSnapshot.battery
+    } else {
+        warmBatteryMetric
+    }
+    val effectiveRam = if (!hudSnapshot.isLoadingInitial && hudSnapshot.ram.valueText != "--") {
+        hudSnapshot.ram
+    } else {
+        warmRamMetric
+    }
+    val dropAvailable = CockpitGlanceWidget.isDropToggleAvailable(
+        context = context,
+        telemetry = telemetry,
+        mode = dropSnapshot.mode,
+    )
 
     val pinnedApps = remember(prefs.pinnedPackages, launchableApps) {
         cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
@@ -177,14 +260,23 @@ fun CockpitSetupScreen(
         clockTimeLabel = clockTimeLabel,
         clockDateLabel = clockDateLabel,
         freeStorageLabel = freeStorageLabel,
-        batteryLabel = if (batteryMetric.valueText == "--%") "Batt --" else "${batteryMetric.valueText} batt",
-        batteryMetric = batteryMetric,
-        ramMetric = ramMetric,
+        batteryLabel = if (effectiveBattery.valueText == "--%") "Batt --" else "${effectiveBattery.valueText} batt",
+        batteryMetric = effectiveBattery,
+        ramMetric = effectiveRam,
         torchOn = torchState.isOn,
+        torchState = torchState,
+        torchAvailable = torchState.available,
+        dropAvailable = dropAvailable,
+        quickControls = quickControls,
+        isInitialTelemetryLoading = false,
         hasAccessibilityOverlay = hasAccessibilityOverlay,
         hasOverlay = hasOverlay,
         hasNotifications = hasNotifications,
         hasBatteryExemption = hasBatteryExemption,
+        hasLocationPermission = hasLocationPermission,
+        hasUsageAccess = hasUsageAccess,
+        hasBluetoothPermission = hasBluetoothPermission,
+        hasDndAccess = hasDndAccess,
         launchableApps = launchableApps,
         pinnedApps = pinnedApps,
         onBack = onBack,
@@ -209,8 +301,27 @@ fun CockpitSetupScreen(
         onGrantOverlay = { openOverlayPermissionSettings(context) },
         onGrantNotifications = { openNotificationAccessSettings(context) },
         onGrantBattery = { openBatteryExemptionSettings(context) },
+        onGrantLocation = { locationPermLauncher.launch(Manifest.permission.ACCESS_FINE_LOCATION) },
+        onGrantUsageAccess = { cockpit.quickControlsController.openUsageAccessSettings() },
+        onGrantBluetooth = {
+            if (Build.VERSION.SDK_INT >= 31) {
+                bluetoothPermLauncher.launch(Manifest.permission.BLUETOOTH_CONNECT)
+            } else {
+                cockpit.quickControlsController.openBluetoothSettings()
+            }
+        },
+        onGrantDndAccess = { cockpit.quickControlsController.openDndPolicySettings() },
         onToggleTorch = { cockpit.torchController.toggleTorch() },
+        onTorchBrightnessChange = { lvl -> cockpit.torchController.setBrightnessLevel(lvl) },
+        onToggleTorchSos = { cockpit.torchController.toggleSos() },
         onToggleDrop = { toggleDropFromCockpit(context) },
+        onTapWifi = { cockpit.quickControlsController.openInternetPanel() },
+        onLongPressWifi = { cockpit.quickControlsController.openWifiSettings() },
+        onTapMobileData = { cockpit.quickControlsController.onMobileDataTap() },
+        onLongPressMobileData = { cockpit.quickControlsController.openDataUsageSettings() },
+        onTapBluetooth = { cockpit.quickControlsController.openBluetoothSettings() },
+        onCycleRingerMode = { cockpit.quickControlsController.cycleRingerMode() },
+        onTapAlarm = { CockpitGlanceWidget.launchGoogleClockAlarms(context) },
         modifier = modifier,
     )
 }
@@ -245,8 +356,39 @@ fun CockpitSetupContent(
     modifier: Modifier = Modifier,
     hasAccessibilityOverlay: Boolean = false,
     onGrantAccessibilityOverlay: () -> Unit = {},
+    hasLocationPermission: Boolean = false,
+    hasUsageAccess: Boolean = false,
+    hasBluetoothPermission: Boolean = false,
+    hasDndAccess: Boolean = false,
+    onGrantLocation: () -> Unit = {},
+    onGrantUsageAccess: () -> Unit = {},
+    onGrantBluetooth: () -> Unit = {},
+    onGrantDndAccess: () -> Unit = {},
     batteryMetric: BatteryHudMetric = BatteryHudMetric(84, 0.84f, "84%"),
-    ramMetric: RamHudMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
+    ramMetric: RamHudMetric = CockpitHudBitmapRenderer.formatRamHudMetric(
+        availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+        totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+    ),
+    torchState: TorchUiState = TorchUiState(
+        available = true,
+        isOn = torchOn,
+        brightnessLevel = 3,
+        maxLevel = 5,
+        supportsBrightnessSlider = false,
+    ),
+    torchAvailable: Boolean = torchState.available,
+    dropAvailable: Boolean = telemetry.isDropAvailable,
+    quickControls: CockpitQuickControlsState = CockpitQuickControlsState(),
+    isInitialTelemetryLoading: Boolean = false,
+    onTorchBrightnessChange: (Int) -> Unit = {},
+    onToggleTorchSos: () -> Unit = {},
+    onTapWifi: () -> Unit = {},
+    onLongPressWifi: () -> Unit = {},
+    onTapMobileData: () -> Unit = {},
+    onLongPressMobileData: () -> Unit = {},
+    onTapBluetooth: () -> Unit = {},
+    onCycleRingerMode: () -> Unit = {},
+    onTapAlarm: () -> Unit = {},
 ) {
     var previewExpanded by rememberSaveable { mutableStateOf(false) }
 
@@ -326,13 +468,8 @@ fun CockpitSetupContent(
                                 isExpanded = previewExpanded,
                             ),
                             telemetry = telemetry,
-                            torchState = TorchUiState(
-                                available = true,
-                                isOn = torchOn,
-                                brightnessLevel = 3,
-                                maxLevel = 5,
-                                supportsBrightnessSlider = false,
-                            ),
+                            torchState = torchState.copy(isOn = torchOn, available = torchAvailable),
+                            quickControls = quickControls,
                             pinnedApps = pinnedApps,
                             widthDeltaDp = prefs.cutoutWidthDelta,
                             onTapPrimary = { previewExpanded = false },
@@ -350,9 +487,15 @@ fun CockpitSetupContent(
                             onOpenDriveLiftCockpit = { previewExpanded = false },
                             onToggleInlineReply = {},
                             onSendWhatsAppReply = { _, _ -> },
+                            onTapWifi = onTapWifi,
+                            onLongPressWifi = onLongPressWifi,
+                            onTapMobileData = onTapMobileData,
+                            onLongPressMobileData = onLongPressMobileData,
+                            onTapBluetooth = onTapBluetooth,
+                            onCycleRingerMode = onCycleRingerMode,
                             onToggleTorch = onToggleTorch,
-                            onTorchBrightnessChange = {},
-                            onToggleTorchSos = {},
+                            onTorchBrightnessChange = onTorchBrightnessChange,
+                            onToggleTorchSos = onToggleTorchSos,
                             onLaunchPinnedApp = { previewExpanded = false },
                             modifier = Modifier.offset(
                                 x = prefs.cutoutOffsetX.dp,
@@ -418,6 +561,34 @@ fun CockpitSetupContent(
                             granted = hasBatteryExemption,
                             onGrant = onGrantBattery,
                             tag = "cockpit-perm-battery",
+                        )
+                        PermissionRow(
+                            title = "Location (Wi-Fi SSID)",
+                            body = "Optional permission to show live Wi-Fi network names inside the expanded Island.",
+                            granted = hasLocationPermission,
+                            onGrant = onGrantLocation,
+                            tag = "cockpit-perm-location",
+                        )
+                        PermissionRow(
+                            title = "Usage Access (Monthly Data)",
+                            body = "Optional access to display this month's cellular consumption on the Mobile Data tile.",
+                            granted = hasUsageAccess,
+                            onGrant = onGrantUsageAccess,
+                            tag = "cockpit-perm-usage",
+                        )
+                        PermissionRow(
+                            title = "Nearby Devices / Bluetooth",
+                            body = "Optional permission to show live connected Bluetooth device count.",
+                            granted = hasBluetoothPermission,
+                            onGrant = onGrantBluetooth,
+                            tag = "cockpit-perm-bluetooth",
+                        )
+                        PermissionRow(
+                            title = "Do Not Disturb Access (Silent Ringer)",
+                            body = "Optional policy access allowing direct Silent mode switching from the Island.",
+                            granted = hasDndAccess,
+                            onGrant = onGrantDndAccess,
+                            tag = "cockpit-perm-dnd",
                         )
                     }
                 }
@@ -527,6 +698,10 @@ fun CockpitSetupContent(
                     onToggleDrop = onToggleDrop,
                     onToggleTorch = onToggleTorch,
                     onToggleIsland = { onToggleMaster(!prefs.masterEnabled) },
+                    onTapAlarm = onTapAlarm,
+                    torchAvailable = torchAvailable,
+                    dropAvailable = dropAvailable,
+                    isInitialTelemetryLoading = isInitialTelemetryLoading,
                     batteryMetric = batteryMetric,
                     ramMetric = ramMetric,
                 )
@@ -626,11 +801,37 @@ fun CockpitMasterWidgetCard(
     onToggleIsland: () -> Unit = {},
     modifier: Modifier = Modifier,
     batteryMetric: BatteryHudMetric = BatteryHudMetric(84, 0.84f, "84%"),
-    ramMetric: RamHudMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
+    ramMetric: RamHudMetric = CockpitHudBitmapRenderer.formatRamHudMetric(
+        availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+        totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+    ),
+    torchAvailable: Boolean = true,
+    dropAvailable: Boolean = telemetry.isDropAvailable,
+    isInitialTelemetryLoading: Boolean = false,
+    onTapAlarm: () -> Unit = {},
+    wallpaperGradientColors: List<Color> = listOf(GlassPalette.SkyTop, GlassPalette.SkyMid, GlassPalette.SkyBottom),
 ) {
     val density = LocalDensity.current.density.coerceAtLeast(2f)
+    val reducedMotion = LocalReducedMotion.current
+    val haptics = LocalHapticFeedback.current
     val stackTopRow = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+
+    val chargingPulseAlpha = if (batteryMetric.isCharging && !reducedMotion) {
+        val transition = rememberInfiniteTransition(label = "hud_charging_pulse")
+        val value by transition.animateFloat(
+            initialValue = 0.55f,
+            targetValue = 1.0f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "charging_halo_alpha",
+        )
+        value
+    } else {
+        1f
+    }
 
     val shellBitmap = remember(density) {
         CockpitHudBitmapRenderer.renderShellBitmap(
@@ -655,8 +856,9 @@ fun CockpitMasterWidgetCard(
             fraction = batteryMetric.fraction,
             valueText = batteryMetric.valueText,
             subLabel = batteryMetric.label,
-            accentColor = CockpitHudBitmapRenderer.batteryArcColor(batteryMetric.percent),
+            accentColor = CockpitHudBitmapRenderer.batteryArcColor(batteryMetric.percent, batteryMetric.isCharging),
             density = density,
+            isCharging = batteryMetric.isCharging,
         ).asImageBitmap()
     }
     val ramGaugeBitmap = remember(ramMetric, density) {
@@ -669,22 +871,24 @@ fun CockpitMasterWidgetCard(
             density = density,
         ).asImageBitmap()
     }
-    val dropTileBitmap = remember(telemetry.isDesktopDropRunning, density) {
+    val dropTileBitmap = remember(telemetry.isDesktopDropRunning, dropAvailable, density) {
         CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = (104f * density).toInt(),
             heightPx = (50f * density).toInt(),
             active = telemetry.isDesktopDropRunning,
             accentColor = GlassPalette.HudElectricCyan,
             density = density,
+            enabled = dropAvailable,
         ).asImageBitmap()
     }
-    val torchTileBitmap = remember(torchOn, density) {
+    val torchTileBitmap = remember(torchOn, torchAvailable, density) {
         CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = (104f * density).toInt(),
             heightPx = (50f * density).toInt(),
-            active = torchOn,
+            active = torchOn && torchAvailable,
             accentColor = GlassPalette.HudAmber,
             density = density,
+            enabled = torchAvailable,
         ).asImageBitmap()
     }
     val islandTileBitmap = remember(islandOn, density) {
@@ -694,6 +898,7 @@ fun CockpitMasterWidgetCard(
             active = islandOn,
             accentColor = GlassPalette.HudVioletBlue,
             density = density,
+            enabled = true,
         ).asImageBitmap()
     }
     val dockTrayBitmap = remember(density) {
@@ -704,16 +909,11 @@ fun CockpitMasterWidgetCard(
         ).asImageBitmap()
     }
 
-    // Subtle simulated wallpaper backdrop surrounding the cyber-glass shell.
     Box(
         modifier = modifier
             .fillMaxWidth()
             .clip(CockpitTokens.WidgetCardShape)
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(GlassPalette.SkyTop, GlassPalette.SkyMid, GlassPalette.SkyBottom),
-                ),
-            )
+            .background(Brush.linearGradient(colors = wallpaperGradientColors))
             .padding(Tokens.Small),
     ) {
         Box(
@@ -734,11 +934,11 @@ fun CockpitMasterWidgetCard(
                     .padding(Tokens.Medium),
                 verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
             ) {
-                // Top Bento Split: Zone 1 (Clock + Alarm Pill) and Zone 2 (Status Pill + Dual Neon Arc Gauges)
+                // Top Bento Split: Zone 1 (Clock + Alarm Pill) | Zone 2 (Status Pill + Dual Neon Arc Gauges)
                 val zone1Content: @Composable () -> Unit = {
                     Column(verticalArrangement = Arrangement.spacedBy(Tokens.Snug)) {
                         ClockHeroBlock(clockTimeLabel, clockDateLabel)
-                        AlarmBadgeBlock(alarm)
+                        AlarmBadgeBlock(alarm = alarm, onTapAlarm = onTapAlarm)
                     }
                 }
                 val zone2Content: @Composable () -> Unit = {
@@ -747,7 +947,10 @@ fun CockpitMasterWidgetCard(
                         verticalArrangement = Arrangement.spacedBy(Tokens.Snug),
                     ) {
                         Box(
-                            modifier = Modifier.clip(CockpitTokens.HudTileShape),
+                            modifier = Modifier
+                                .wrapContentWidth()
+                                .clip(CockpitTokens.HudTileShape)
+                                .testTag("cockpit-widget-status-badge"),
                         ) {
                             Image(
                                 bitmap = statusPillBitmap,
@@ -773,7 +976,11 @@ fun CockpitMasterWidgetCard(
                                         ),
                                 )
                                 Text(
-                                    text = telemetry.statusHeadline,
+                                    text = if (telemetry.isDesktopDropRunning) {
+                                        telemetry.statusHeadline
+                                    } else {
+                                        "READY"
+                                    },
                                     style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
                                     color = if (telemetry.isDesktopDropRunning) {
                                         GlassPalette.HudElectricCyan
@@ -790,16 +997,42 @@ fun CockpitMasterWidgetCard(
                             horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
                             verticalAlignment = Alignment.CenterVertically,
                         ) {
-                            Image(
-                                bitmap = batteryGaugeBitmap,
-                                contentDescription = "Battery ${batteryMetric.valueText}",
-                                modifier = Modifier.size(CockpitTokens.HudGaugeSize),
-                            )
-                            Image(
-                                bitmap = ramGaugeBitmap,
-                                contentDescription = "Free RAM ${ramMetric.valueText}",
-                                modifier = Modifier.size(CockpitTokens.HudGaugeSize),
-                            )
+                            if (isInitialTelemetryLoading) {
+                                GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
+                                GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
+                            } else {
+                                Box(
+                                    modifier = Modifier
+                                        .size(CockpitTokens.HudGaugeSize)
+                                        .then(
+                                            if (batteryMetric.isCharging) {
+                                                Modifier
+                                                    .clip(CircleShape)
+                                                    .border(
+                                                        width = Tokens.Stroke,
+                                                        color = GlassPalette.HudEmerald.copy(alpha = 0.55f * chargingPulseAlpha),
+                                                        shape = CircleShape,
+                                                    )
+                                            } else {
+                                                Modifier
+                                            },
+                                        )
+                                        .testTag("cockpit-widget-battery-gauge"),
+                                ) {
+                                    Image(
+                                        bitmap = batteryGaugeBitmap,
+                                        contentDescription = "Battery ${batteryMetric.valueText}",
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                                Image(
+                                    bitmap = ramGaugeBitmap,
+                                    contentDescription = "RAM ${ramMetric.valueText}",
+                                    modifier = Modifier
+                                        .size(CockpitTokens.HudGaugeSize)
+                                        .testTag("cockpit-widget-ram-gauge"),
+                                )
+                            }
                         }
                     }
                 }
@@ -823,33 +1056,53 @@ fun CockpitMasterWidgetCard(
                     }
                 }
 
-                // Zone 3: Middle Control Deck (Sculptural ON/OFF tiles, strictly separate from Pinned Apps)
+                // Zone 3: Middle Control Deck (Stateful ON/OFF/Disabled sculptural tiles)
                 val controlsContent: @Composable (Modifier) -> Unit = { tileMod ->
                     HudControlTileButton(
                         icon = Icons.Outlined.Devices,
-                        label = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
+                        label = when {
+                            telemetry.isDesktopDropRunning -> "Drop On"
+                            !dropAvailable -> "No Wi-Fi"
+                            else -> "Drop"
+                        },
                         active = telemetry.isDesktopDropRunning,
+                        enabled = dropAvailable,
                         accentColor = GlassPalette.HudElectricCyan,
                         plateBitmap = dropTileBitmap,
-                        onClick = onToggleDrop,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleDrop()
+                        },
                         modifier = tileMod.testTag("cockpit-widget-toggle-drop"),
                     )
                     HudControlTileButton(
-                        icon = if (torchOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-                        label = if (torchOn) "Torch On" else "Torch",
-                        active = torchOn,
+                        icon = if (torchOn && torchAvailable) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+                        label = when {
+                            !torchAvailable -> "Cam Busy"
+                            torchOn -> "Torch On"
+                            else -> "Torch"
+                        },
+                        active = torchOn && torchAvailable,
+                        enabled = torchAvailable,
                         accentColor = GlassPalette.HudAmber,
                         plateBitmap = torchTileBitmap,
-                        onClick = onToggleTorch,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleTorch()
+                        },
                         modifier = tileMod.testTag("cockpit-widget-toggle-torch"),
                     )
                     HudControlTileButton(
                         icon = Icons.Outlined.Layers,
                         label = if (islandOn) "Island On" else "Island",
                         active = islandOn,
+                        enabled = true,
                         accentColor = GlassPalette.HudVioletBlue,
                         plateBitmap = islandTileBitmap,
-                        onClick = onToggleIsland,
+                        onClick = {
+                            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                            onToggleIsland()
+                        },
                         modifier = tileMod.testTag("cockpit-widget-toggle-island"),
                     )
                 }
@@ -876,7 +1129,7 @@ fun CockpitMasterWidgetCard(
                     }
                 }
 
-                // Zone 4: Bottom Recessed App Dock (Strictly separate container)
+                // Zone 4: Bottom Recessed App Dock
                 if (pinnedApps.isNotEmpty()) {
                     Box(
                         modifier = Modifier
@@ -927,21 +1180,57 @@ fun CockpitMasterWidgetCard(
 }
 
 @Composable
+private fun GaugeShimmerPlaceholder(reducedMotion: Boolean) {
+    val alpha = if (reducedMotion) {
+        0.2f
+    } else {
+        val transition = rememberInfiniteTransition(label = "hud_gauge_shimmer")
+        val animated by transition.animateFloat(
+            initialValue = 0.12f,
+            targetValue = 0.30f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                repeatMode = RepeatMode.Reverse,
+            ),
+            label = "gauge_shimmer_alpha",
+        )
+        animated
+    }
+    Box(
+        modifier = Modifier
+            .size(CockpitTokens.HudGaugeSize)
+            .clip(CircleShape)
+            .background(GlassPalette.HudTrackRecessed)
+            .border(
+                width = Tokens.Stroke,
+                color = MaterialTheme.colorScheme.onSurface.copy(alpha = alpha),
+                shape = CircleShape,
+            ),
+    )
+}
+
+@Composable
 private fun HudControlTileButton(
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     label: String,
     active: Boolean,
+    enabled: Boolean,
     accentColor: Color,
     plateBitmap: androidx.compose.ui.graphics.ImageBitmap,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
-    val fg = if (active) accentColor else MaterialTheme.colorScheme.onSurface
+    val fg = when {
+        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+        active -> accentColor
+        else -> MaterialTheme.colorScheme.onSurface
+    }
     Box(
         modifier = modifier
             .defaultMinSize(minHeight = CockpitTokens.HudControlHeight)
             .clip(CockpitTokens.HudTileShape)
-            .clickable(role = Role.Button, onClick = onClick),
+            .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
+            .graphicsLayer { alpha = if (enabled) 1f else 0.72f },
         contentAlignment = Alignment.Center,
     ) {
         Image(
@@ -1007,14 +1296,21 @@ private fun ClockHeroBlock(timeLabel: String, dateLabel: String) {
 }
 
 @Composable
-private fun AlarmBadgeBlock(alarm: NextAlarmUiModel) {
+private fun AlarmBadgeBlock(
+    alarm: NextAlarmUiModel,
+    onTapAlarm: () -> Unit,
+) {
     Column(
         modifier = Modifier
+            .defaultMinSize(minHeight = Tokens.TouchTarget)
             .clip(Tokens.ThumbShape)
             .background(GlassPalette.HudTileRecessed)
             .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.ThumbShape)
-            .padding(horizontal = Tokens.Small, vertical = Tokens.Snug),
+            .clickable(role = Role.Button, onClickLabel = "Open Google Clock alarms", onClick = onTapAlarm)
+            .padding(horizontal = Tokens.Small, vertical = Tokens.Snug)
+            .testTag("cockpit-widget-alarm-pill"),
         horizontalAlignment = Alignment.Start,
+        verticalArrangement = Arrangement.Center,
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
@@ -1276,4 +1572,12 @@ private fun openBatteryExemptionSettings(context: Context) {
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
             )
         }
+}
+
+private fun openAppDetailsSettings(context: Context) {
+    val intent = Intent(
+        Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+        Uri.parse("package:${context.packageName}"),
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+    runCatching { context.startActivity(intent) }
 }

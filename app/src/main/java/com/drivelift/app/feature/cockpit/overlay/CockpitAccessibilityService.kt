@@ -64,6 +64,8 @@ class CockpitAccessibilityService :
         lifecycleRegistry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
 
         val cockpit = Graph.get(this).cockpit
+        cockpit.quickControlsController.start()
+        cockpit.telemetryMonitor.acquire()
         cockpit.syncOverlayService()
         serviceScope.launch {
             cockpit.prefsRepo.state.collect { prefs ->
@@ -116,6 +118,8 @@ class CockpitAccessibilityService :
         if (activeInstance === this) activeInstance = null
         controller?.detach()
         Graph.get(applicationContext).cockpit.let { cockpit ->
+            cockpit.telemetryMonitor.release()
+            cockpit.quickControlsController.stop()
             if (cockpit.prefsRepo.isMasterEnabledMirrored() && cockpit.hasOverlayPermission()) {
                 cockpit.syncOverlayService(true)
             }

@@ -4,15 +4,21 @@ import android.app.ActivityManager
 import android.app.AlarmManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import android.os.BatteryManager
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.StatFs
 import android.os.SystemClock
 import android.provider.AlarmClock
 import android.view.View
 import android.widget.RemoteViews
+import android.widget.Toast
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.DpSize
@@ -51,6 +57,7 @@ import androidx.glance.layout.height
 import androidx.glance.layout.padding
 import androidx.glance.layout.size
 import androidx.glance.layout.width
+import androidx.glance.layout.wrapContentWidth
 import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
@@ -59,26 +66,31 @@ import com.drivelift.app.Graph
 import com.drivelift.app.R
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
+import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitTokens
+import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.MainActivity
 import com.drivelift.app.ui.Tokens
-import java.util.Locale
 
 data class BatteryHudMetric(
     val percent: Int,
     val fraction: Float,
     val valueText: String,
     val label: String = "BATT",
+    val isCharging: Boolean = false,
+    val isLow: Boolean = false,
 )
 
 data class RamHudMetric(
     val freeGb: Double,
+    val usedGb: Double = 0.0,
+    val totalGb: Double = 0.0,
     val fraction: Float,
     val valueText: String,
     val label: String = "RAM",
@@ -98,9 +110,9 @@ private data class HudRenderBitmaps(
 
 /**
  * Futuristic Cyber-Glass 4-Zone Spatial Bento HUD Master Widget:
- * - Zone 1 (Top-Left): Bold tabular `<TextClock>` + uppercase AM/PM badge + date over illuminated `<Chronometer>` alarm pill
- * - Zone 2 (Top-Right): Glowing status pill (`READY` / `DROP LIVE`) over dual 270-degree Battery & Free RAM neon arc gauges
- * - Zone 3 (Middle Control Deck): Isolated 3-column sculptural ON/OFF tiles (`Drop`, `Torch`, `Island`) with >= 48dp touch height
+ * - Zone 1 (Top-Left): Bold tabular `<TextClock>` + uppercase AM/PM badge + date over illuminated `<Chronometer>` alarm pill (tapping opens Google Clock)
+ * - Zone 2 (Top-Right): High-contrast wrapContentWidth status pill (`READY` / `DROP LIVE`) over dual 270-degree Battery (charging lightning halo / `<= 20%` red LOW) & Used/Total RAM gauges
+ * - Zone 3 (Middle Control Deck): Isolated 3-column stateful ON/OFF/disabled tiles (`Drop`, `Torch`, `Island`) with 2dp stroke icons, >= 48dp touch height, and haptic feedback
  * - Zone 4 (Bottom Recessed App Dock): Frosted obsidian tray holding pinned apps inside glass halo badges
  */
 class CockpitGlanceWidget : GlanceAppWidget() {
@@ -110,12 +122,16 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     )
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        val cockpit = Graph.get(context).cockpit
+        val graph = Graph.get(context)
+        val cockpit = graph.cockpit
         val prefs = cockpit.prefsRepo.state.value
         val islandEnabled = cockpit.prefsRepo.readCurrentMasterEnabled()
         val telemetry = cockpit.telemetryAdapter.summary.value
         val alarm = NextAlarmFormatter.readFromSystem(context)
-        val torchOn = cockpit.torchController.state.value.isOn
+        val torchState = cockpit.torchController.state.value
+        val torchOn = torchState.isOn && torchState.available
+        val torchAvailable = torchState.available
+        val dropAvailable = isDropToggleAvailable(context, telemetry, graph.desktopDrop.controller.snapshot.value.mode)
         val battery = readBatteryMetric(context)
         val ram = readRamMetric(context)
         val pinnedApps = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages).take(4)
@@ -124,7 +140,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         val bitmaps = renderHudBitmaps(
             density = density,
             isDropActive = telemetry.isDesktopDropRunning,
+            isDropAvailable = dropAvailable,
             isTorchOn = torchOn,
+            isTorchAvailable = torchAvailable,
             isIslandOn = islandEnabled,
             battery = battery,
             ram = ram,
@@ -141,7 +159,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     alarm = alarm,
                     telemetry = telemetry,
                     battery = battery,
+                    dropAvailable = dropAvailable,
                     torchOn = torchOn,
+                    torchAvailable = torchAvailable,
                     islandOn = islandEnabled,
                     pinnedApps = pinnedApps,
                     bitmaps = bitmaps,
@@ -160,12 +180,23 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         )
         val previewTelemetry = DriveLiftTelemetrySummary(
             isDesktopDropRunning = true,
+            isDropAvailable = true,
             connectedPeerName = "Workstation",
             desktopDropSpeedBytesPerSec = 58_000_000L,
             statusHeadline = "Drop 55.3 MB/s",
         )
-        val previewBattery = BatteryHudMetric(percent = 84, fraction = 0.84f, valueText = "84%")
-        val previewRam = RamHudMetric(freeGb = 4.8, fraction = 0.48f, valueText = "4.8G")
+        val previewBattery = BatteryHudMetric(
+            percent = 84,
+            fraction = 0.84f,
+            valueText = "84%",
+            label = "CHRG",
+            isCharging = true,
+            isLow = false,
+        )
+        val previewRam = CockpitHudBitmapRenderer.formatRamHudMetric(
+            availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+            totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+        )
         val previewPinned = listOf(
             PinnedAppInfo("com.google.android.apps.maps", "Maps"),
             PinnedAppInfo("com.whatsapp", "WhatsApp"),
@@ -175,7 +206,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         val bitmaps = renderHudBitmaps(
             density = density,
             isDropActive = true,
+            isDropAvailable = true,
             isTorchOn = false,
+            isTorchAvailable = true,
             isIslandOn = true,
             battery = previewBattery,
             ram = previewRam,
@@ -189,7 +222,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     alarm = previewAlarm,
                     telemetry = previewTelemetry,
                     battery = previewBattery,
+                    dropAvailable = true,
                     torchOn = false,
+                    torchAvailable = true,
                     islandOn = true,
                     pinnedApps = previewPinned,
                     bitmaps = bitmaps,
@@ -201,7 +236,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     private fun renderHudBitmaps(
         density: Float,
         isDropActive: Boolean,
+        isDropAvailable: Boolean,
         isTorchOn: Boolean,
+        isTorchAvailable: Boolean,
         isIslandOn: Boolean,
         battery: BatteryHudMetric,
         ram: RamHudMetric,
@@ -237,8 +274,9 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 fraction = battery.fraction,
                 valueText = battery.valueText,
                 subLabel = battery.label,
-                accentColor = CockpitHudBitmapRenderer.batteryArcColor(battery.percent),
+                accentColor = CockpitHudBitmapRenderer.batteryArcColor(battery.percent, battery.isCharging),
                 density = density,
+                isCharging = battery.isCharging,
             ),
             ramGauge = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
                 sizePx = gaugePx,
@@ -254,6 +292,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 active = isDropActive,
                 accentColor = GlassPalette.HudElectricCyan,
                 density = density,
+                enabled = isDropAvailable,
             ),
             torchTile = CockpitHudBitmapRenderer.renderControlTileBitmap(
                 widthPx = tileW,
@@ -261,6 +300,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 active = isTorchOn,
                 accentColor = GlassPalette.HudAmber,
                 density = density,
+                enabled = isTorchAvailable,
             ),
             islandTile = CockpitHudBitmapRenderer.renderControlTileBitmap(
                 widthPx = tileW,
@@ -268,6 +308,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 active = isIslandOn,
                 accentColor = GlassPalette.HudVioletBlue,
                 density = density,
+                enabled = true,
             ),
             dockTray = CockpitHudBitmapRenderer.renderDockTrayBitmap(
                 widthPx = trayW,
@@ -335,12 +376,15 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         alarm: NextAlarmUiModel,
         telemetry: DriveLiftTelemetrySummary,
         battery: BatteryHudMetric,
+        dropAvailable: Boolean,
         torchOn: Boolean,
+        torchAvailable: Boolean,
         islandOn: Boolean,
         pinnedApps: List<PinnedAppInfo>,
         bitmaps: HudRenderBitmaps,
     ) {
         val primaryText = resColorProvider(context, R.color.cockpit_on_surface)
+        val disabledText = resColorProvider(context, R.color.cockpit_on_surface_variant)
         val dropAccent = directColorProvider(GlassPalette.HudElectricCyan)
         val torchAccent = directColorProvider(GlassPalette.HudAmber)
         val islandAccent = directColorProvider(GlassPalette.HudVioletBlue)
@@ -382,6 +426,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 ) {
                     Row(
                         modifier = GlanceModifier
+                            .wrapContentWidth()
                             .background(ImageProvider(bitmaps.statusPill))
                             .clickable(actionRunCallback<OpenDriveLiftAction>())
                             .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
@@ -415,7 +460,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                         Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
                         Image(
                             provider = ImageProvider(bitmaps.ramGauge),
-                            contentDescription = "Free RAM",
+                            contentDescription = "RAM usage",
                             modifier = GlanceModifier.size(CockpitTokens.HudGaugeSize),
                         )
                     }
@@ -424,17 +469,23 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
             Spacer(GlanceModifier.height(Tokens.Small))
 
-            // Zone 3: Middle Control Deck (Strictly isolated 3-column equal-width sculptural plates)
+            // Zone 3: Middle Control Deck (Strictly isolated 3-column stateful sculptural plates)
             Row(
                 modifier = GlanceModifier.fillMaxWidth(),
                 verticalAlignment = Alignment.Vertical.CenterVertically,
             ) {
                 SculpturalControlTile(
                     iconRes = R.drawable.ic_cockpit_devices,
-                    label = if (telemetry.isDesktopDropRunning) "Drop On" else "Drop",
+                    label = when {
+                        telemetry.isDesktopDropRunning -> "Drop On"
+                        !dropAvailable -> "No Wi-Fi"
+                        else -> "Drop"
+                    },
                     active = telemetry.isDesktopDropRunning,
+                    enabled = dropAvailable,
                     activeColor = dropAccent,
                     inactiveColor = primaryText,
+                    disabledColor = disabledText,
                     plateBitmap = bitmaps.dropTile,
                     modifier = GlanceModifier
                         .defaultWeight()
@@ -444,10 +495,16 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
                 SculpturalControlTile(
                     iconRes = if (torchOn) R.drawable.ic_cockpit_torch_on else R.drawable.ic_cockpit_torch_off,
-                    label = if (torchOn) "Torch On" else "Torch",
+                    label = when {
+                        !torchAvailable -> "Cam Busy"
+                        torchOn -> "Torch On"
+                        else -> "Torch"
+                    },
                     active = torchOn,
+                    enabled = torchAvailable,
                     activeColor = torchAccent,
                     inactiveColor = primaryText,
+                    disabledColor = disabledText,
                     plateBitmap = bitmaps.torchTile,
                     modifier = GlanceModifier
                         .defaultWeight()
@@ -459,8 +516,10 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     iconRes = R.drawable.ic_cockpit_tile,
                     label = if (islandOn) "Island On" else "Island",
                     active = islandOn,
+                    enabled = true,
                     activeColor = islandAccent,
                     inactiveColor = primaryText,
+                    disabledColor = disabledText,
                     plateBitmap = bitmaps.islandTile,
                     modifier = GlanceModifier
                         .defaultWeight()
@@ -530,12 +589,18 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         iconRes: Int,
         label: String,
         active: Boolean,
+        enabled: Boolean,
         activeColor: GlanceColorProvider,
         inactiveColor: GlanceColorProvider,
+        disabledColor: GlanceColorProvider,
         plateBitmap: Bitmap,
         modifier: GlanceModifier = GlanceModifier,
     ) {
-        val fg = if (active) activeColor else inactiveColor
+        val fg = when {
+            !enabled -> disabledColor
+            active -> activeColor
+            else -> inactiveColor
+        }
         Column(
             modifier = modifier
                 .background(ImageProvider(plateBitmap))
@@ -575,20 +640,48 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             }
         }
 
-        fun readBatteryMetric(context: Context): BatteryHudMetric {
+        fun readBatteryMetric(context: Context, batteryIntent: Intent? = null): BatteryHudMetric {
             val pct = runCatching {
                 context.getSystemService(BatteryManager::class.java)
                     ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
                     ?: -1
             }.getOrDefault(-1)
+
+            val resolvedIntent = batteryIntent ?: runCatching {
+                ContextCompat.registerReceiver(
+                    context.applicationContext,
+                    null,
+                    IntentFilter(Intent.ACTION_BATTERY_CHANGED),
+                    ContextCompat.RECEIVER_NOT_EXPORTED,
+                )
+            }.getOrNull()
+            val status = resolvedIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
+            val bmCharging = runCatching {
+                context.getSystemService(BatteryManager::class.java)?.isCharging == true
+            }.getOrDefault(false)
+            val isCharging = bmCharging ||
+                status == BatteryManager.BATTERY_STATUS_CHARGING ||
+                status == BatteryManager.BATTERY_STATUS_FULL
+            val isLow = !isCharging && pct in 0..20
+
             return if (pct in 0..100) {
                 BatteryHudMetric(
                     percent = pct,
                     fraction = (pct / 100f).coerceIn(0.02f, 1f),
                     valueText = "$pct%",
+                    label = CockpitHudBitmapRenderer.batterySubLabel(pct, isCharging),
+                    isCharging = isCharging,
+                    isLow = isLow,
                 )
             } else {
-                BatteryHudMetric(percent = 0, fraction = 0f, valueText = "--%")
+                BatteryHudMetric(
+                    percent = 0,
+                    fraction = 0f,
+                    valueText = "--%",
+                    label = if (isCharging) "CHRG" else "BATT",
+                    isCharging = isCharging,
+                    isLow = false,
+                )
             }
         }
 
@@ -598,20 +691,53 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             if (am != null) {
                 am.getMemoryInfo(info)
             }
-            if (info.totalMem > 0L) {
-                val freeGb = info.availMem / (1024.0 * 1024.0 * 1024.0)
-                val fraction = (info.availMem.toDouble() / info.totalMem.toDouble())
-                    .toFloat()
-                    .coerceIn(0.05f, 1f)
-                RamHudMetric(
-                    freeGb = freeGb,
-                    fraction = fraction,
-                    valueText = "%.1fG".format(Locale.US, freeGb),
-                )
-            } else {
-                RamHudMetric(freeGb = 0.0, fraction = 0f, valueText = "--G")
+            CockpitHudBitmapRenderer.formatRamHudMetric(info.availMem, info.totalMem)
+        }.getOrDefault(RamHudMetric(freeGb = 0.0, usedGb = 0.0, totalGb = 0.0, fraction = 0f, valueText = "--"))
+
+        fun isDropToggleAvailable(
+            context: Context,
+            telemetry: DriveLiftTelemetrySummary,
+            mode: ConnectivityMode,
+        ): Boolean {
+            if (telemetry.isDesktopDropRunning) return true
+            if (mode == ConnectivityMode.DIRECT_HOTSPOT) return true
+            return runCatching {
+                val cm = context.getSystemService(ConnectivityManager::class.java)
+                val active = cm?.activeNetwork
+                val caps = active?.let { cm.getNetworkCapabilities(it) }
+                caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+            }.getOrDefault(true)
+        }
+
+        fun launchGoogleClockAlarms(context: Context) {
+            val googleClockShow = Intent(AlarmClock.ACTION_SHOW_ALARMS)
+                .setPackage("com.google.android.deskclock")
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val genericShow = Intent(AlarmClock.ACTION_SHOW_ALARMS)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val googleClockLaunch = context.packageManager
+                .getLaunchIntentForPackage("com.google.android.deskclock")
+                ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            val fallbackSet = Intent(AlarmClock.ACTION_SET_ALARM)
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            if (runCatching { context.startActivity(googleClockShow); true }.getOrDefault(false)) return
+            if (googleClockLaunch != null && runCatching { context.startActivity(googleClockLaunch); true }.getOrDefault(false)) return
+            if (runCatching { context.startActivity(genericShow); true }.getOrDefault(false)) return
+            val showIntent = runCatching {
+                context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent
+            }.getOrNull()
+            if (showIntent != null && runCatching { showIntent.send(); true }.getOrDefault(false)) return
+            runCatching { context.startActivity(fallbackSet) }
+        }
+
+        fun showBriefWidgetToast(context: Context, message: String) {
+            Handler(Looper.getMainLooper()).post {
+                runCatching {
+                    Toast.makeText(context.applicationContext, message, Toast.LENGTH_SHORT).show()
+                }
             }
-        }.getOrDefault(RamHudMetric(freeGb = 0.0, fraction = 0f, valueText = "--G"))
+        }
 
         fun readFreeStorageLabel(): String = runCatching {
             val stat = StatFs(Environment.getDataDirectory().path)
@@ -628,26 +754,21 @@ class CockpitGlanceWidget : GlanceAppWidget() {
 
 class OpenClockAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        val showAlarms = Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val fallback = Intent(AlarmClock.ACTION_SET_ALARM).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(showAlarms) }
-            .recoverCatching { context.startActivity(fallback) }
+        CockpitHaptics.performClick(context)
+        CockpitGlanceWidget.launchGoogleClockAlarms(context)
     }
 }
 
 class OpenNextAlarmAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        val showIntent = runCatching {
-            context.getSystemService(AlarmManager::class.java)?.nextAlarmClock?.showIntent
-        }.getOrNull()
-        if (showIntent != null && runCatching { showIntent.send() }.isSuccess) return
-        val fallback = Intent(AlarmClock.ACTION_SHOW_ALARMS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        runCatching { context.startActivity(fallback) }
+        CockpitHaptics.performClick(context)
+        CockpitGlanceWidget.launchGoogleClockAlarms(context)
     }
 }
 
 class OpenDriveLiftAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        CockpitHaptics.performClick(context)
         val intent = Intent(context, MainActivity::class.java)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
             .putExtra(CockpitOverlayService.EXTRA_OPEN_COCKPIT, true)
@@ -657,12 +778,24 @@ class OpenDriveLiftAction : ActionCallback {
 
 class ToggleDesktopDropAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        val controller = Graph.get(context).desktopDrop.controller
-        val status = controller.snapshot.value.status
+        CockpitHaptics.performClick(context)
+        val graph = Graph.get(context)
+        val controller = graph.desktopDrop.controller
+        val snap = controller.snapshot.value
+        val status = snap.status
         if (status == ServerStatus.RUNNING || status == ServerStatus.STARTING) {
             controller.stopServer("Stopped from Cockpit widget")
+            CockpitGlanceWidget.showBriefWidgetToast(context, "Desktop Drop stopped")
+        } else if (!CockpitGlanceWidget.isDropToggleAvailable(
+                context = context,
+                telemetry = graph.cockpit.telemetryAdapter.summary.value,
+                mode = snap.mode,
+            )
+        ) {
+            CockpitGlanceWidget.showBriefWidgetToast(context, "Connect to Wi-Fi or use Hotspot in Drop")
         } else {
             controller.startServer()
+            CockpitGlanceWidget.showBriefWidgetToast(context, "Desktop Drop starting")
         }
         CockpitGlanceWidget().updateAll(context)
     }
@@ -670,26 +803,46 @@ class ToggleDesktopDropAction : ActionCallback {
 
 class ToggleTorchAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
-        Graph.get(context).cockpit.torchController.toggleTorch()
+        CockpitHaptics.performClick(context)
+        val torchController = Graph.get(context).cockpit.torchController
+        val torchState = torchController.state.value
+        if (!torchState.available) {
+            CockpitGlanceWidget.showBriefWidgetToast(
+                context,
+                if (torchState.cameraInUse) "Torch unavailable while camera is in use" else "No flashlight detected",
+            )
+        } else {
+            torchController.toggleTorch()
+            val nextOn = torchController.state.value.isOn
+            CockpitGlanceWidget.showBriefWidgetToast(context, if (nextOn) "Torch on" else "Torch off")
+        }
         CockpitGlanceWidget().updateAll(context)
     }
 }
 
 class ToggleIslandAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        CockpitHaptics.performClick(context)
         val cockpit = Graph.get(context).cockpit
         val current = cockpit.prefsRepo.readCurrentMasterEnabled()
         if (!cockpit.setDynamicIslandEnabledAndSync(!current)) {
+            CockpitGlanceWidget.showBriefWidgetToast(context, "Grant overlay permission in Cockpit Hub")
             val intent = Intent(context, MainActivity::class.java)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_SINGLE_TOP)
                 .putExtra(CockpitOverlayService.EXTRA_OPEN_COCKPIT, true)
             runCatching { context.startActivity(intent) }
+        } else {
+            CockpitGlanceWidget.showBriefWidgetToast(
+                context,
+                if (!current) "Dynamic Island on" else "Dynamic Island off",
+            )
         }
     }
 }
 
 class LaunchPinnedAppAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
+        CockpitHaptics.performClick(context)
         val pkg = parameters[CockpitGlanceWidget.PARAM_PACKAGE] ?: return
         Graph.get(context).cockpit.pinnedAppsRepo.launchApp(pkg)
     }
