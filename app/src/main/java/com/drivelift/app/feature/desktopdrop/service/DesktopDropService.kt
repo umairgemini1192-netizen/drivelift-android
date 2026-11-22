@@ -146,6 +146,7 @@ class DesktopDropService : Service() {
                 val noun = if (snapshot.activeTransferCount == 1) "1 transfer" else "${snapshot.activeTransferCount} transfers"
                 "$noun ($speedText)"
             }
+            snapshot.bookmarkUrl != null -> snapshot.bookmarkUrl
             snapshot.dropUrl != null -> snapshot.dropUrl
             else -> "Preparing local server"
         }

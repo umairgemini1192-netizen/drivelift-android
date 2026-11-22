@@ -107,77 +107,131 @@ class DesktopDropServerEngineTest {
         return client to jar
     }
 
-    private fun authenticateWithOneTapApproval(client: OkHttpClient): String {
-        val token = authManager.sessionToken
-        val body = """{"token":"$token"}""".toRequestBody("application/json".toMediaType())
-        client.newCall(Request.Builder().url("$baseUrl/api/auth/request").post(body).build()).execute().use { resp ->
+    private val jsonType = "application/json".toMediaType()
+
+    /**
+     * The full knock flow a browser goes through, with the phone's biometric success simulated by
+     * [SessionAuthManager.approveKnock]. Leaves the session cookie in [client]'s jar.
+     */
+    private fun knockAndApprove(
+        client: OkHttpClient,
+        base: String = baseUrl,
+        auth: SessionAuthManager = authManager,
+    ): String {
+        val knock = client.newCall(
+            Request.Builder().url("$base/api/auth/knock").post(ByteArray(0).toRequestBody()).build(),
+        ).execute().use { resp ->
             assertEquals(202, resp.code)
-            val parsed = DropJson.parseObject(resp.body!!.string())
-            assertEquals("PENDING", parsed["status"])
-            val peerId = parsed["peerId"] as String
-
-            // Pending browser still cannot list files before approval.
-            client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { denied ->
-                assertEquals(401, denied.code)
-            }
-
-            // Approve peer from Android screen.
-            authManager.approvePeer(peerId)
-
-            client.newCall(
-                Request.Builder().url("$baseUrl/api/auth/status?peerId=$peerId&token=$token").build(),
-            ).execute().use { approved ->
-                assertEquals(200, approved.code)
-                val setCookie = approved.header("Set-Cookie").orEmpty()
-                assertTrue("Session cookie must be HttpOnly", "HttpOnly" in setCookie)
-            }
-            return peerId
+            DropJson.parseObject(resp.body!!.string())
         }
+        val knockId = knock["knockId"] as String
+        assertTrue(Regex("\\d\\d-\\d\\d").matches(knock["matchCode"] as String))
+        assertNotNull(auth.approveKnock(knockId))
+        client.newCall(
+            Request.Builder().url("$base/api/auth/claim").post("""{"knockId":"$knockId"}""".toRequestBody(jsonType)).build(),
+        ).execute().use { claim ->
+            assertEquals(200, claim.code)
+            val setCookie = claim.header("Set-Cookie").orEmpty()
+            assertTrue("Session cookie must be HttpOnly", "HttpOnly" in setCookie)
+            assertTrue("Session cookie must be SameSite=Strict", "SameSite=Strict" in setCookie)
+        }
+        return knockId
     }
 
     @Test
-    fun authRejectsMissingOrInvalidTokensIssuesHttpOnlyCookieAndHonorsRevocation() {
-        authManager.requireApproval = true
+    fun knockToApproveIssuesCookieOnlyAfterPhoneApprovalIsSingleUseAndHonorsRevocation() {
         startLoopbackServer()
         val (client, _) = clientWithJar()
 
-        // Unauthenticated API access fails with 401.
-        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { resp ->
-            assertEquals(401, resp.code)
+        // No token anywhere: the root page is served clean and the API is locked.
+        client.newCall(Request.Builder().url("$baseUrl/").build()).execute().use { page ->
+            assertEquals(200, page.code)
         }
+        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { assertEquals(401, it.code) }
+        client.newCall(Request.Builder().url("$baseUrl/api/auth/session").build()).execute().use { assertEquals(401, it.code) }
 
-        // Wrong token returns 401.
-        val badBody = """{"token":"WRONG999"}""".toRequestBody("application/json".toMediaType())
-        client.newCall(Request.Builder().url("$baseUrl/api/auth/request").post(badBody).build()).execute().use { resp ->
-            assertEquals(401, resp.code)
+        // A forged or tampered cookie is rejected.
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/files").header("Cookie", "dl_drop_session=forged.value").build(),
+        ).execute().use { assertEquals(401, it.code) }
+
+        val knock = client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/knock").post(ByteArray(0).toRequestBody()).build(),
+        ).execute().use { resp ->
+            assertEquals(202, resp.code)
+            DropJson.parseObject(resp.body!!.string())
         }
+        val knockId = knock["knockId"] as String
+        assertEquals("PENDING", knock["status"])
+        assertNotNull(authManager.pendingApproval())
 
-        val peerId = authenticateWithOneTapApproval(client)
+        // A pending browser cannot list files and cannot claim a cookie yet.
+        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { assertEquals(401, it.code) }
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/claim").post("""{"knockId":"$knockId"}""".toRequestBody(jsonType)).build(),
+        ).execute().use { assertEquals(401, it.code) }
 
-        // Approved cookie accesses files cleanly.
-        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { ok ->
-            assertEquals(200, ok.code)
+        // The SSE stream reports PENDING first and APPROVED soon after the phone approves.
+        val streamText = AtomicReference<String?>(null)
+        val streamThread = Thread {
+            client.newCall(Request.Builder().url("$baseUrl/api/auth/wait?knockId=$knockId").build()).execute().use { sse ->
+                streamText.set(sse.body!!.string())
+            }
         }
+        streamThread.start()
+        Thread.sleep(300L)
+        val approvedAt = System.nanoTime()
+        assertNotNull(authManager.approveKnock(knockId))
+        streamThread.join(5_000L)
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - approvedAt)
+        val body = streamText.get().orEmpty()
+        assertTrue("SSE should announce PENDING then APPROVED: $body", "PENDING" in body && "APPROVED" in body)
+        assertTrue("Unlock should follow approval quickly, took ${elapsedMs}ms", elapsedMs < 1_000L)
 
-        // Instant revocation invalidates session cookie immediately.
-        authManager.revokePeer(peerId)
-        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { revoked ->
-            assertEquals(401, revoked.code)
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/claim").post("""{"knockId":"$knockId"}""".toRequestBody(jsonType)).build(),
+        ).execute().use { claim ->
+            assertEquals(200, claim.code)
+            val setCookie = claim.header("Set-Cookie").orEmpty()
+            assertTrue("Session cookie must be HttpOnly", "HttpOnly" in setCookie)
+            assertTrue("Session cookie must be SameSite=Strict", "SameSite=Strict" in setCookie)
         }
+        // The cookie is handed over once.
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/claim").post("""{"knockId":"$knockId"}""".toRequestBody(jsonType)).build(),
+        ).execute().use { assertEquals(401, it.code) }
+
+        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { assertEquals(200, it.code) }
+        client.newCall(Request.Builder().url("$baseUrl/api/auth/session").build()).execute().use { assertEquals(200, it.code) }
+
+        // Instant revocation invalidates the session cookie.
+        authManager.revokePeer(knockId)
+        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { assertEquals(401, it.code) }
+        client.newCall(Request.Builder().url("$baseUrl/api/auth/session").build()).execute().use { assertEquals(401, it.code) }
+    }
+
+    @Test
+    fun deniedKnockReportsDeniedAndNeverGetsACookie() {
+        startLoopbackServer()
+        val (client, _) = clientWithJar()
+        val knock = client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/knock").post(ByteArray(0).toRequestBody()).build(),
+        ).execute().use { DropJson.parseObject(it.body!!.string()) }
+        val knockId = knock["knockId"] as String
+        authManager.revokePeer(knockId)
+        client.newCall(Request.Builder().url("$baseUrl/api/auth/wait?knockId=$knockId").build()).execute().use { sse ->
+            assertTrue(sse.body!!.string().contains("DENIED"))
+        }
+        client.newCall(
+            Request.Builder().url("$baseUrl/api/auth/claim").post("""{"knockId":"$knockId"}""".toRequestBody(jsonType)).build(),
+        ).execute().use { assertEquals(401, it.code) }
     }
 
     @Test
     fun resumableChunkUploadAssemblesMultiChunkBinaryVerifiesHashAndCleansPartFile() {
-        authManager.requireApproval = false
         startLoopbackServer()
         val (client, _) = clientWithJar()
-        val token = authManager.sessionToken
-        client.newCall(
-            Request.Builder()
-                .url("$baseUrl/api/auth/request")
-                .post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType()))
-                .build(),
-        ).execute().use { assertEquals(200, it.code) }
+        knockAndApprove(client)
 
         val payload = ByteArray(150_000) { idx -> ((idx * 31 + 7) and 0xFF).toByte() }
         val sha256 = MessageDigest.getInstance("SHA-256").digest(payload).joinToString("") { "%02x".format(it) }
@@ -252,13 +306,9 @@ class DesktopDropServerEngineTest {
 
     @Test
     fun abortUploadDeletesTemporaryPartFileImmediately() {
-        authManager.requireApproval = false
         startLoopbackServer()
         val (client, _) = clientWithJar()
-        val token = authManager.sessionToken
-        client.newCall(
-            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
-        ).execute().close()
+        knockAndApprove(client)
 
         val init = client.newCall(
             Request.Builder()
@@ -286,7 +336,6 @@ class DesktopDropServerEngineTest {
 
     @Test
     fun rangeDownloadSupports206PartialContentHeadAndStreamingStoredZipHasZeroTempZipFiles() {
-        authManager.requireApproval = false
         val file1 = File(shareDir, "alpha.bin").apply {
             writeBytes(ByteArray(2048) { idx -> (idx and 0xFF).toByte() })
         }
@@ -301,10 +350,7 @@ class DesktopDropServerEngineTest {
         )
         startLoopbackServer()
         val (client, _) = clientWithJar()
-        val token = authManager.sessionToken
-        client.newCall(
-            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
-        ).execute().close()
+        knockAndApprove(client)
 
         // HEAD reports full Content-Length without body.
         client.newCall(Request.Builder().url("$baseUrl/api/download/id-1").head().build()).execute().use { head ->
@@ -405,13 +451,9 @@ class DesktopDropServerEngineTest {
 
     @Test
     fun queueMutationBroadcastsQueueUpdatedWebSocketEvent() {
-        authManager.requireApproval = false
         val port = startLoopbackServer()
         val (client, _) = clientWithJar()
-        val token = authManager.sessionToken
-        client.newCall(
-            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
-        ).execute().use { assertEquals(200, it.code) }
+        knockAndApprove(client)
 
         val (ws, frames, wsNote) = openTelemetryWebSocket(client, port)
         try {
@@ -458,7 +500,6 @@ class DesktopDropServerEngineTest {
 
     @Test
     fun largeBufferStreamingPreservesExactBytesAndRangeIntegrityForFileAndSafStreams() {
-        authManager.requireApproval = false
         val largeBytes = ByteArray(1_600_000) { idx -> ((idx * 17 + 5) and 0xFF).toByte() }
         val bigFile = File(shareDir, "PXL_20261120_180255203.mp4").apply { writeBytes(largeBytes) }
         engine.setSharedItems(
@@ -476,10 +517,7 @@ class DesktopDropServerEngineTest {
         )
         startLoopbackServer()
         val (client, _) = clientWithJar()
-        val token = authManager.sessionToken
-        client.newCall(
-            Request.Builder().url("$baseUrl/api/auth/request").post("""{"token":"$token"}""".toRequestBody("application/json".toMediaType())).build(),
-        ).execute().use { assertEquals(200, it.code) }
+        knockAndApprove(client)
 
         // Direct FileChannel 512 KB streaming path: full body.
         client.newCall(Request.Builder().url("$baseUrl/api/download/big-file").build()).execute().use { resp ->
@@ -524,7 +562,7 @@ class DesktopDropServerEngineTest {
         assertEquals(0, tempRoot.walkTopDown().count { it.extension.equals("zip", ignoreCase = true) })
 
         // SAF / ContentResolver InputStream path (localFileOrNull returns null) with 512 KB ByteArray.
-        val safAuth = SessionAuthManager(allowLoopbackForTest = true).apply { requireApproval = false }
+        val safAuth = SessionAuthManager(allowLoopbackForTest = true)
         val safSource = object : SharedItemSource {
             override fun localFileOrNull(item: SharedDropItem): File? = null
 
@@ -559,12 +597,7 @@ class DesktopDropServerEngineTest {
             val safPort = runBlocking { safEngine.start("127.0.0.1", 0) }
             val safBaseUrl = "http://127.0.0.1:$safPort"
             val (safClient, _) = clientWithJar()
-            safClient.newCall(
-                Request.Builder()
-                    .url("$safBaseUrl/api/auth/request")
-                    .post("""{"token":"${safAuth.sessionToken}"}""".toRequestBody("application/json".toMediaType()))
-                    .build(),
-            ).execute().use { assertEquals(200, it.code) }
+            knockAndApprove(safClient, safBaseUrl, safAuth)
 
             safClient.newCall(Request.Builder().url("$safBaseUrl/api/download/saf-big").build()).execute().use { resp ->
                 assertEquals(200, resp.code)
@@ -590,9 +623,7 @@ class DesktopDropServerEngineTest {
     fun telemetryThrottlingPreventsPerChunkEmissionFloods() {
         val fakeClock = AtomicLong(10_000L)
         val stateChangedCount = AtomicInteger(0)
-        val throttledAuth = SessionAuthManager(clock = { fakeClock.get() }, allowLoopbackForTest = true).apply {
-            requireApproval = false
-        }
+        val throttledAuth = SessionAuthManager(clock = { fakeClock.get() }, allowLoopbackForTest = true)
         val throttledEngine = DesktopDropServerEngine(
             authManager = throttledAuth,
             uploadStore = ResumableUploadStore(File(tempRoot, "t-parts").apply { mkdirs() }, clock = { fakeClock.get() }),
@@ -607,12 +638,7 @@ class DesktopDropServerEngineTest {
         val (client, _) = clientWithJar()
         try {
             val port = runBlocking { throttledEngine.start("127.0.0.1", 0) }
-            client.newCall(
-                Request.Builder()
-                    .url("http://127.0.0.1:$port/api/auth/request")
-                    .post("""{"token":"${throttledAuth.sessionToken}"}""".toRequestBody("application/json".toMediaType()))
-                    .build(),
-            ).execute().use { assertEquals(200, it.code) }
+            knockAndApprove(client, "http://127.0.0.1:$port", throttledAuth)
 
             val (socket, frames, wsNote) = openTelemetryWebSocket(client, port)
             ws = socket

@@ -2,6 +2,7 @@ package com.drivelift.app.feature.desktopdrop.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropPrefsState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -21,7 +22,7 @@ class DesktopDropPrefs(context: Context) {
 
     private fun readState(): DesktopDropPrefsState = DesktopDropPrefsState(
         preferredPort = prefs.getInt(KEY_PORT, DEFAULT_PORT).coerceIn(1024, 65535),
-        requireApproval = prefs.getBoolean(KEY_REQUIRE_APPROVAL, true),
+        gateMode = readGateMode(),
         idleTimeoutMinutes = prefs.getInt(KEY_IDLE_MINUTES, DEFAULT_IDLE_MINUTES).coerceIn(1, 240),
         destinationTreeUri = prefs.getString(KEY_DEST_URI, null),
         destinationLabel = prefs.getString(KEY_DEST_LABEL, DEFAULT_DEST_LABEL) ?: DEFAULT_DEST_LABEL,
@@ -33,9 +34,13 @@ class DesktopDropPrefs(context: Context) {
         _state.value = _state.value.copy(preferredPort = clamped)
     }
 
-    fun setRequireApproval(required: Boolean) {
-        prefs.edit().putBoolean(KEY_REQUIRE_APPROVAL, required).apply()
-        _state.value = _state.value.copy(requireApproval = required)
+    private fun readGateMode(): BiometricGateMode =
+        BiometricGateMode.entries.firstOrNull { it.name == prefs.getString(KEY_GATE_MODE, null) }
+            ?: BiometricGateMode.APPROVE_EVERY_START
+
+    fun setGateMode(mode: BiometricGateMode) {
+        prefs.edit().putString(KEY_GATE_MODE, mode.name).apply()
+        _state.value = _state.value.copy(gateMode = mode)
     }
 
     fun setIdleTimeoutMinutes(minutes: Int) {
@@ -64,7 +69,7 @@ class DesktopDropPrefs(context: Context) {
     companion object {
         private const val PREFS_NAME = "drivelift_desktop_drop_prefs"
         private const val KEY_PORT = "preferred_port"
-        private const val KEY_REQUIRE_APPROVAL = "require_approval"
+        private const val KEY_GATE_MODE = "biometric_gate_mode"
         private const val KEY_IDLE_MINUTES = "idle_timeout_minutes"
         private const val KEY_DEST_URI = "destination_tree_uri"
         private const val KEY_DEST_LABEL = "destination_label"

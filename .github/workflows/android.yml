@@ -39,7 +39,7 @@ jobs:
         run: ./gradlew testDebugUnitTest -PrecordScreenshots
       - name: Require every screenshot
         run: |
-          expected=233
+          expected=239
           actual=$(ls app/build/outputs/screenshots/*.png 2>/dev/null | wc -l)
           echo "screenshots: $actual of $expected"
           test "$actual" -eq "$expected"
@@ -50,14 +50,14 @@ jobs:
           name: screenshots
           path: app/build/outputs/screenshots/
           if-no-files-found: error
-          retention-days: 14
+          retention-days: 3
       - name: Upload test report
         if: ${{ failure() }}
         uses: actions/upload-artifact@v4
         with:
           name: unit-test-report
           path: app/build/reports/tests/testDebugUnitTest/
-          retention-days: 7
+          retention-days: 3
       - name: Build debug APK
         run: ./gradlew assembleDebug
       - uses: actions/upload-artifact@v4
@@ -65,3 +65,4 @@ jobs:
           name: drivelift-debug-apk
           path: app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+          retention-days: 3

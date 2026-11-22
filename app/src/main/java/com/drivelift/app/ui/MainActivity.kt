@@ -107,11 +107,13 @@ class MainActivity : FragmentActivity() {
     override fun onStart() {
         super.onStart()
         leavingFromRoot = false
+        Graph.get(this).desktopDrop.controller.setAppInForeground(true)
     }
 
     override fun onStop() {
         if (leavingFromRoot) Graph.get(this).lock.lock()
         leavingFromRoot = false
+        Graph.get(this).desktopDrop.controller.setAppInForeground(false)
         super.onStop()
     }
 
@@ -133,6 +135,13 @@ class MainActivity : FragmentActivity() {
         when {
             intent?.getBooleanExtra(Notifications.EXTRA_OPEN_TRANSFERS, false) == true ->
                 vm.tab.value = AppViewModel.TAB_TRANSFERS
+            intent?.getBooleanExtra(
+                com.drivelift.app.feature.desktopdrop.service.DropApprovalNotifier.EXTRA_APPROVE_KNOCK,
+                false,
+            ) == true -> {
+                vm.tab.value = TAB_DESKTOP_DROP
+                Graph.get(this).desktopDrop.controller.requestKnockPrompt()
+            }
             intent?.getBooleanExtra(
                 com.drivelift.app.feature.desktopdrop.service.DesktopDropService.EXTRA_OPEN_DESKTOP_DROP,
                 false,
@@ -168,6 +177,8 @@ fun AppRoot(vm: AppViewModel) {
         }
     }
     LaunchedEffect(Unit) { vm.messages.collect { snackbar.showSnackbar(it) } }
+    // A browser knocking at the Desktop Drop address opens the phone's biometric prompt on any tab.
+    com.drivelift.app.feature.desktopdrop.ui.DropKnockBiometricHost()
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         hasPermission = MediaAccess.hasPermission(context)
         vm.refreshMedia()
