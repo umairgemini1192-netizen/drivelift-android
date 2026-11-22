@@ -5,6 +5,7 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import androidx.glance.appwidget.updateAll
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.cockpit.data.CockpitPreferencesRepository
@@ -13,7 +14,9 @@ import com.drivelift.app.feature.cockpit.hardware.AndroidTorchHardwareBackend
 import com.drivelift.app.feature.cockpit.hardware.CockpitTorchController
 import com.drivelift.app.feature.cockpit.notifications.CockpitNotificationListener
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetryAdapter
+import com.drivelift.app.feature.cockpit.overlay.CockpitAccessibilityService
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
+import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -24,7 +27,7 @@ import kotlinx.coroutines.launch
 
 /**
  * Self-contained Cockpit module wiring preferences, pinned launcher apps, 2-slot live activity
- * coordinator, read-only DriveLift telemetry, hardware flashlight, and overlay service control.
+ * coordinator, read-only DriveLift telemetry, hardware flashlight, overlay services, and widget sync.
  */
 class CockpitModule(
     private val app: Application,
@@ -75,18 +78,46 @@ class CockpitModule(
     }
 
     fun setDynamicIslandEnabled(enabled: Boolean): Boolean {
-        if (enabled && !hasOverlayPermission()) {
+        if (enabled && !hasAnyOverlayPermission()) {
             prefsRepo.setMasterEnabledAsync(false)
+            coordinator.setExpanded(false)
+            syncOverlayService(false)
+            refreshWidgetsAsync()
             return false
         }
         prefsRepo.setMasterEnabledAsync(enabled)
+        if (!enabled) coordinator.setExpanded(false)
         syncOverlayService(enabled)
+        refreshWidgetsAsync()
         return true
     }
 
-    fun syncOverlayService(enabled: Boolean = prefsRepo.state.value.masterEnabled) {
+    suspend fun setDynamicIslandEnabledAndSync(enabled: Boolean): Boolean {
+        if (enabled && !hasAnyOverlayPermission()) {
+            prefsRepo.setMasterEnabled(false)
+            coordinator.setExpanded(false)
+            syncOverlayService(false)
+            runCatching { CockpitGlanceWidget().updateAll(app) }
+            return false
+        }
+        prefsRepo.setMasterEnabled(enabled)
+        if (!enabled) coordinator.setExpanded(false)
+        syncOverlayService(enabled)
+        runCatching { CockpitGlanceWidget().updateAll(app) }
+        return true
+    }
+
+    fun syncOverlayService(enabled: Boolean = prefsRepo.isMasterEnabledMirrored()) {
+        val effectiveEnabled = enabled && prefsRepo.isMasterEnabledMirrored()
+        CockpitAccessibilityService.syncActiveOverlay(effectiveEnabled)
+
+        val shouldFallback = CockpitOverlayService.shouldMountFallbackOverlay(
+            masterEnabled = effectiveEnabled,
+            hasOverlayPermission = hasOverlayPermission(),
+            accessibilityOverlayActive = CockpitAccessibilityService.isRunning() || hasAccessibilityOverlay(),
+        )
         val intent = Intent(app, CockpitOverlayService::class.java)
-        if (enabled && hasOverlayPermission()) {
+        if (shouldFallback) {
             intent.action = CockpitOverlayService.ACTION_START
             if (Build.VERSION.SDK_INT >= 26) {
                 runCatching { app.startForegroundService(intent) }
@@ -99,9 +130,19 @@ class CockpitModule(
         }
     }
 
+    private fun refreshWidgetsAsync() {
+        scope.launch(Dispatchers.Default) {
+            runCatching { CockpitGlanceWidget().updateAll(app) }
+        }
+    }
+
+    fun hasAccessibilityOverlay(): Boolean = CockpitAccessibilityService.isServiceEnabled(app)
+
     fun hasOverlayPermission(): Boolean = runCatching {
         Settings.canDrawOverlays(app)
     }.getOrDefault(false)
+
+    fun hasAnyOverlayPermission(): Boolean = hasAccessibilityOverlay() || hasOverlayPermission()
 
     fun hasNotificationAccess(): Boolean =
         CockpitNotificationListener.isPermissionGranted(app)

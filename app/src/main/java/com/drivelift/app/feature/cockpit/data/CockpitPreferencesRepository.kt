@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import java.io.File
@@ -50,6 +51,8 @@ data class CockpitPrefsState(
 /**
  * Isolated Preferences DataStore (`cockpit_prefs`) for all Cockpit settings, activity toggles,
  * punch-hole cutout calibration offsets, and ordered pinned launcher package names.
+ * Uses an app-private synchronous mirror only for `master_enabled` so cold-started services and
+ * widget callbacks never observe a stale default before DataStore finishes loading on IO.
  * Never touches Room `AppDatabase`.
  */
 class CockpitPreferencesRepository(
@@ -57,12 +60,24 @@ class CockpitPreferencesRepository(
     produceFile: () -> File = { context.applicationContext.preferencesDataStoreFile(STORE_NAME) },
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.IO),
 ) {
+    private val mirrorPrefs = context.applicationContext.getSharedPreferences(
+        SYNC_MIRROR_PREFS,
+        Context.MODE_PRIVATE,
+    )
+
     private val dataStore: DataStore<Preferences> = PreferenceDataStoreFactory.create(
         produceFile = produceFile,
         scope = scope,
     )
 
-    private val _state = MutableStateFlow(CockpitPrefsState())
+    @Volatile
+    private var explicitMasterWrite: Boolean? = null
+
+    private val _state = MutableStateFlow(
+        CockpitPrefsState(
+            masterEnabled = mirrorPrefs.getBoolean(KEY_MIRROR_MASTER_ENABLED, false),
+        ),
+    )
     val state: StateFlow<CockpitPrefsState> = _state.asStateFlow()
 
     init {
@@ -74,18 +89,47 @@ class CockpitPreferencesRepository(
                 }
                 .map(::fromPreferences)
                 .collect { loaded ->
-                    _state.value = loaded
+                    val override = explicitMasterWrite
+                    val resolvedMaster = override ?: loaded.masterEnabled
+                    mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, resolvedMaster).apply()
+                    _state.value = loaded.copy(masterEnabled = resolvedMaster)
                 }
         }
     }
 
+    /**
+     * Reads the persisted `masterEnabled` flag synchronously or from DataStore so widget actions
+     * on cold start always toggle against the true stored state.
+     */
+    suspend fun readCurrentMasterEnabled(): Boolean {
+        explicitMasterWrite?.let { return it }
+        if (mirrorPrefs.contains(KEY_MIRROR_MASTER_ENABLED)) {
+            return mirrorPrefs.getBoolean(KEY_MIRROR_MASTER_ENABLED, false)
+        }
+        val persisted = runCatching {
+            dataStore.data.first()[KEY_MASTER_ENABLED] ?: false
+        }.getOrDefault(false)
+        mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, persisted).apply()
+        return persisted
+    }
+
+    fun isMasterEnabledMirrored(): Boolean =
+        explicitMasterWrite ?: mirrorPrefs.getBoolean(KEY_MIRROR_MASTER_ENABLED, _state.value.masterEnabled)
+
     suspend fun setMasterEnabled(enabled: Boolean) {
+        explicitMasterWrite = enabled
+        mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, enabled).commit()
         _state.value = _state.value.copy(masterEnabled = enabled)
         dataStore.edit { prefs -> prefs[KEY_MASTER_ENABLED] = enabled }
     }
 
     fun setMasterEnabledAsync(enabled: Boolean) {
-        scope.launch { setMasterEnabled(enabled) }
+        explicitMasterWrite = enabled
+        mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, enabled).apply()
+        _state.value = _state.value.copy(masterEnabled = enabled)
+        scope.launch {
+            dataStore.edit { prefs -> prefs[KEY_MASTER_ENABLED] = enabled }
+        }
     }
 
     suspend fun setActivityEnabled(category: CockpitActivityCategory, enabled: Boolean) {
@@ -152,6 +196,8 @@ class CockpitPreferencesRepository(
     }
 
     fun seedForTest(state: CockpitPrefsState) {
+        explicitMasterWrite = state.masterEnabled
+        mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, state.masterEnabled).commit()
         _state.value = state
     }
 
@@ -163,8 +209,13 @@ class CockpitPreferencesRepository(
             .filter { it.isNotEmpty() }
             .distinct()
             .take(MAX_PINNED_APPS)
+        val storedMaster = if (prefs.contains(KEY_MASTER_ENABLED)) {
+            prefs[KEY_MASTER_ENABLED] ?: false
+        } else {
+            mirrorPrefs.getBoolean(KEY_MIRROR_MASTER_ENABLED, false)
+        }
         return CockpitPrefsState(
-            masterEnabled = prefs[KEY_MASTER_ENABLED] ?: false,
+            masterEnabled = storedMaster,
             transfersEnabled = prefs[KEY_TRANSFERS_ENABLED] ?: true,
             timersEnabled = prefs[KEY_TIMERS_ENABLED] ?: true,
             mapsEnabled = prefs[KEY_MAPS_ENABLED] ?: true,
@@ -178,6 +229,8 @@ class CockpitPreferencesRepository(
 
     companion object {
         const val STORE_NAME = "cockpit_prefs"
+        private const val SYNC_MIRROR_PREFS = "cockpit_prefs_sync"
+        private const val KEY_MIRROR_MASTER_ENABLED = "master_enabled"
         const val MIN_OFFSET_X = -40
         const val MAX_OFFSET_X = 40
         const val MIN_OFFSET_Y = -24

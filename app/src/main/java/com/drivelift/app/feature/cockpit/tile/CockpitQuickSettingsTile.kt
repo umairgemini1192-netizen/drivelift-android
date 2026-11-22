@@ -23,7 +23,7 @@ class CockpitQuickSettingsTile : TileService() {
     override fun onClick() {
         super.onClick()
         val cockpit = Graph.get(applicationContext).cockpit
-        val targetEnabled = !cockpit.prefsRepo.state.value.masterEnabled
+        val targetEnabled = !cockpit.prefsRepo.isMasterEnabledMirrored()
         if (cockpit.setDynamicIslandEnabled(targetEnabled)) {
             refreshTileState()
         } else {
@@ -34,7 +34,7 @@ class CockpitQuickSettingsTile : TileService() {
     private fun refreshTileState() {
         val tile = qsTile ?: return
         val cockpit = Graph.get(applicationContext).cockpit
-        val enabled = cockpit.prefsRepo.state.value.masterEnabled && cockpit.hasOverlayPermission()
+        val enabled = cockpit.prefsRepo.isMasterEnabledMirrored() && cockpit.hasAnyOverlayPermission()
         tile.state = if (enabled) Tile.STATE_ACTIVE else Tile.STATE_INACTIVE
         tile.label = "DriveLift Cockpit"
         if (Build.VERSION.SDK_INT >= 29) {

@@ -93,6 +93,19 @@
         </service>
 
         <service
+            android:name=".feature.cockpit.overlay.CockpitAccessibilityService"
+            android:exported="true"
+            android:label="DriveLift Cockpit Cutout Overlay"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/cockpit_accessibility_service" />
+        </service>
+
+        <service
             android:name=".feature.cockpit.notifications.CockpitNotificationListener"
             android:exported="true"
             android:label="DriveLift Cockpit Live Activities"

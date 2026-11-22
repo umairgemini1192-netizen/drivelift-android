@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import com.drivelift.app.BuildConfig
 
 /*
  * The single source of colour for the app, and the only file that holds raw colour values.
@@ -98,6 +99,25 @@ object GlassPalette {
 
     /** Bottom gradient scrim over media tiles so white captions remain legible. */
     val ThumbScrim = Color(0xCC070A1E)
+
+    // Futuristic Cyber-Glass Bento HUD tokens (shared between Glance widget Canvas renderer and in-app parity preview).
+    val HudShellFill = Color(0xD10B101C)
+    val HudShellDeep = Color(0xE6070A14)
+    val HudAuroraCyan = Color(0x3838BDF8)
+    val HudAuroraViolet = Color(0x2EA596FF)
+    val HudRimTop = Color(0x40FFFFFF)
+    val HudRimBottom = Color(0x0DFFFFFF)
+    val HudTrackRecessed = Color(0x66050811)
+    val HudTrackRing = Color(0x26FFFFFF)
+    val HudTileRecessed = Color(0xA6101628)
+    val HudDockFill = Color(0xBF070B14)
+    val HudEmerald = Color(0xFF34D399)
+    val HudAmber = Color(0xFFFBBF24)
+    val HudCoral = Color(0xFFFF6482)
+    val HudElectricCyan = Color(0xFF38BDF8)
+    val HudVioletBlue = Color(0xFF818CF8)
+    val HudGaugeTextPrimary = Color(0xFFF3F1FF)
+    val HudGaugeLabelMuted = Color(0xFFBDB9DE)
 }
 
 /**
@@ -165,7 +185,7 @@ fun formatDuration(ms: Long): String {
 }
 
 /** Human-readable app version and numeric build code for diagnostics and preview verification. */
-fun appVersionLabel(context: Context): String {
+fun appVersionLabel(context: Context, buildStamp: String = BuildConfig.BUILD_STAMP): String {
     val info = runCatching {
         if (Build.VERSION.SDK_INT >= 33) {
             context.packageManager.getPackageInfo(
@@ -179,5 +199,7 @@ fun appVersionLabel(context: Context): String {
     }.getOrNull()
     val name = info?.versionName?.takeIf { it.isNotBlank() } ?: "1.0.0-preview.10"
     val code = info?.longVersionCode ?: 9L
-    return "DriveLift $name (build $code)"
+    val cleanStamp = buildStamp.trim()
+    val suffix = if (cleanStamp.isNotEmpty()) " \u00B7 $cleanStamp" else ""
+    return "DriveLift $name (build $code$suffix)"
 }
