@@ -20,6 +20,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Insights
 import androidx.compose.material.icons.outlined.Refresh
 import androidx.compose.material3.AlertDialog
@@ -103,6 +104,7 @@ fun StorageScreen(
     onBack: () -> Unit,
     onOpenIntelligence: (() -> Unit)? = null,
     onOpenWhatsAppQuickSender: (() -> Unit)? = null,
+    onOpenCleaner: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val media by vm.media.collectAsStateWithLifecycle()
@@ -154,6 +156,14 @@ fun StorageScreen(
                     }
                 },
                 actions = {
+                    if (onOpenCleaner != null) {
+                        IconButton(
+                            onClick = onOpenCleaner,
+                            modifier = Modifier.testTag("storage-cleaner-entry"),
+                        ) {
+                            Icon(Icons.Outlined.CleaningServices, contentDescription = "Open Storage Cleaner")
+                        }
+                    }
                     if (onOpenWhatsAppQuickSender != null) {
                         IconButton(
                             onClick = onOpenWhatsAppQuickSender,

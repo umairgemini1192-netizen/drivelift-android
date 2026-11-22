@@ -111,6 +111,11 @@ class Graph(app: Application) {
         com.drivelift.app.feature.cockpit.CockpitModule(app, this)
     }
 
+    /** Self-contained Storage Cleaner, Shizuku adapter, and Sleep Mode module. */
+    val cleanerAndSleep: com.drivelift.app.feature.cleaner.CleanerSleepModule by lazy {
+        com.drivelift.app.feature.cleaner.CleanerSleepModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
