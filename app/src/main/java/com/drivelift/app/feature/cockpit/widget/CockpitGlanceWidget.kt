@@ -604,7 +604,8 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                         pinnedApps.take(maxPinned).forEachIndexed { index, app ->
                             if (index > 0) Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
                             val halo = bitmaps.appHalos[app.packageName]
-                            Row(
+                            // Icon above the name so four apps per page keep readable labels.
+                            Column(
                                 modifier = GlanceModifier
                                     .defaultWeight()
                                     .clickable(
@@ -613,7 +614,6 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                                         ),
                                     )
                                     .padding(vertical = Tokens.Tiny),
-                                verticalAlignment = Alignment.Vertical.CenterVertically,
                                 horizontalAlignment = Alignment.CenterHorizontally,
                             ) {
                                 if (halo != null) {
@@ -630,7 +630,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                                         colorFilter = ColorFilter.tint(dropAccent),
                                     )
                                 }
-                                Spacer(GlanceModifier.width(Tokens.Tiny))
+                                Spacer(GlanceModifier.height(Tokens.Stroke))
                                 Text(
                                     text = app.label,
                                     style = TextStyle(

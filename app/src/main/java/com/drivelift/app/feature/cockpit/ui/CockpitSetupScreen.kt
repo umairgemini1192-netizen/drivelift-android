@@ -1541,10 +1541,11 @@ private fun HudPinnedAppDockItem(
             density = density,
         ).asImageBitmap()
     }
-    Row(
+    // Icon above the name so four apps per page keep readable labels instead of ellipses.
+    Column(
         modifier = modifier.padding(horizontal = Tokens.Stroke, vertical = Tokens.Tiny),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Tokens.Stroke),
     ) {
         Box(
             modifier = Modifier.size(CockpitTokens.HudDockIconHaloSize),
@@ -1622,7 +1623,8 @@ internal fun PermissionRow(
     /** Android lists the service as enabled but it is not connected (for example suspended after a crash). */
     needsReenable: Boolean = false,
 ) {
-    val stack = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+    // The re-enable state carries a pill and a full width button, so it always stacks under the text.
+    val stack = needsReenable || LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
 
     val badge: @Composable () -> Unit = {
