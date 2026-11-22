@@ -2,6 +2,7 @@ package com.drivelift.app.feature.cockpit
 
 import com.drivelift.app.feature.cockpit.hardware.CockpitTorchController
 import com.drivelift.app.feature.cockpit.hardware.TorchHardwareBackend
+import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -18,6 +19,8 @@ class CockpitTorchControllerTest {
         private val sdk: Int = 34,
     ) : TorchHardwareBackend {
         val calls = mutableListOf<String>()
+        var onChangedCallback: ((String, Boolean) -> Unit)? = null
+        var onUnavailableCallback: ((String) -> Unit)? = null
 
         override fun findFlashCameraId(): String? = cameraId
         override fun getMaxStrengthLevel(cameraId: String): Int = maxLevel
@@ -30,7 +33,13 @@ class CockpitTorchControllerTest {
             calls.add("turnOnTorchWithStrengthLevel($cameraId,$strengthLevel)")
         }
 
-        override fun registerTorchCallback(onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit) = Unit
+        override fun registerTorchCallback(
+            onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit,
+            onTorchUnavailable: (cameraId: String) -> Unit,
+        ) {
+            onChangedCallback = onTorchChanged
+            onUnavailableCallback = onTorchUnavailable
+        }
     }
 
     @Test
@@ -78,5 +87,33 @@ class CockpitTorchControllerTest {
         controller.toggleTorch()
         assertFalse(controller.state.value.isOn)
         assertTrue(noFlash.calls.isEmpty())
+    }
+
+    @Test
+    fun unavailableCameraCallbackDisablesTorchUntilCameraReleasesFlash() {
+        val backend = FakeTorchBackend(maxLevel = 5, sdk = 34)
+        val controller = CockpitTorchController(backend, CoroutineScope(SupervisorJob() + Dispatchers.Unconfined))
+
+        controller.setTorch(true)
+        assertTrue(controller.state.value.isOn)
+        assertTrue(controller.state.value.available)
+        assertFalse(controller.state.value.cameraInUse)
+
+        // Camera opens and claims flash -> torch unavailable & off, toggles ignored.
+        backend.onUnavailableCallback?.invoke("0")
+        assertFalse(controller.state.value.available)
+        assertFalse(controller.state.value.isOn)
+        assertTrue(controller.state.value.cameraInUse)
+
+        val callCountBefore = backend.calls.size
+        controller.toggleTorch()
+        assertEquals(callCountBefore, backend.calls.size)
+        assertFalse(controller.state.value.isOn)
+
+        // Camera closes and releases flash -> torch becomes available again.
+        backend.onChangedCallback?.invoke("0", false)
+        assertTrue(controller.state.value.available)
+        assertFalse(controller.state.value.cameraInUse)
+        assertEquals(80, TorchUiState(available = true, isOn = true, brightnessLevel = 4, maxLevel = 5).brightnessPercent)
     }
 }

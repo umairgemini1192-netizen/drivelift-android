@@ -20,13 +20,19 @@ import org.robolectric.annotation.GraphicsMode
 class CockpitHudBitmapRendererTest {
 
     @Test
-    fun batteryArcColorFollowsHealthThresholds() {
+    fun batteryArcColorFollowsHealthAndChargingThresholds() {
+        // Updated per Cockpit v2 Pillar 3: <= 20% uses vivid warning red (#FB7185), charging overrides to emerald.
         assertEquals(GlassPalette.HudEmerald, CockpitHudBitmapRenderer.batteryArcColor(100))
         assertEquals(GlassPalette.HudEmerald, CockpitHudBitmapRenderer.batteryArcColor(31))
         assertEquals(GlassPalette.HudAmber, CockpitHudBitmapRenderer.batteryArcColor(30))
-        assertEquals(GlassPalette.HudAmber, CockpitHudBitmapRenderer.batteryArcColor(15))
-        assertEquals(GlassPalette.HudCoral, CockpitHudBitmapRenderer.batteryArcColor(14))
-        assertEquals(GlassPalette.HudCoral, CockpitHudBitmapRenderer.batteryArcColor(1))
+        assertEquals(GlassPalette.HudAmber, CockpitHudBitmapRenderer.batteryArcColor(21))
+        assertEquals(GlassPalette.HudRoseLow, CockpitHudBitmapRenderer.batteryArcColor(20))
+        assertEquals(GlassPalette.HudRoseLow, CockpitHudBitmapRenderer.batteryArcColor(1))
+        assertEquals(GlassPalette.HudEmerald, CockpitHudBitmapRenderer.batteryArcColor(12, isCharging = true))
+
+        assertEquals("CHRG", CockpitHudBitmapRenderer.batterySubLabel(18, isCharging = true))
+        assertEquals("LOW", CockpitHudBitmapRenderer.batterySubLabel(20, isCharging = false))
+        assertEquals("BATT", CockpitHudBitmapRenderer.batterySubLabel(21, isCharging = false))
     }
 
     @Test
@@ -44,37 +50,70 @@ class CockpitHudBitmapRendererTest {
     }
 
     @Test
-    fun arcGaugeBitmapRendersNonEmptyPixelsForBatteryAndRam() {
-        val battBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
+    fun arcGaugeBitmapRendersChargingHaloBoltLowStateAndUsedOverTotalRam() {
+        val normalBatt = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
             sizePx = 128,
             fraction = 0.84f,
             valueText = "84%",
             subLabel = "BATT",
-            accentColor = CockpitHudBitmapRenderer.batteryArcColor(84),
+            accentColor = CockpitHudBitmapRenderer.batteryArcColor(84, isCharging = false),
             density = 2f,
+            isCharging = false,
         )
+        val chargingBatt = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
+            sizePx = 128,
+            fraction = 0.84f,
+            valueText = "84%",
+            subLabel = "CHRG",
+            accentColor = CockpitHudBitmapRenderer.batteryArcColor(84, isCharging = true),
+            density = 2f,
+            isCharging = true,
+        )
+        val lowBatt = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
+            sizePx = 128,
+            fraction = 0.18f,
+            valueText = "18%",
+            subLabel = "LOW",
+            accentColor = CockpitHudBitmapRenderer.batteryArcColor(18, isCharging = false),
+            density = 2f,
+            isCharging = false,
+        )
+        val ramMetric = CockpitHudBitmapRenderer.formatRamHudMetric(
+            availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+            totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+        )
+        assertEquals("10.5/12G", ramMetric.valueText)
+        assertEquals("1.5G FREE", ramMetric.label)
+
         val ramBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
             sizePx = 128,
-            fraction = 0.48f,
-            valueText = "4.8G",
-            subLabel = "RAM",
+            fraction = ramMetric.fraction,
+            valueText = ramMetric.valueText,
+            subLabel = ramMetric.label,
             accentColor = GlassPalette.HudElectricCyan,
             density = 2f,
         )
-        assertEquals(128, battBmp.width)
+        assertEquals(128, normalBatt.width)
+        assertEquals(128, chargingBatt.width)
+        assertEquals(128, lowBatt.width)
         assertEquals(128, ramBmp.width)
-        assertTrue(((battBmp.getPixel(64, 64) ushr 24) and 0xFF) > 0)
+        // Outer halo pixel on charging battery gauge differs from non-charging.
+        assertNotEquals(normalBatt.getPixel(64, 2), chargingBatt.getPixel(64, 2))
+        assertTrue(((lowBmpAlpha(lowBatt)) > 0))
         assertTrue(((ramBmp.getPixel(64, 64) ushr 24) and 0xFF) > 0)
     }
 
+    private fun lowBmpAlpha(bmp: Bitmap): Int = (bmp.getPixel(64, 64) ushr 24) and 0xFF
+
     @Test
-    fun controlTilePlatesVisiblyDifferBetweenActiveAndInactiveStates() {
+    fun controlTilePlatesVisiblyDifferBetweenActiveInactiveAndDisabledStates() {
         val offPlate = CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = 200,
             heightPx = 96,
             active = false,
             accentColor = GlassPalette.HudElectricCyan,
             density = 2f,
+            enabled = true,
         )
         val onPlate = CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = 200,
@@ -82,9 +121,19 @@ class CockpitHudBitmapRendererTest {
             active = true,
             accentColor = GlassPalette.HudElectricCyan,
             density = 2f,
+            enabled = true,
+        )
+        val disabledPlate = CockpitHudBitmapRenderer.renderControlTileBitmap(
+            widthPx = 200,
+            heightPx = 96,
+            active = false,
+            accentColor = GlassPalette.HudAmber,
+            density = 2f,
+            enabled = false,
         )
         assertNotEquals(offPlate.getPixel(100, 48), onPlate.getPixel(100, 48))
         assertNotEquals(offPlate.getPixel(100, 2), onPlate.getPixel(100, 2))
+        assertNotEquals(offPlate.getPixel(100, 48), disabledPlate.getPixel(100, 48))
     }
 
     @Test

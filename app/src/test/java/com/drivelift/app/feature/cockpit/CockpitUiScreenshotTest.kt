@@ -1,6 +1,9 @@
 package com.drivelift.app.feature.cockpit
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Paint
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -15,15 +18,18 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.test.assert
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasAnyAncestor
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.longClick
 import androidx.compose.ui.test.onAllNodesWithTag
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
@@ -40,8 +46,14 @@ import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
+import com.drivelift.app.feature.cockpit.hardware.BluetoothTileState
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
+import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
+import com.drivelift.app.feature.cockpit.hardware.MobileDataTileState
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
+import com.drivelift.app.feature.cockpit.hardware.RingerTileState
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
+import com.drivelift.app.feature.cockpit.hardware.WifiTileState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
@@ -51,7 +63,7 @@ import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
-import com.drivelift.app.feature.cockpit.widget.RamHudMetric
+import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
@@ -61,6 +73,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Rule
 import org.junit.Test
@@ -73,7 +86,9 @@ import org.robolectric.annotation.GraphicsMode
 
 /**
  * Renders the four DriveLift Cockpit UI surfaces across STANDARD, LARGE_FONT (1.5x), and
- * COMPACT (320dp) configurations, recording 12 screenshots under `build/outputs/screenshots/`.
+ * COMPACT (320dp) configurations, recording 12 screenshots under `build/outputs/screenshots/`, plus
+ * interactive tests covering the 5-control quick deck, Torch OFF->ON scrubber reveal, disabled camera
+ * state, and Charging/Low-Battery/Light-Dark widget contrast.
  */
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -92,14 +107,45 @@ class CockpitUiScreenshotTest {
         COMPACT("w320dp-h640dp-xhdpi", 1f),
     }
 
-    private val syntheticPinned = listOf(
-        PinnedAppInfo("com.google.android.apps.maps", "Maps"),
-        PinnedAppInfo("com.whatsapp", "WhatsApp"),
-        PinnedAppInfo("com.google.android.deskclock", "Clock"),
+    private val syntheticPinned by lazy {
+        listOf(
+            PinnedAppInfo("com.alfalah.mobile", "Alfa", iconBitmap = syntheticIconBitmap(0xFF34D399.toInt())),
+            PinnedAppInfo("com.android.chrome", "Chrome", iconBitmap = syntheticIconBitmap(0xFF38BDF8.toInt())),
+            PinnedAppInfo("com.google.android.apps.maps", "Maps", iconBitmap = syntheticIconBitmap(0xFFA596FF.toInt())),
+        )
+    }
+
+    private val syntheticQuickControls = CockpitQuickControlsState(
+        wifi = WifiTileState(
+            isEnabled = true,
+            isConnected = true,
+            ssid = "StormFiber-46B6-5G",
+            hasLocationPermission = true,
+            label = "StormFiber-46B6-5G",
+        ),
+        mobileData = MobileDataTileState(
+            isEnabled = true,
+            hasUsageAccess = true,
+            isLoadingInitial = false,
+            monthlyBytes = (14.2 * 1024 * 1024 * 1024).toLong(),
+            label = "14.2 GB / mo",
+        ),
+        bluetooth = BluetoothTileState(
+            isEnabled = true,
+            hasPermission = true,
+            connectedCount = 2,
+            label = "2 connected",
+        ),
+        ringer = RingerTileState(
+            mode = CockpitRingerMode.NORMAL,
+            hasDndAccess = true,
+            label = "Ringer",
+        ),
     )
 
     private val syntheticTelemetry = DriveLiftTelemetrySummary(
         isDesktopDropRunning = true,
+        isDropAvailable = true,
         connectedPeerName = "Workstation",
         desktopDropSpeedBytesPerSec = 58_000_000L,
         desktopDropActiveCount = 2,
@@ -291,6 +337,7 @@ class CockpitUiScreenshotTest {
                             supportsBrightnessSlider = true,
                             sosActive = false,
                         ),
+                        quickControls = syntheticQuickControls,
                         pinnedApps = syntheticPinned,
                         onCollapse = {},
                         onCycleNext = {},
@@ -311,8 +358,15 @@ class CockpitUiScreenshotTest {
             },
             verify = {
                 compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-quick-deck").assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-tile-wifi").assertHeightIsAtLeast(Tokens.TouchTarget)
+                compose.onNodeWithTag("cockpit-tile-data").assertHeightIsAtLeast(Tokens.TouchTarget)
+                compose.onNodeWithTag("cockpit-tile-bluetooth").assertHeightIsAtLeast(Tokens.TouchTarget)
+                compose.onNodeWithTag("cockpit-tile-ringer").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("cockpit-reply-input").assertExists()
                 compose.onNodeWithTag("cockpit-torch-slider").assertExists()
+                compose.onNodeWithText("80%").assertExists()
+                compose.onNodeWithTag("cockpit-torch-sos").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("cockpit-torch-toggle").assertHeightIsAtLeast(Tokens.TouchTarget)
             },
         )
@@ -320,6 +374,18 @@ class CockpitUiScreenshotTest {
 
     @Test
     fun homeScreenMasterWidgetPreview() {
+        val chargingBattery = BatteryHudMetric(
+            percent = 84,
+            fraction = 0.84f,
+            valueText = "84%",
+            label = "CHRG",
+            isCharging = true,
+            isLow = false,
+        )
+        val ramContext = CockpitHudBitmapRenderer.formatRamHudMetric(
+            availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+            totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+        )
         launchAndAssert(
             name = "cockpit-master-widget",
             content = {
@@ -337,6 +403,8 @@ class CockpitUiScreenshotTest {
                         torchOn = false,
                         islandOn = true,
                         pinnedApps = syntheticPinned,
+                        batteryMetric = chargingBattery,
+                        ramMetric = ramContext,
                     )
                 }
             },
@@ -346,6 +414,8 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("Alarm 06:30 AM").assertExists()
                 compose.onNodeWithText("Rings in 07:14:22").assertExists()
                 compose.onNodeWithText("Drop 55.3 MB/s").assertExists()
+                compose.onNodeWithTag("cockpit-widget-battery-gauge").assertExists()
+                compose.onNodeWithTag("cockpit-widget-ram-gauge").assertExists()
                 compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
                 compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
                 compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
@@ -378,7 +448,12 @@ class CockpitUiScreenshotTest {
                     hasNotifications = false,
                     hasBatteryExemption = true,
                     hasAccessibilityOverlay = false,
+                    hasLocationPermission = false,
+                    hasUsageAccess = false,
+                    hasBluetoothPermission = true,
+                    hasDndAccess = false,
                     onGrantAccessibilityOverlay = {},
+                    quickControls = syntheticQuickControls,
                     launchableApps = syntheticPinned,
                     pinnedApps = syntheticPinned,
                     onBack = {},
@@ -409,8 +484,140 @@ class CockpitUiScreenshotTest {
     }
 
     @Test
+    fun expandedIslandTorchOffShowsIconOnlyAndRevealsLiquidSliderOnTap() {
+        var torchOn by mutableStateOf(false)
+        val slotState = CockpitSlotState(
+            primary = CockpitLiveActivity.IdleQuickDockActivity(),
+            isExpanded = true,
+        )
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            ExpandedCockpitCard(
+                                slotState = slotState,
+                                telemetry = syntheticTelemetry,
+                                torchState = TorchUiState(
+                                    available = true,
+                                    isOn = torchOn,
+                                    brightnessLevel = 4,
+                                    maxLevel = 5,
+                                    supportsBrightnessSlider = true,
+                                    sosActive = false,
+                                ),
+                                quickControls = syntheticQuickControls,
+                                pinnedApps = syntheticPinned,
+                                onCollapse = {},
+                                onCycleNext = {},
+                                onCyclePrevious = {},
+                                onSoftDismiss = {},
+                                onRestoreDismissed = {},
+                                onTapActivity = {},
+                                onStopDesktopDrop = {},
+                                onOpenDriveLiftCockpit = {},
+                                onToggleInlineReply = {},
+                                onSendWhatsAppReply = { _, _ -> },
+                                onToggleTorch = { torchOn = !torchOn },
+                                onTorchBrightnessChange = {},
+                                onToggleTorchSos = {},
+                                onLaunchPinnedApp = {},
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            // 5-Control Quick Deck readouts visible.
+            compose.onNodeWithText("StormFiber-46B6-5G").assertIsDisplayed()
+            compose.onNodeWithText("14.2 GB / mo").assertIsDisplayed()
+            compose.onNodeWithText("2 connected").assertIsDisplayed()
+            compose.onNodeWithText("Ringer").assertIsDisplayed()
+
+            // Torch OFF shows ONLY icon-only Flash button (zero text labels, zero slider, zero SOS).
+            compose.onNodeWithTag("cockpit-torch-toggle").assertHeightIsAtLeast(Tokens.TouchTarget)
+            assertTrue(compose.onAllNodesWithText("Flashlight off", substring = true).fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithText("Level ", substring = true).fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithTag("cockpit-torch-slider").fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithTag("cockpit-torch-sos").fetchSemanticsNodes().isEmpty())
+
+            // Tap icon-only Flash -> Torch ON smoothly reveals liquid-glass slider + % + SOS chip.
+            compose.onNodeWithTag("cockpit-torch-toggle").performClick()
+            pump(12)
+            compose.onNodeWithTag("cockpit-torch-slider").assertIsDisplayed()
+            compose.onNodeWithText("80%").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-torch-sos").assertIsDisplayed()
+
+            // Tap Flash again -> Torch OFF collapses slider & SOS cleanly.
+            compose.onNodeWithTag("cockpit-torch-toggle").performClick()
+            pump(12)
+            assertTrue(compose.onAllNodesWithTag("cockpit-torch-slider").fetchSemanticsNodes().isEmpty())
+            assertTrue(compose.onAllNodesWithTag("cockpit-torch-sos").fetchSemanticsNodes().isEmpty())
+        }
+    }
+
+    @Test
+    fun expandedIslandDisablesTorchWhenCameraBusy() {
+        val slotState = CockpitSlotState(
+            primary = CockpitLiveActivity.IdleQuickDockActivity(),
+            isExpanded = true,
+        )
+        RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
+        RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
+        compose.mainClock.autoAdvance = false
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            ExpandedCockpitCard(
+                                slotState = slotState,
+                                telemetry = syntheticTelemetry,
+                                torchState = TorchUiState(
+                                    available = false,
+                                    isOn = false,
+                                    cameraInUse = true,
+                                ),
+                                quickControls = syntheticQuickControls,
+                                pinnedApps = syntheticPinned,
+                                onCollapse = {},
+                                onCycleNext = {},
+                                onCyclePrevious = {},
+                                onSoftDismiss = {},
+                                onRestoreDismissed = {},
+                                onTapActivity = {},
+                                onStopDesktopDrop = {},
+                                onOpenDriveLiftCockpit = {},
+                                onToggleInlineReply = {},
+                                onSendWhatsAppReply = { _, _ -> },
+                                onToggleTorch = {},
+                                onTorchBrightnessChange = {},
+                                onToggleTorchSos = {},
+                                onLaunchPinnedApp = {},
+                            )
+                        }
+                    }
+                }
+            }
+            pump(8)
+
+            compose.onNodeWithTag("cockpit-torch-toggle").assertIsNotEnabled()
+            assertTrue(compose.onAllNodesWithTag("cockpit-torch-slider").fetchSemanticsNodes().isEmpty())
+        }
+    }
+
+    @Test
     fun collapsedPillTapAndLongPressExpandAndCollapse() {
         var expanded by mutableStateOf(false)
+        var collapseFinishedCount = 0
         val slot = CockpitSlotState(
             primary = CockpitLiveActivity.TimerRecordingActivity(
                 id = "sysrec_1",
@@ -437,11 +644,13 @@ class CockpitUiScreenshotTest {
                                 slotState = slot.copy(isExpanded = expanded),
                                 telemetry = syntheticTelemetry,
                                 torchState = TorchUiState(available = true),
+                                quickControls = syntheticQuickControls,
                                 pinnedApps = syntheticPinned,
                                 onTapPrimary = {},
                                 onTapSecondary = { expanded = true },
                                 onExpand = { expanded = true },
                                 onCollapse = { expanded = false },
+                                onCollapseAnimationFinished = { collapseFinishedCount++ },
                                 onCycleNext = {},
                                 onCyclePrevious = {},
                                 onSoftDismiss = {},
@@ -467,12 +676,14 @@ class CockpitUiScreenshotTest {
                 .performClick()
             pump(18)
             compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
+            compose.onNodeWithText("Screen recording").assertIsDisplayed()
             compose.onNodeWithTag("cockpit-expanded-open-app").assertIsDisplayed()
 
-            // Collapse returns to collapsed pill.
+            // Collapse completes spring morph and invokes onCollapseAnimationFinished callback.
             compose.onNodeWithTag("cockpit-collapse").performClick()
             pump(18)
             compose.onNodeWithTag("cockpit-primary-pill").assertIsDisplayed()
+            assertTrue(collapseFinishedCount >= 1)
 
             // Long-press also expands the card cleanly.
             compose.onNodeWithTag("cockpit-primary-pill").performTouchInput { longClick() }
@@ -485,8 +696,8 @@ class CockpitUiScreenshotTest {
     fun masterWidgetKeepsControlsAndPinnedAppsRowsSeparateOnIslandToggle() {
         var islandOn by mutableStateOf(true)
         val apps = listOf(
-            PinnedAppInfo("com.alfalah.mobile", "Alfa"),
-            PinnedAppInfo("com.android.chrome", "Chrome"),
+            PinnedAppInfo("com.alfalah.mobile", "Alfa", iconBitmap = syntheticIconBitmap(0xFF34D399.toInt())),
+            PinnedAppInfo("com.android.chrome", "Chrome", iconBitmap = syntheticIconBitmap(0xFF38BDF8.toInt())),
         )
         RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
         RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
@@ -523,7 +734,7 @@ class CockpitUiScreenshotTest {
                 hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-pinned-row")),
                 useUnmergedTree = true,
             ).assertIsDisplayed()
-            org.junit.Assert.assertTrue(
+            assertTrue(
                 compose.onAllNodes(
                     hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-controls-row")),
                     useUnmergedTree = true,
@@ -538,7 +749,7 @@ class CockpitUiScreenshotTest {
                 hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-pinned-row")),
                 useUnmergedTree = true,
             ).assertIsDisplayed()
-            org.junit.Assert.assertTrue(
+            assertTrue(
                 compose.onAllNodes(
                     hasText("Alfa") and hasAnyAncestor(hasTestTag("cockpit-widget-controls-row")),
                     useUnmergedTree = true,
@@ -593,7 +804,7 @@ class CockpitUiScreenshotTest {
     }
 
     @Test
-    fun bentoHudRendersInactiveNoAlarmAndToggleTransitionsCleanly() {
+    fun bentoHudRendersLowBatteryDisabledTilesAndLightContrastCleanly() {
         var dropOn by mutableStateOf(false)
         var torchOn by mutableStateOf(false)
         var islandOn by mutableStateOf(false)
@@ -605,6 +816,18 @@ class CockpitUiScreenshotTest {
             countdownText = "No alarm set",
             triggerAtMillis = null,
         )
+        val lowBattery = BatteryHudMetric(
+            percent = 18,
+            fraction = 0.18f,
+            valueText = "18%",
+            label = "LOW",
+            isCharging = false,
+            isLow = true,
+        )
+        val ramMetric = CockpitHudBitmapRenderer.formatRamHudMetric(
+            availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
+            totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+        )
         RuntimeEnvironment.setQualifiers(Variant.STANDARD.qualifiers)
         RuntimeEnvironment.setFontScale(Variant.STANDARD.fontScale)
         compose.mainClock.autoAdvance = false
@@ -615,25 +838,49 @@ class CockpitUiScreenshotTest {
                 activity.setContent {
                     DriveLiftTheme {
                         GlassBackdrop {
-                            CockpitMasterWidgetCard(
-                                clockTimeLabel = "08:00 AM",
-                                clockDateLabel = "Sun, Nov 22",
-                                alarm = noAlarm,
-                                telemetry = DriveLiftTelemetrySummary(
-                                    isDesktopDropRunning = dropOn,
-                                    statusHeadline = if (dropOn) "Drop 42.0 MB/s" else "Ready",
-                                ),
-                                freeStorageLabel = "118 GB free",
-                                batteryLabel = "22% batt",
-                                torchOn = torchOn,
-                                islandOn = islandOn,
-                                pinnedApps = syntheticPinned,
-                                batteryMetric = BatteryHudMetric(22, 0.22f, "22%"),
-                                ramMetric = RamHudMetric(4.8, 0.48f, "4.8G"),
-                                onToggleDrop = { dropOn = !dropOn },
-                                onToggleTorch = { torchOn = !torchOn },
-                                onToggleIsland = { islandOn = !islandOn },
-                            )
+                            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Medium)) {
+                                // Light wallpaper contrast + disabled Torch/Drop state.
+                                CockpitMasterWidgetCard(
+                                    clockTimeLabel = "08:00 AM",
+                                    clockDateLabel = "Sun, Nov 22",
+                                    alarm = noAlarm,
+                                    telemetry = DriveLiftTelemetrySummary(
+                                        isDesktopDropRunning = false,
+                                        isDropAvailable = false,
+                                        statusHeadline = "Ready",
+                                    ),
+                                    freeStorageLabel = "118 GB free",
+                                    batteryLabel = "18% batt",
+                                    torchOn = false,
+                                    islandOn = false,
+                                    pinnedApps = syntheticPinned,
+                                    torchAvailable = false,
+                                    dropAvailable = false,
+                                    batteryMetric = lowBattery,
+                                    ramMetric = ramMetric,
+                                    wallpaperGradientColors = listOf(Color(0xFFE8EAF0), Color(0xFFD0D6E4)),
+                                )
+                                // Dark wallpaper contrast + interactive active toggles.
+                                CockpitMasterWidgetCard(
+                                    clockTimeLabel = "08:00 AM",
+                                    clockDateLabel = "Sun, Nov 22",
+                                    alarm = syntheticAlarm,
+                                    telemetry = DriveLiftTelemetrySummary(
+                                        isDesktopDropRunning = dropOn,
+                                        statusHeadline = if (dropOn) "Drop 42.0 MB/s" else "Ready",
+                                    ),
+                                    freeStorageLabel = "118 GB free",
+                                    batteryLabel = "84% batt",
+                                    torchOn = torchOn,
+                                    islandOn = islandOn,
+                                    pinnedApps = syntheticPinned,
+                                    batteryMetric = BatteryHudMetric(84, 0.84f, "84%", "CHRG", isCharging = true),
+                                    ramMetric = ramMetric,
+                                    onToggleDrop = { dropOn = !dropOn },
+                                    onToggleTorch = { torchOn = !torchOn },
+                                    onToggleIsland = { islandOn = !islandOn },
+                                )
+                            }
                         }
                     }
                 }
@@ -641,27 +888,38 @@ class CockpitUiScreenshotTest {
             pump(8)
 
             compose.onNodeWithText("No alarm set").assertIsDisplayed()
-            compose.onNodeWithText("Ready").assertIsDisplayed()
-            compose.onNodeWithTag("cockpit-widget-toggle-drop")
+            compose.onNodeWithText("Cam Busy").assertIsDisplayed()
+            compose.onNodeWithText("No Wi-Fi").assertIsDisplayed()
+            compose.onAllNodesWithText("READY")[0].assertIsDisplayed()
+            compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[0].assertIsNotEnabled()
+            compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[0].assertIsNotEnabled()
+
+            compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1]
                 .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
                 .assert(hasText("Drop"))
                 .performClick()
-            compose.onNodeWithTag("cockpit-widget-toggle-torch")
+            compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1]
                 .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
                 .assert(hasText("Torch"))
                 .performClick()
-            compose.onNodeWithTag("cockpit-widget-toggle-island")
+            compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1]
                 .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
                 .assert(hasText("Island"))
                 .performClick()
             pump(8)
 
             compose.onNodeWithText("Drop 42.0 MB/s").assertIsDisplayed()
-            compose.onNodeWithTag("cockpit-widget-toggle-drop").assert(hasText("Drop On"))
-            compose.onNodeWithTag("cockpit-widget-toggle-torch").assert(hasText("Torch On"))
-            compose.onNodeWithTag("cockpit-widget-toggle-island").assert(hasText("Island On"))
+            compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1].assert(hasText("Drop On"))
+            compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1].assert(hasText("Torch On"))
+            compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1].assert(hasText("Island On"))
         }
     }
+
+    private fun syntheticIconBitmap(argb: Int): Bitmap =
+        Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
+            val canvas = Canvas(this)
+            canvas.drawCircle(24f, 24f, 20f, Paint(Paint.ANTI_ALIAS_FLAG).apply { color = argb })
+        }
 
     companion object {
         private const val FIXED_TIME_MS = 1_795_284_900_000L

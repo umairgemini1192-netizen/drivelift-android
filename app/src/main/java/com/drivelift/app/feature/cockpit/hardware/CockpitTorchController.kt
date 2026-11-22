@@ -16,6 +16,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 data class TorchUiState(
     val available: Boolean = false,
@@ -24,7 +25,16 @@ data class TorchUiState(
     val maxLevel: Int = 1,
     val supportsBrightnessSlider: Boolean = false,
     val sosActive: Boolean = false,
-)
+    val cameraInUse: Boolean = false,
+) {
+    val brightnessPercent: Int
+        get() = when {
+            maxLevel <= 1 -> if (isOn) 100 else 0
+            else -> ((brightnessLevel.toFloat() / maxLevel.toFloat()) * 100f)
+                .roundToInt()
+                .coerceIn(1, 100)
+        }
+}
 
 interface TorchHardwareBackend {
     fun findFlashCameraId(): String?
@@ -32,7 +42,10 @@ interface TorchHardwareBackend {
     fun sdkInt(): Int
     fun setTorchMode(cameraId: String, enabled: Boolean)
     fun turnOnTorchWithStrengthLevel(cameraId: String, strengthLevel: Int)
-    fun registerTorchCallback(onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit)
+    fun registerTorchCallback(
+        onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit,
+        onTorchUnavailable: (cameraId: String) -> Unit = {},
+    )
 }
 
 class AndroidTorchHardwareBackend(context: Context) : TorchHardwareBackend {
@@ -79,13 +92,20 @@ class AndroidTorchHardwareBackend(context: Context) : TorchHardwareBackend {
         }
     }
 
-    override fun registerTorchCallback(onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit) {
+    override fun registerTorchCallback(
+        onTorchChanged: (cameraId: String, enabled: Boolean) -> Unit,
+        onTorchUnavailable: (cameraId: String) -> Unit,
+    ) {
         val manager = cameraManager ?: return
         runCatching {
             manager.registerTorchCallback(
                 object : CameraManager.TorchCallback() {
                     override fun onTorchModeChanged(cameraId: String, enabled: Boolean) {
                         onTorchChanged(cameraId, enabled)
+                    }
+
+                    override fun onTorchModeUnavailable(cameraId: String) {
+                        onTorchUnavailable(cameraId)
                     }
                 },
                 mainHandler,
@@ -97,7 +117,7 @@ class AndroidTorchHardwareBackend(context: Context) : TorchHardwareBackend {
 /**
  * Hardware Flashlight controller using CameraManager (`FLASH_INFO_STRENGTH_MAXIMUM_LEVEL` +
  * `turnOnTorchWithStrengthLevel` on API 33+, requiring no camera permission) with graceful
- * fallback to `setTorchMode` when `maxLevel <= 1` or API < 33, plus an optional SOS strobe loop.
+ * fallback to `setTorchMode`, unavailable state tracking (`onTorchModeUnavailable`), and SOS strobe.
  */
 class CockpitTorchController(
     private val backend: TorchHardwareBackend,
@@ -116,6 +136,7 @@ class CockpitTorchController(
             maxLevel = maxLevel,
             supportsBrightnessSlider = supportsStrength,
             sosActive = false,
+            cameraInUse = false,
         ),
     )
     val state: StateFlow<TorchUiState> = _state.asStateFlow()
@@ -124,11 +145,29 @@ class CockpitTorchController(
 
     init {
         if (cameraId != null) {
-            backend.registerTorchCallback { changedId, enabled ->
-                if (changedId == cameraId && !_state.value.sosActive) {
-                    _state.value = _state.value.copy(isOn = enabled)
-                }
-            }
+            backend.registerTorchCallback(
+                onTorchChanged = { changedId, enabled ->
+                    if (changedId == cameraId) {
+                        val current = _state.value
+                        _state.value = current.copy(
+                            available = true,
+                            cameraInUse = false,
+                            isOn = if (current.sosActive) current.isOn else enabled,
+                        )
+                    }
+                },
+                onTorchUnavailable = { unavailableId ->
+                    if (unavailableId == cameraId) {
+                        stopSosInternal()
+                        _state.value = _state.value.copy(
+                            available = false,
+                            isOn = false,
+                            sosActive = false,
+                            cameraInUse = true,
+                        )
+                    }
+                },
+            )
         }
     }
 
@@ -138,6 +177,7 @@ class CockpitTorchController(
 
     fun setTorch(enabled: Boolean) {
         val id = cameraId ?: return
+        if (!_state.value.available) return
         stopSosInternal()
         if (enabled) {
             val level = _state.value.brightnessLevel.coerceIn(1, maxLevel)
@@ -151,6 +191,7 @@ class CockpitTorchController(
 
     fun setBrightnessLevel(requestedLevel: Int) {
         val id = cameraId ?: return
+        if (!_state.value.available) return
         val clamped = requestedLevel.coerceIn(1, maxLevel)
         stopSosInternal()
         applyHardwareOn(id, clamped)
@@ -163,6 +204,7 @@ class CockpitTorchController(
 
     fun setSosEnabled(enabled: Boolean) {
         val id = cameraId ?: return
+        if (!_state.value.available) return
         stopSosInternal()
         if (!enabled) {
             backend.setTorchMode(id, false)

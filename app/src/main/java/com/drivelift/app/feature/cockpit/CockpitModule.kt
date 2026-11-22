@@ -11,6 +11,8 @@ import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.cockpit.data.CockpitPreferencesRepository
 import com.drivelift.app.feature.cockpit.data.PinnedAppsRepository
 import com.drivelift.app.feature.cockpit.hardware.AndroidTorchHardwareBackend
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsController
+import com.drivelift.app.feature.cockpit.hardware.CockpitTelemetryMonitor
 import com.drivelift.app.feature.cockpit.hardware.CockpitTorchController
 import com.drivelift.app.feature.cockpit.notifications.CockpitNotificationListener
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetryAdapter
@@ -55,6 +57,17 @@ class CockpitModule(
 
     val torchController: CockpitTorchController by lazy {
         CockpitTorchController(AndroidTorchHardwareBackend(app))
+    }
+
+    val quickControlsController: CockpitQuickControlsController by lazy {
+        CockpitQuickControlsController(
+            context = app,
+            clock = graph.clock,
+        )
+    }
+
+    val telemetryMonitor: CockpitTelemetryMonitor by lazy {
+        CockpitTelemetryMonitor(context = app)
     }
 
     val telemetryAdapter: DriveLiftTelemetryAdapter by lazy {

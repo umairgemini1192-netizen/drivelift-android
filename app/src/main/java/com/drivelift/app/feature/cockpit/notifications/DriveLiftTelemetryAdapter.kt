@@ -20,6 +20,7 @@ import kotlinx.coroutines.launch
 
 data class DriveLiftTelemetrySummary(
     val isDesktopDropRunning: Boolean = false,
+    val isDropAvailable: Boolean = true,
     val connectedPeerName: String? = null,
     val desktopDropSpeedBytesPerSec: Long = 0L,
     val desktopDropActiveCount: Int = 0,
@@ -105,8 +106,12 @@ class DriveLiftTelemetryAdapter(
             else ->
                 "Ready"
         }
+        val dropAvailable = dropRunning ||
+            dropSnap.mode == com.drivelift.app.feature.desktopdrop.model.ConnectivityMode.DIRECT_HOTSPOT ||
+            dropSnap.status != ServerStatus.ERROR
         return DriveLiftTelemetrySummary(
             isDesktopDropRunning = dropRunning,
+            isDropAvailable = dropAvailable,
             connectedPeerName = peerName,
             desktopDropSpeedBytesPerSec = dropSnap.aggregateSpeedBytesPerSec,
             desktopDropActiveCount = dropSnap.activeTransferCount,
