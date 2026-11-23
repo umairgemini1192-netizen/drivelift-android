@@ -12,6 +12,7 @@ import com.drivelift.app.feature.cockpit.hardware.TelemetryHudSnapshot
 import com.drivelift.app.feature.cockpit.overlay.CockpitWindowBoundsCoordinator
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
+import com.drivelift.app.feature.cockpit.widget.CockpitWidgetModel
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.test.StandardTestDispatcher
 import kotlinx.coroutines.test.TestScope
@@ -139,6 +140,31 @@ class CockpitWindowOrderAndTelemetryTest {
             CockpitTelemetryMonitor.shouldPushWidgetUpdate(
                 base,
                 base.copy(battery = base.battery.copy(isCharging = true, label = "CHRG")),
+            ),
+        )
+
+        // Charge counter (mAh) delta >= 5 mAh triggers push; smaller drift does not.
+        val withCharge = base.copy(
+            battery = base.battery.copy(charge = CockpitWidgetModel.formatBatteryCharge(4_000_000L)),
+        )
+        assertFalse(
+            CockpitTelemetryMonitor.shouldPushWidgetUpdate(
+                withCharge,
+                withCharge.copy(
+                    battery = withCharge.battery.copy(
+                        charge = CockpitWidgetModel.formatBatteryCharge(4_002_000L),
+                    ),
+                ),
+            ),
+        )
+        assertTrue(
+            CockpitTelemetryMonitor.shouldPushWidgetUpdate(
+                withCharge,
+                withCharge.copy(
+                    battery = withCharge.battery.copy(
+                        charge = CockpitWidgetModel.formatBatteryCharge(4_010_000L),
+                    ),
+                ),
             ),
         )
     }

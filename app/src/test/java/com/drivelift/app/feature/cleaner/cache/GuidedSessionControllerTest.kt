@@ -86,4 +86,52 @@ class GuidedSessionControllerTest {
         assertEquals(listOf("com.example.alpha"), report.sleptPackages)
         assertEquals(listOf("com.example.beta"), report.cancelledPackages)
     }
+
+    @Test
+    fun guidedSleepAutoSkipsAlreadyStoppedAppsOnStartAndAdvance() {
+        var now = 5_000L
+        val stoppedPackages = setOf("com.example.stopped1", "com.example.stopped2")
+        val controller = GuidedSessionController(
+            nowMs = { now.also { now += 1_000L } },
+            isAppAlreadyStopped = { it in stoppedPackages },
+        )
+
+        fun candidate(pkg: String, label: String) = AppDrainCandidate(
+            packageName = pkg,
+            appLabel = label,
+            drainScore = 70,
+            backgroundTimeMs = 30 * 60_000L,
+            lastTimeUsedMs = 1_000L,
+            standbyBucket = StandbyBucket.ACTIVE,
+            isRunningInBackground = pkg !in stoppedPackages,
+            reasons = listOf("Background activity"),
+        )
+
+        val first = controller.startGuidedSleep(
+            sessionId = "sess-auto-skip",
+            candidates = listOf(
+                candidate("com.example.stopped1", "Stopped One"),
+                candidate("com.example.active1", "Active One"),
+                candidate("com.example.stopped2", "Stopped Two"),
+                candidate("com.example.active2", "Active Two"),
+            ),
+        )
+        assertNotNull(first)
+        assertEquals("com.example.active1", first!!.currentPackageName)
+        assertEquals(1, first.skippedCount)
+
+        val second = controller.confirmCurrentStep()
+        assertNotNull(second)
+        assertEquals("com.example.active2", second!!.currentPackageName)
+        assertEquals(1, second.completedCount)
+        assertEquals(2, second.skippedCount)
+
+        val finished = controller.confirmCurrentStep()
+        assertNull(finished)
+        val report = controller.lastSleepReport
+        assertNotNull(report)
+        assertEquals(SleepSessionPhase.COMPLETED, report!!.finalPhase)
+        assertEquals(listOf("com.example.active1", "com.example.active2"), report.sleptPackages)
+        assertEquals(listOf("com.example.stopped1", "com.example.stopped2"), report.skippedPackages)
+    }
 }

@@ -124,6 +124,7 @@ import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.AccessibilityHealth
 import com.drivelift.app.feature.cockpit.overlay.CockpitAccessibilityService
+import com.drivelift.app.feature.cockpit.widget.BatteryChargeReading
 import com.drivelift.app.feature.cockpit.widget.BatteryCurrentReading
 import com.drivelift.app.feature.cockpit.widget.BatteryCurrentTone
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
@@ -1116,7 +1117,10 @@ fun CockpitMasterWidgetCard(
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
-                                BatteryCurrentLabel(batteryMetric.current)
+                                BatteryCurrentLabel(
+                                    reading = batteryMetric.current,
+                                    charge = batteryMetric.charge,
+                                )
                                 }
                                 Image(
                                     bitmap = ramGaugeBitmap,
@@ -1467,24 +1471,42 @@ private fun AlarmBadgeBlock(
 }
 
 @Composable
-private fun BatteryCurrentLabel(reading: BatteryCurrentReading) {
+private fun BatteryCurrentLabel(
+    reading: BatteryCurrentReading,
+    charge: BatteryChargeReading = CockpitWidgetModel.unknownCharge(),
+) {
     val color = when (reading.tone) {
         BatteryCurrentTone.CHARGING -> GlassPalette.HudEmerald
         BatteryCurrentTone.DISCHARGING -> GlassPalette.HudAmber
         BatteryCurrentTone.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
-    Text(
-        text = reading.text,
-        style = MaterialTheme.typography.labelSmall.copy(
-            fontWeight = FontWeight.Bold,
-            fontFeatureSettings = "tnum",
-        ),
-        color = color,
-        maxLines = 1,
-        modifier = Modifier
-            .testTag("cockpit-widget-battery-current")
-            .semantics { contentDescription = "Battery current ${reading.text}" },
-    )
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = reading.text,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = "tnum",
+            ),
+            color = color,
+            maxLines = 1,
+            modifier = Modifier
+                .testTag("cockpit-widget-battery-current")
+                .semantics { contentDescription = "Battery current ${reading.text}" },
+        )
+        if (charge.milliAmpHours != null) {
+            Text(
+                text = charge.text,
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontFeatureSettings = "tnum",
+                ),
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                modifier = Modifier
+                    .testTag("cockpit-widget-battery-charge")
+                    .semantics { contentDescription = "Battery charge ${charge.text}" },
+            )
+        }
+    }
 }
 
 @Composable

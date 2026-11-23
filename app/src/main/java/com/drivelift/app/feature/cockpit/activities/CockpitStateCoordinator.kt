@@ -1,9 +1,13 @@
 package com.drivelift.app.feature.cockpit.activities
 
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
 
 /**
  * Arbitrates simultaneous live activities for the Dynamic Island:
@@ -17,10 +21,14 @@ import kotlinx.coroutines.flow.asStateFlow
  * An incoming call expands the island on arrival and collapses it again once it connects or ends.
  * Soft-dismiss never touches the source notification.
  */
-class CockpitStateCoordinator {
+class CockpitStateCoordinator(
+    private val scope: CoroutineScope? = null,
+    private val emptyStateDebounceMs: Long = EMPTY_STATE_DEBOUNCE_MS,
+) {
     private val lock = Any()
     private val activitiesById = LinkedHashMap<String, CockpitLiveActivity>()
     private val softDismissedIds = LinkedHashSet<String>()
+    private val pendingEmptyRemovalIds = LinkedHashSet<String>()
     private var currentPrefs = CockpitPrefsState()
     private var manualFocusId: String? = null
     private var restoreFocusId: String? = null
@@ -28,10 +36,54 @@ class CockpitStateCoordinator {
     private var pendingSwapDirection = 0
     private var expanded = false
     private var inlineReplyOpen = false
+    private var autoCollapseJob: Job? = null
+    private var emptyDebounceJob: Job? = null
     private val tripTracker = NavigationTripTracker()
 
     private val _slotState = MutableStateFlow(CockpitSlotState())
     val slotState: StateFlow<CockpitSlotState> = _slotState.asStateFlow()
+
+    /** Cancels any pending auto-collapse timer when the user touches or interacts with the Island. */
+    fun onUserInteraction() {
+        synchronized(lock) {
+            cancelAutoCollapseLocked()
+        }
+    }
+
+    /** Schedules an automatic collapse after [delayMs]; cancelled by any touch, expansion, or update. */
+    fun scheduleAutoCollapse(delayMs: Long) {
+        synchronized(lock) {
+            cancelAutoCollapseLocked()
+            val activeScope = scope ?: return
+            if (delayMs <= 0L || !expanded || inlineReplyOpen) return
+            autoCollapseJob = activeScope.launch {
+                delay(delayMs)
+                synchronized(lock) {
+                    autoCollapseJob = null
+                    if (expanded && !inlineReplyOpen) {
+                        expanded = false
+                        inlineReplyOpen = false
+                        recomputeLocked()
+                    }
+                }
+            }
+        }
+    }
+
+    /** Cancels any pending auto-collapse coroutine timer immediately. */
+    fun cancelAutoCollapse() {
+        synchronized(lock) {
+            cancelAutoCollapseLocked()
+        }
+    }
+
+    internal fun hasPendingAutoCollapseForTest(): Boolean = synchronized(lock) {
+        autoCollapseJob?.isActive == true
+    }
+
+    internal fun hasPendingEmptyDebounceForTest(): Boolean = synchronized(lock) {
+        emptyDebounceJob?.isActive == true
+    }
 
     fun applyPrefs(prefs: CockpitPrefsState) {
         synchronized(lock) {
@@ -43,6 +95,14 @@ class CockpitStateCoordinator {
     fun upsertActivity(incoming: CockpitLiveActivity) {
         if (incoming is CockpitLiveActivity.IdleQuickDockActivity) return
         synchronized(lock) {
+            cancelAutoCollapseLocked()
+            if (pendingEmptyRemovalIds.isNotEmpty()) {
+                val staleIds = pendingEmptyRemovalIds.filterNot { it == incoming.id }
+                cancelEmptyDebounceLocked()
+                if (staleIds.isNotEmpty()) {
+                    removeIdsLocked(staleIds)
+                }
+            }
             val activity = if (incoming is CockpitLiveActivity.MapsNavActivity) withTripProgress(incoming) else incoming
             val previous = activitiesById[activity.id]
             val isNew = previous == null
@@ -71,8 +131,7 @@ class CockpitStateCoordinator {
 
     fun removeActivity(id: String) {
         synchronized(lock) {
-            removeIdsLocked(listOf(id))
-            recomputeLocked()
+            removeOrDebounceEmptyLocked(listOf(id))
         }
     }
 
@@ -91,8 +150,7 @@ class CockpitStateCoordinator {
                 }
             }.map { it.id }
             if (idsToRemove.isNotEmpty()) {
-                removeIdsLocked(idsToRemove)
-                recomputeLocked()
+                removeOrDebounceEmptyLocked(idsToRemove)
             }
         }
     }
@@ -132,6 +190,7 @@ class CockpitStateCoordinator {
     /** Swipe left: focus the next activity in the queue, wrapping from the last back to the first. */
     fun cycleNext() {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
             if (!cycleLocked(step = 1)) return
             recomputeLocked()
         }
@@ -140,6 +199,7 @@ class CockpitStateCoordinator {
     /** Swipe right: focus the previous activity in the queue, wrapping from the first to the last. */
     fun cyclePrevious() {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
             if (!cycleLocked(step = -1)) return
             recomputeLocked()
         }
@@ -147,6 +207,7 @@ class CockpitStateCoordinator {
 
     fun focusActivity(id: String) {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
             if (id in activitiesById && id !in softDismissedIds) {
                 clearRestoreLocked()
                 manualFocusId = id
@@ -158,6 +219,7 @@ class CockpitStateCoordinator {
 
     fun setExpanded(isExpanded: Boolean) {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
             expanded = isExpanded
             if (!isExpanded) inlineReplyOpen = false
             recomputeLocked()
@@ -166,6 +228,7 @@ class CockpitStateCoordinator {
 
     fun setInlineReplyOpen(open: Boolean) {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
             if (open) expanded = true
             inlineReplyOpen = open
             recomputeLocked()
@@ -174,6 +237,8 @@ class CockpitStateCoordinator {
 
     fun clearAllForTest() {
         synchronized(lock) {
+            cancelAutoCollapseLocked()
+            cancelEmptyDebounceLocked()
             activitiesById.clear()
             tripTracker.reset()
             softDismissedIds.clear()
@@ -183,6 +248,56 @@ class CockpitStateCoordinator {
             expanded = false
             inlineReplyOpen = false
             recomputeLocked()
+        }
+    }
+
+    private fun cancelAutoCollapseLocked() {
+        autoCollapseJob?.cancel()
+        autoCollapseJob = null
+    }
+
+    private fun cancelEmptyDebounceLocked() {
+        emptyDebounceJob?.cancel()
+        emptyDebounceJob = null
+        pendingEmptyRemovalIds.clear()
+    }
+
+    private fun removeOrDebounceEmptyLocked(ids: List<String>) {
+        val existingIds = ids.filter { it in activitiesById }
+        if (existingIds.isEmpty()) return
+
+        val activeScope = scope
+        if (activeScope == null || emptyStateDebounceMs <= 0L) {
+            removeIdsLocked(existingIds)
+            recomputeLocked()
+            return
+        }
+
+        val combinedPending = pendingEmptyRemovalIds + existingIds
+        val remainingVisible = sortedVisibleLocked().filterNot { it.id in combinedPending }
+        if (remainingVisible.isNotEmpty()) {
+            // Queue is not becoming empty: apply immediately without delaying transition.
+            pendingEmptyRemovalIds.removeAll(existingIds.toSet())
+            removeIdsLocked(existingIds)
+            recomputeLocked()
+            return
+        }
+
+        // Queue would become empty: debounce for 500ms to ignore transient empty state emissions
+        // during notification updates so the Island never suddenly closes mid-use.
+        pendingEmptyRemovalIds.addAll(existingIds)
+        emptyDebounceJob?.cancel()
+        emptyDebounceJob = activeScope.launch {
+            delay(emptyStateDebounceMs)
+            synchronized(lock) {
+                emptyDebounceJob = null
+                if (pendingEmptyRemovalIds.isNotEmpty()) {
+                    val toCommit = pendingEmptyRemovalIds.toList()
+                    pendingEmptyRemovalIds.clear()
+                    removeIdsLocked(toCommit)
+                    recomputeLocked()
+                }
+            }
         }
     }
 
@@ -294,5 +409,9 @@ class CockpitStateCoordinator {
             activeIndex = focusedIndex,
             swapDirection = swapDirection,
         )
+    }
+
+    companion object {
+        const val EMPTY_STATE_DEBOUNCE_MS = 500L
     }
 }

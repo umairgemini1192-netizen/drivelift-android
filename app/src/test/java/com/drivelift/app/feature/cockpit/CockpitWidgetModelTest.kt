@@ -86,6 +86,26 @@ class CockpitWidgetModelTest {
         assertFalse(CockpitWidgetModel.currentChangedEnough(null, null))
     }
 
+    @Test
+    fun chargeCounterConvertsMicroAmpHoursToMilliAmpHoursAndFiltersSmallDrift() {
+        val reading = CockpitWidgetModel.formatBatteryCharge(4_210_000L)
+        assertEquals(4210, reading.milliAmpHours)
+        assertEquals("4,210 mAh", reading.text)
+
+        val unsupported = CockpitWidgetModel.formatBatteryCharge(Long.MIN_VALUE)
+        assertNull(unsupported.milliAmpHours)
+        assertEquals("-- mAh", unsupported.text)
+
+        val zero = CockpitWidgetModel.formatBatteryCharge(0L)
+        assertNull(zero.milliAmpHours)
+        assertEquals("-- mAh", zero.text)
+
+        assertFalse(CockpitWidgetModel.chargeChangedEnough(4210, 4213))
+        assertTrue(CockpitWidgetModel.chargeChangedEnough(4210, 4216))
+        assertTrue(CockpitWidgetModel.chargeChangedEnough(null, 4210))
+        assertFalse(CockpitWidgetModel.chargeChangedEnough(null, null))
+    }
+
     // ---- pinned apps pages ----
 
     @Test

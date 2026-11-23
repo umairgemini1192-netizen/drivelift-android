@@ -2,6 +2,8 @@ package com.drivelift.app.feature.cockpit.widget
 
 import android.app.ActivityManager
 import android.app.AlarmManager
+import android.appwidget.AppWidgetManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
@@ -98,6 +100,8 @@ data class BatteryHudMetric(
     val isLow: Boolean = false,
     /** Live battery current, for example `-510 mA` while draining or `+2,450 mA` while charging. */
     val current: BatteryCurrentReading = CockpitWidgetModel.unknownCurrent(),
+    /** Live battery charge counter in mAh, converted from `BATTERY_PROPERTY_CHARGE_COUNTER` (uAh). */
+    val charge: BatteryChargeReading = CockpitWidgetModel.unknownCharge(),
 )
 
 data class RamHudMetric(
@@ -217,6 +221,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             isCharging = true,
             isLow = false,
             current = CockpitWidgetModel.formatBatteryCurrent(microAmps = 2_450_000L, isCharging = true),
+            charge = CockpitWidgetModel.formatBatteryCharge(microAmpHours = 4_210_000L),
         )
         val previewRam = CockpitHudBitmapRenderer.formatRamHudMetric(
             availBytes = (1.8 * 1024 * 1024 * 1024).toLong(),
@@ -516,6 +521,20 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                                     contentDescription = "Battery current ${battery.current.text}"
                                 },
                             )
+                            if (battery.charge.milliAmpHours != null) {
+                                Text(
+                                    text = battery.charge.text,
+                                    style = TextStyle(
+                                        color = disabledText,
+                                        fontSize = 9.sp,
+                                        fontWeight = FontWeight.Medium,
+                                    ),
+                                    maxLines = 1,
+                                    modifier = GlanceModifier.semantics {
+                                        contentDescription = "Battery charge ${battery.charge.text}"
+                                    },
+                                )
+                            }
                         }
                         Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
                         Image(
@@ -761,11 +780,27 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             }
         }
 
+        /**
+         * Pushes a real-time refresh to all bound Cockpit widgets via [AppWidgetManager] and Glance.
+         */
+        suspend fun pushRealtimeWidgetUpdate(context: Context) {
+            val appContext = context.applicationContext ?: context
+            val ids = runCatching {
+                AppWidgetManager.getInstance(appContext).getAppWidgetIds(
+                    ComponentName(appContext, CockpitGlanceWidgetReceiver::class.java),
+                )
+            }.getOrDefault(IntArray(0))
+            if (ids.isEmpty()) return
+            runCatching { CockpitGlanceWidget().updateAll(appContext) }
+        }
+
         fun readBatteryMetric(context: Context, batteryIntent: Intent? = null): BatteryHudMetric {
-            val pct = runCatching {
+            val batteryManager = runCatching {
                 context.getSystemService(BatteryManager::class.java)
-                    ?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY)
-                    ?: -1
+            }.getOrNull()
+
+            val pct = runCatching {
+                batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CAPACITY) ?: -1
             }.getOrDefault(-1)
 
             val resolvedIntent = batteryIntent ?: runCatching {
@@ -778,18 +813,29 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             }.getOrNull()
             val status = resolvedIntent?.getIntExtra(BatteryManager.EXTRA_STATUS, -1) ?: -1
             val bmCharging = runCatching {
-                context.getSystemService(BatteryManager::class.java)?.isCharging == true
+                batteryManager?.isCharging == true
             }.getOrDefault(false)
             val isCharging = bmCharging ||
                 status == BatteryManager.BATTERY_STATUS_CHARGING ||
                 status == BatteryManager.BATTERY_STATUS_FULL
             val isLow = !isCharging && pct in 0..20
             val currentMicroAmps = runCatching {
-                context.getSystemService(BatteryManager::class.java)
-                    ?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
+                batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CURRENT_NOW)
                     ?: Long.MIN_VALUE
             }.getOrDefault(Long.MIN_VALUE)
             val current = CockpitWidgetModel.formatBatteryCurrent(currentMicroAmps, isCharging)
+
+            val chargeCounterMicroAmpHours = runCatching {
+                val intProp = batteryManager?.getIntProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+                    ?: Int.MIN_VALUE
+                if (intProp != Int.MIN_VALUE && intProp > 0) {
+                    intProp.toLong()
+                } else {
+                    batteryManager?.getLongProperty(BatteryManager.BATTERY_PROPERTY_CHARGE_COUNTER)
+                        ?: Long.MIN_VALUE
+                }
+            }.getOrDefault(Long.MIN_VALUE)
+            val charge = CockpitWidgetModel.formatBatteryCharge(chargeCounterMicroAmpHours)
 
             return if (pct in 0..100) {
                 BatteryHudMetric(
@@ -800,6 +846,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     isCharging = isCharging,
                     isLow = isLow,
                     current = current,
+                    charge = charge,
                 )
             } else {
                 BatteryHudMetric(
@@ -810,6 +857,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     isCharging = isCharging,
                     isLow = false,
                     current = current,
+                    charge = charge,
                 )
             }
         }

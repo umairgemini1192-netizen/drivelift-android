@@ -41,7 +41,12 @@ interface ShizukuRuntimeBridge {
     fun isShizukuAppInstalled(): Boolean
     fun isBinderAlive(): Boolean
     fun hasPermission(): Boolean
+    fun requestPermission(requestCode: Int = DEFAULT_SHIZUKU_PERMISSION_REQUEST_CODE): Boolean = false
     suspend fun executeCommand(args: List<String>): Result<Unit>
+
+    companion object {
+        const val DEFAULT_SHIZUKU_PERMISSION_REQUEST_CODE = 4401
+    }
 }
 
 /**
@@ -74,6 +79,14 @@ class ReflectionShizukuRuntimeBridge(
         val clazz = Class.forName(SHIZUKU_CLASS_NAME)
         val method = clazz.getMethod("checkSelfPermission")
         (method.invoke(null) as? Int) == PackageManager.PERMISSION_GRANTED
+    }.getOrDefault(false)
+
+    override fun requestPermission(requestCode: Int): Boolean = runCatching {
+        if (!isBinderAlive()) return false
+        val clazz = Class.forName(SHIZUKU_CLASS_NAME)
+        val method = clazz.getMethod("requestPermission", Int::class.javaPrimitiveType)
+        method.invoke(null, requestCode)
+        true
     }.getOrDefault(false)
 
     override suspend fun executeCommand(args: List<String>): Result<Unit> = runCatching {
@@ -163,6 +176,13 @@ class ShizukuSilentAdapter(
         )
     }
 
+    /**
+     * Requests Shizuku runtime permission in 1 tap when the Shizuku binder is running.
+     */
+    fun requestSilentModePermission(): Boolean = runCatching {
+        bridge.requestPermission()
+    }.getOrDefault(false)
+
     override suspend fun sleepApp(candidate: AppDrainCandidate): Result<List<String>> {
         val status = inspectStatus()
         if (status.effectiveMode != HibernationMode.SHIZUKU_SILENT) {
@@ -236,6 +256,21 @@ class ShizukuSilentAdapter(
             val safePackage = ShizukuHibernationCommandBuilder.validatePackageName(packageName)
             return Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
                 data = Uri.fromParts("package", safePackage, null)
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            }
+        }
+
+        /**
+         * Opens the installed Shizuku manager app so the user can start or bind the service in 1 tap,
+         * or falls back to the Shizuku setup page when not installed.
+         */
+        fun createOpenShizukuIntent(context: Context): Intent {
+            val launch = runCatching {
+                context.packageManager.getLaunchIntentForPackage(ReflectionShizukuRuntimeBridge.SHIZUKU_PACKAGE)
+            }.getOrNull()
+            return launch?.apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            } ?: Intent(Intent.ACTION_VIEW, Uri.parse("https://shizuku.rikka.app/")).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
         }

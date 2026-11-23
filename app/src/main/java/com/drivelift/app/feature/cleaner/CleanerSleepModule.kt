@@ -1,13 +1,19 @@
 package com.drivelift.app.feature.cleaner
 
 import android.app.Application
+import android.content.Intent
+import android.content.pm.ApplicationInfo
+import android.content.pm.PackageManager
+import android.os.Build
 import android.os.Environment
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cleaner.cache.AndroidAppStorageStatsSource
 import com.drivelift.app.feature.cleaner.cache.GuidedCleanTarget
 import com.drivelift.app.feature.cleaner.cache.GuidedSessionController
 import com.drivelift.app.feature.cleaner.cache.ReflectionShizukuRuntimeBridge
+import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
 import com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter
+import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
 import com.drivelift.app.feature.cleaner.engine.AppCacheAndUsageAggregator
 import com.drivelift.app.feature.cleaner.engine.CleanerCategory
 import com.drivelift.app.feature.cleaner.engine.CleanerCategoryGroup
@@ -71,7 +77,11 @@ class CleanerSleepModule(
     private val drainerScorer = BackgroundDrainerScorer()
     private val sleepStateMachine = SleepSessionStateMachine()
     private val guidedCleanController = GuidedSessionController(sleepStateMachine, nowMs = { graph.clock() })
-    private val guidedSleepController = GuidedSessionController(sleepStateMachine, nowMs = { graph.clock() })
+    private val guidedSleepController = GuidedSessionController(
+        sleepStateMachine = sleepStateMachine,
+        nowMs = { graph.clock() },
+        isAppAlreadyStopped = { pkg -> isPackageStopped(pkg) },
+    )
 
     private var cachedDuplicateGroups: List<DuplicateGroup> = emptyList()
     private var initialScanTriggered = false
@@ -302,6 +312,51 @@ class CleanerSleepModule(
         guidedCleanController.cancelActiveSession()
         _cleanerState.update { it.copy(guidedPill = null) }
     }
+
+    fun refreshShizukuStatus(): ShizukuStatusSnapshot {
+        val status = shizukuAdapter.inspectStatus()
+        _cleanerState.update { it.copy(shizukuStatus = status) }
+        _sleepState.update { it.copy(shizukuStatus = status) }
+        return status
+    }
+
+    fun handleShizukuBannerAction(openExternalIntent: (Intent) -> Unit) {
+        val status = shizukuAdapter.inspectStatus()
+        when (status.availability) {
+            ShizukuAvailability.PERMISSION_REQUIRED -> {
+                shizukuAdapter.requestSilentModePermission()
+            }
+            ShizukuAvailability.NOT_RUNNING,
+            ShizukuAvailability.NOT_INSTALLED,
+            -> {
+                openExternalIntent(ShizukuSilentAdapter.createOpenShizukuIntent(app))
+            }
+            ShizukuAvailability.READY,
+            ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
+            -> Unit
+        }
+        refreshShizukuStatus()
+    }
+
+    fun advanceGuidedCleanToNextApp(): String? {
+        confirmGuidedCleanStep()
+        return _cleanerState.value.guidedPill?.currentPackageName
+    }
+
+    fun advanceGuidedSleepToNextApp(): String? {
+        confirmGuidedSleepStep()
+        return _sleepState.value.guidedPill?.currentPackageName
+    }
+
+    private fun isPackageStopped(packageName: String): Boolean = runCatching {
+        val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            app.packageManager.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0))
+        } else {
+            @Suppress("DEPRECATION")
+            app.packageManager.getApplicationInfo(packageName, 0)
+        }
+        (info.flags and ApplicationInfo.FLAG_STOPPED) != 0
+    }.getOrDefault(false)
 
     fun dismissCelebration() {
         _cleanerState.update { it.copy(celebrationReclaimedBytes = null, celebrationDeletedCount = 0) }

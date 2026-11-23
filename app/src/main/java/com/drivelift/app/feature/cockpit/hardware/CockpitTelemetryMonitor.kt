@@ -13,7 +13,6 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
-import androidx.glance.appwidget.updateAll
 import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitWidgetModel
@@ -64,7 +63,7 @@ class CockpitTelemetryMonitor(
         )
     },
     private val widgetPusher: suspend () -> Unit = {
-        runCatching { CockpitGlanceWidget().updateAll(context) }
+        CockpitGlanceWidget.pushRealtimeWidgetUpdate(context)
     },
     private val trafficReader: () -> Pair<Long, Long> = {
         TrafficStats.getTotalTxBytes() to TrafficStats.getTotalRxBytes()
@@ -88,6 +87,7 @@ class CockpitTelemetryMonitor(
     private var speedJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastPushedSnapshot: TelemetryHudSnapshot? = null
+    private var lastWidgetPushElapsedMs: Long = Long.MIN_VALUE
     private val speedLock = Any()
     private var lastTxBytes = -1L
     private var lastRxBytes = -1L
@@ -166,9 +166,18 @@ class CockpitTelemetryMonitor(
     fun evaluateNow(batteryIntent: Intent? = null, pushWidget: Boolean = true): Boolean {
         val current = snapshotReader(batteryIntent).copy(isLoadingInitial = false)
         _snapshot.value = current
-        val changed = shouldPushWidgetUpdate(lastPushedSnapshot, current)
+        val previous = lastPushedSnapshot
+        val changed = shouldPushWidgetUpdate(previous, current)
         if (changed && pushWidget) {
+            val nowMs = elapsedClock()
+            val urgent = isUrgentWidgetChange(previous, current)
+            val withinDebounce = lastWidgetPushElapsedMs != Long.MIN_VALUE &&
+                (nowMs - lastWidgetPushElapsedMs) in 0L until CockpitTokens.WIDGET_PUSH_DEBOUNCE_MS
+            if (!urgent && withinDebounce) {
+                return false
+            }
             lastPushedSnapshot = current
+            lastWidgetPushElapsedMs = nowMs
             scope.launch { widgetPusher() }
         }
         return changed
@@ -344,6 +353,24 @@ class CockpitTelemetryMonitor(
             ) {
                 return true
             }
+            if (CockpitWidgetModel.chargeChangedEnough(
+                    previous.battery.charge.milliAmpHours,
+                    current.battery.charge.milliAmpHours,
+                )
+            ) {
+                return true
+            }
+            if (abs(previous.ram.usedGb - current.ram.usedGb) >= CockpitTokens.RAM_DELTA_THRESHOLD_GB) return true
+            return false
+        }
+
+        private fun isUrgentWidgetChange(
+            previous: TelemetryHudSnapshot?,
+            current: TelemetryHudSnapshot,
+        ): Boolean {
+            if (previous == null) return true
+            if (previous.battery.percent != current.battery.percent) return true
+            if (previous.battery.isCharging != current.battery.isCharging) return true
             if (abs(previous.ram.usedGb - current.ram.usedGb) >= CockpitTokens.RAM_DELTA_THRESHOLD_GB) return true
             return false
         }
