@@ -21,7 +21,6 @@ import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
-import android.net.NetworkRequest
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
@@ -55,7 +54,7 @@ data class WifiTileState(
     val isConnected: Boolean = false,
     val ssid: String = "",
     val hasLocationPermission: Boolean = false,
-    val label: String = "Off",
+    val label: String = "Wi-Fi Off",
 )
 
 data class MobileDataTileState(
@@ -97,6 +96,7 @@ class CockpitQuickControlsController(
     private val context: Context,
     private val clock: () -> Long = System::currentTimeMillis,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
+    private val onDefaultNetworkChanged: ((NetworkCapabilities?) -> Unit)? = null,
 ) {
     private val appContext = context.applicationContext
     private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
@@ -267,45 +267,71 @@ class CockpitQuickControlsController(
 
     private fun registerWifiCallback() {
         val cm = connectivityManager ?: return
-        val request = NetworkRequest.Builder()
-            .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-            .build()
         val callback = if (Build.VERSION.SDK_INT >= 31) {
             object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
                 override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                    val info = networkCapabilities.transportInfo as? WifiInfo
-                    latestWifiInfoSsid = info?.ssid
-                    latestWifiConnected = true
-                    refreshWifiState()
+                    handleDefaultNetworkCapabilities(networkCapabilities)
                 }
 
                 override fun onAvailable(network: Network) {
-                    latestWifiConnected = true
-                    refreshWifiState()
+                    val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
+                    handleDefaultNetworkCapabilities(caps)
                 }
 
                 override fun onLost(network: Network) {
-                    latestWifiConnected = false
-                    latestWifiInfoSsid = null
-                    refreshWifiState()
+                    val active = runCatching { cm.activeNetwork }.getOrNull()
+                    val caps = if (active != null && active != network) {
+                        runCatching { cm.getNetworkCapabilities(active) }.getOrNull()
+                    } else {
+                        null
+                    }
+                    handleDefaultNetworkCapabilities(caps)
                 }
             }
         } else {
             object : ConnectivityManager.NetworkCallback() {
+                override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                    handleDefaultNetworkCapabilities(networkCapabilities)
+                }
+
                 override fun onAvailable(network: Network) {
-                    latestWifiConnected = true
-                    refreshWifiState()
+                    val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
+                    handleDefaultNetworkCapabilities(caps)
                 }
 
                 override fun onLost(network: Network) {
-                    latestWifiConnected = false
-                    latestWifiInfoSsid = null
-                    refreshWifiState()
+                    val active = runCatching { cm.activeNetwork }.getOrNull()
+                    val caps = if (active != null && active != network) {
+                        runCatching { cm.getNetworkCapabilities(active) }.getOrNull()
+                    } else {
+                        null
+                    }
+                    handleDefaultNetworkCapabilities(caps)
                 }
             }
         }
         wifiCallback = callback
-        runCatching { cm.registerNetworkCallback(request, callback) }
+        runCatching { cm.registerDefaultNetworkCallback(callback) }
+    }
+
+    /**
+     * Single-source-of-truth default network transition handler: when Wi-Fi is turned off or
+     * `TRANSPORT_WIFI` is absent on the default network, immediately clears any cached SSID,
+     * switches the Wi-Fi tile to `"Wi-Fi Off"`, and propagates the new capabilities to the
+     * Dynamic Island pill so it immediately flips to Mobile Data (or Offline).
+     */
+    internal fun handleDefaultNetworkCapabilities(capabilities: NetworkCapabilities?) {
+        val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
+        if (hasWifi) {
+            latestWifiConnected = true
+            val info = if (Build.VERSION.SDK_INT >= 29) capabilities?.transportInfo as? WifiInfo else null
+            latestWifiInfoSsid = info?.ssid
+        } else {
+            latestWifiConnected = false
+            latestWifiInfoSsid = null
+        }
+        refreshWifiState(defaultNetworkHasWifiOverride = hasWifi)
+        onDefaultNetworkChanged?.invoke(capabilities)
     }
 
     private fun registerSystemReceivers() {
@@ -322,7 +348,25 @@ class CockpitQuickControlsController(
         val sysReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
                 when (intent?.action) {
-                    WifiManager.WIFI_STATE_CHANGED_ACTION -> refreshWifiState()
+                    WifiManager.WIFI_STATE_CHANGED_ACTION -> {
+                        val wifiState = intent.getIntExtra(
+                            WifiManager.EXTRA_WIFI_STATE,
+                            WifiManager.WIFI_STATE_UNKNOWN,
+                        )
+                        if (wifiState == WifiManager.WIFI_STATE_DISABLED ||
+                            wifiState == WifiManager.WIFI_STATE_DISABLING
+                        ) {
+                            latestWifiConnected = false
+                            latestWifiInfoSsid = null
+                            refreshWifiState(defaultNetworkHasWifiOverride = false)
+                            val activeCaps = runCatching {
+                                connectivityManager?.activeNetwork?.let { connectivityManager.getNetworkCapabilities(it) }
+                            }.getOrNull()
+                            onDefaultNetworkChanged?.invoke(activeCaps)
+                        } else {
+                            refreshWifiState()
+                        }
+                    }
                     BluetoothAdapter.ACTION_STATE_CHANGED -> {
                         if (intent.getIntExtra(BluetoothAdapter.EXTRA_STATE, BluetoothAdapter.ERROR) ==
                             BluetoothAdapter.STATE_OFF
@@ -360,23 +404,32 @@ class CockpitQuickControlsController(
         ContextCompat.registerReceiver(appContext, sysReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
-    private fun refreshWifiState() {
+    private fun refreshWifiState(defaultNetworkHasWifiOverride: Boolean? = null) {
         val wifiEnabled = runCatching { wifiManager?.isWifiEnabled == true }.getOrDefault(false)
-        val activeConnected = runCatching {
+        val defaultHasWifi = defaultNetworkHasWifiOverride ?: runCatching {
             val active = connectivityManager?.activeNetwork
             val caps = active?.let { connectivityManager?.getNetworkCapabilities(it) }
             caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         }.getOrDefault(false)
-        val connected = latestWifiConnected || activeConnected
+
+        if (!wifiEnabled || !defaultHasWifi) {
+            latestWifiConnected = false
+            latestWifiInfoSsid = null
+        }
+        val connected = wifiEnabled && defaultHasWifi
         val hasFineLocation = hasLocationPermission(appContext)
         val locationEnabled = runCatching { locationManager?.isLocationEnabled == true }.getOrDefault(false)
         val hasFullLocationAccess = hasFineLocation && locationEnabled
 
         @Suppress("DEPRECATION")
-        val rawSsid = latestWifiInfoSsid ?: if (hasFullLocationAccess) {
-            runCatching { wifiManager?.connectionInfo?.ssid }.getOrNull()
-        } else {
+        val rawSsid = if (!connected) {
             null
+        } else {
+            latestWifiInfoSsid ?: if (hasFullLocationAccess) {
+                runCatching { wifiManager?.connectionInfo?.ssid }.getOrNull()
+            } else {
+                null
+            }
         }
         val displayLabel = sanitizeSsid(
             rawSsid = rawSsid,
@@ -384,10 +437,10 @@ class CockpitQuickControlsController(
             wifiConnected = connected,
             hasLocationAccess = hasFullLocationAccess,
         )
-        val cleanSsid = if (displayLabel != "Off" && displayLabel != "Wi-Fi On") displayLabel else ""
+        val cleanSsid = if (displayLabel != WIFI_OFF_LABEL && displayLabel != "Wi-Fi On") displayLabel else ""
         _state.value = _state.value.copy(
             wifi = WifiTileState(
-                isEnabled = wifiEnabled,
+                isEnabled = connected,
                 isConnected = connected,
                 ssid = cleanSsid,
                 hasLocationPermission = hasFineLocation,
@@ -573,6 +626,7 @@ class CockpitQuickControlsController(
     }
 
     companion object {
+        const val WIFI_OFF_LABEL = "Wi-Fi Off"
         private const val USAGE_REFRESH_INTERVAL_MS = 60_000L
         private const val STATUS_CONFIRMATION_MS = 2_400L
         private const val BYTES_PER_MB = 1024.0 * 1024.0
@@ -584,8 +638,8 @@ class CockpitQuickControlsController(
             wifiConnected: Boolean,
             hasLocationAccess: Boolean,
         ): String {
-            if (!wifiEnabled) return "Off"
-            if (!wifiConnected || !hasLocationAccess) return "Wi-Fi On"
+            if (!wifiEnabled || !wifiConnected) return WIFI_OFF_LABEL
+            if (!hasLocationAccess) return "Wi-Fi On"
             val cleaned = rawSsid?.trim()?.removeSurrounding("\"").orEmpty()
             return if (cleaned.isBlank() ||
                 cleaned.equals("<unknown ssid>", ignoreCase = true) ||

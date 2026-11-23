@@ -60,6 +60,9 @@ object CockpitPreviewActivities {
         turnDirection = MapsTurnDirection.STRAIGHT,
         roadText = "North",
         destinationText = "San Francisco",
+        remainingTripKm = 8.4,
+        droveTripKm = 3.2,
+        speedKmh = 64,
         updatedAtMs = nowMs,
     )
 

@@ -24,11 +24,13 @@ import kotlinx.coroutines.launch
 class CockpitStateCoordinator(
     private val scope: CoroutineScope? = null,
     private val emptyStateDebounceMs: Long = EMPTY_STATE_DEBOUNCE_MS,
+    private val chatAutoExpireMs: Long = TRANSIENT_CHAT_AUTO_EXPIRE_MS,
 ) {
     private val lock = Any()
     private val activitiesById = LinkedHashMap<String, CockpitLiveActivity>()
     private val softDismissedIds = LinkedHashSet<String>()
     private val pendingEmptyRemovalIds = LinkedHashSet<String>()
+    private val chatExpiryJobs = LinkedHashMap<String, Job>()
     private var currentPrefs = CockpitPrefsState()
     private var manualFocusId: String? = null
     private var restoreFocusId: String? = null
@@ -38,6 +40,7 @@ class CockpitStateCoordinator(
     private var inlineReplyOpen = false
     private var autoCollapseJob: Job? = null
     private var emptyDebounceJob: Job? = null
+    private var latestNavSpeedKmh: Int? = null
     private val tripTracker = NavigationTripTracker()
 
     private val _slotState = MutableStateFlow(CockpitSlotState())
@@ -103,11 +106,21 @@ class CockpitStateCoordinator(
                     removeIdsLocked(staleIds)
                 }
             }
-            val activity = if (incoming is CockpitLiveActivity.MapsNavActivity) withTripProgress(incoming) else incoming
+            val activity = if (incoming is CockpitLiveActivity.MapsNavActivity) {
+                val mergedSpeed = incoming.speedKmh ?: latestNavSpeedKmh
+                if (incoming.speedKmh != null) latestNavSpeedKmh = incoming.speedKmh
+                withTripProgress(incoming.copy(speedKmh = mergedSpeed))
+            } else {
+                incoming
+            }
             val previous = activitiesById[activity.id]
             val isNew = previous == null
             val currentPrimaryPriority = _slotState.value.primary.priority
             activitiesById[activity.id] = activity
+            if (activity is CockpitLiveActivity.WhatsAppAlertActivity) {
+                softDismissedIds.remove(activity.id)
+                scheduleChatAutoExpireLocked(activity.id)
+            }
             if (isNew && activity.priority < currentPrimaryPriority) {
                 // A higher priority activity takes focus. Remember a focus the user chose by hand
                 // so it comes back when the newcomer ends.
@@ -129,15 +142,69 @@ class CockpitStateCoordinator(
         }
     }
 
+    /** Updates live GPS speed (km/h) for an active navigation session without touching other fields. */
+    fun updateNavigationSpeed(speedKmh: Int?) {
+        synchronized(lock) {
+            latestNavSpeedKmh = speedKmh
+            val current = activitiesById[CockpitLiveActivity.ID_MAPS] as? CockpitLiveActivity.MapsNavActivity
+                ?: return
+            if (current.speedKmh == speedKmh) return
+            activitiesById[current.id] = current.copy(speedKmh = speedKmh)
+            recomputeLocked()
+        }
+    }
+
     fun removeActivity(id: String) {
         synchronized(lock) {
             removeOrDebounceEmptyLocked(listOf(id))
         }
     }
 
+    /**
+     * Immediately removes a transient chat alert (triggered by swipe-up, compact X dismiss, or
+     * auto-expiry) so messages never stick in the island or linger in Restore.
+     */
+    fun dismissTransientAlert(id: String) {
+        if (id == CockpitLiveActivity.ID_IDLE) return
+        synchronized(lock) {
+            cancelChatExpiryLocked(id)
+            pendingEmptyRemovalIds.remove(id)
+            val removed = activitiesById[id] ?: return
+            val wasOnlyVisible = sortedVisibleLocked().size <= 1 && sortedVisibleLocked().firstOrNull()?.id == id
+            removeIdsLocked(listOf(id))
+            if (removed is CockpitLiveActivity.WhatsAppAlertActivity && wasOnlyVisible) {
+                expanded = false
+                inlineReplyOpen = false
+            }
+            recomputeLocked()
+        }
+    }
+
+    /** Removes every notification-backed activity (called if NotificationListenerService disconnects). */
+    fun clearNotificationBackedActivities() {
+        synchronized(lock) {
+            val ids = activitiesById.values.filter { activity ->
+                when (activity) {
+                    is CockpitLiveActivity.CallActivity -> activity.notificationKey != null
+                    is CockpitLiveActivity.ScreenRecordingActivity -> activity.notificationKey != null
+                    is CockpitLiveActivity.TimerRecordingActivity -> activity.notificationKey != null
+                    is CockpitLiveActivity.MediaActivity -> activity.notificationKey != null
+                    is CockpitLiveActivity.MapsNavActivity -> activity.notificationKey != null
+                    is CockpitLiveActivity.WhatsAppAlertActivity -> true
+                    is CockpitLiveActivity.TransferActivity,
+                    is CockpitLiveActivity.IdleQuickDockActivity -> false
+                }
+            }.map { it.id }
+            if (ids.isEmpty()) return
+            cancelEmptyDebounceLocked()
+            removeIdsLocked(ids)
+            recomputeLocked()
+        }
+    }
+
     fun removeByNotificationKey(notificationKey: String) {
         synchronized(lock) {
-            val idsToRemove = activitiesById.values.filter { activity ->
+            val matched = activitiesById.values.filter { activity ->
                 when (activity) {
                     is CockpitLiveActivity.CallActivity -> activity.notificationKey == notificationKey
                     is CockpitLiveActivity.ScreenRecordingActivity -> activity.notificationKey == notificationKey
@@ -148,9 +215,17 @@ class CockpitStateCoordinator(
                     is CockpitLiveActivity.TransferActivity,
                     is CockpitLiveActivity.IdleQuickDockActivity -> false
                 }
-            }.map { it.id }
-            if (idsToRemove.isNotEmpty()) {
-                removeOrDebounceEmptyLocked(idsToRemove)
+            }
+            if (matched.isEmpty()) return
+            val chatIds = matched.filterIsInstance<CockpitLiveActivity.WhatsAppAlertActivity>().map { it.id }
+            val otherIds = matched.filterNot { it is CockpitLiveActivity.WhatsAppAlertActivity }.map { it.id }
+            if (chatIds.isNotEmpty()) {
+                pendingEmptyRemovalIds.removeAll(chatIds.toSet())
+                removeIdsLocked(chatIds)
+                recomputeLocked()
+            }
+            if (otherIds.isNotEmpty()) {
+                removeOrDebounceEmptyLocked(otherIds)
             }
         }
     }
@@ -159,12 +234,15 @@ class CockpitStateCoordinator(
     fun softDismiss(id: String) {
         if (id == CockpitLiveActivity.ID_IDLE) return
         synchronized(lock) {
-            if (id in activitiesById) {
-                softDismissedIds.add(id)
-                if (manualFocusId == id) manualFocusId = null
-                inlineReplyOpen = false
-                recomputeLocked()
+            val target = activitiesById[id] ?: return
+            if (target is CockpitLiveActivity.WhatsAppAlertActivity) {
+                dismissTransientAlert(id)
+                return
             }
+            softDismissedIds.add(id)
+            if (manualFocusId == id) manualFocusId = null
+            inlineReplyOpen = false
+            recomputeLocked()
         }
     }
 
@@ -231,6 +309,11 @@ class CockpitStateCoordinator(
             cancelAutoCollapseLocked()
             if (open) expanded = true
             inlineReplyOpen = open
+            if (!open) {
+                activitiesById.values
+                    .filterIsInstance<CockpitLiveActivity.WhatsAppAlertActivity>()
+                    .forEach { scheduleChatAutoExpireLocked(it.id) }
+            }
             recomputeLocked()
         }
     }
@@ -239,8 +322,11 @@ class CockpitStateCoordinator(
         synchronized(lock) {
             cancelAutoCollapseLocked()
             cancelEmptyDebounceLocked()
+            chatExpiryJobs.values.forEach { it.cancel() }
+            chatExpiryJobs.clear()
             activitiesById.clear()
             tripTracker.reset()
+            latestNavSpeedKmh = null
             softDismissedIds.clear()
             manualFocusId = null
             clearRestoreLocked()
@@ -249,6 +335,39 @@ class CockpitStateCoordinator(
             inlineReplyOpen = false
             recomputeLocked()
         }
+    }
+
+    internal fun hasPendingChatExpiryForTest(id: String): Boolean = synchronized(lock) {
+        chatExpiryJobs[id]?.isActive == true
+    }
+
+    private fun scheduleChatAutoExpireLocked(id: String) {
+        cancelChatExpiryLocked(id)
+        val activeScope = scope ?: return
+        if (chatAutoExpireMs <= 0L) return
+        chatExpiryJobs[id] = activeScope.launch {
+            delay(chatAutoExpireMs)
+            synchronized(lock) {
+                chatExpiryJobs.remove(id)
+                val stillPresent = activitiesById[id] as? CockpitLiveActivity.WhatsAppAlertActivity ?: return@synchronized
+                if (inlineReplyOpen && _slotState.value.primary.id == stillPresent.id) {
+                    // User is actively typing a reply: do not pull the card out from under them.
+                    return@synchronized
+                }
+                val wasOnlyVisible = sortedVisibleLocked().size <= 1 && sortedVisibleLocked().firstOrNull()?.id == id
+                pendingEmptyRemovalIds.remove(id)
+                removeIdsLocked(listOf(id))
+                if (wasOnlyVisible) {
+                    expanded = false
+                    inlineReplyOpen = false
+                }
+                recomputeLocked()
+            }
+        }
+    }
+
+    private fun cancelChatExpiryLocked(id: String) {
+        chatExpiryJobs.remove(id)?.cancel()
     }
 
     private fun cancelAutoCollapseLocked() {
@@ -329,8 +448,12 @@ class CockpitStateCoordinator(
     private fun removeIdsLocked(ids: List<String>) {
         var removedRingingCall = false
         for (id in ids) {
+            cancelChatExpiryLocked(id)
             val removed = activitiesById.remove(id)
-            if (removed is CockpitLiveActivity.MapsNavActivity) tripTracker.reset()
+            if (removed is CockpitLiveActivity.MapsNavActivity) {
+                tripTracker.reset()
+                latestNavSpeedKmh = null
+            }
             if ((removed as? CockpitLiveActivity.CallActivity)?.state == CallState.INCOMING) {
                 removedRingingCall = true
             }
@@ -413,5 +536,6 @@ class CockpitStateCoordinator(
 
     companion object {
         const val EMPTY_STATE_DEBOUNCE_MS = 500L
+        const val TRANSIENT_CHAT_AUTO_EXPIRE_MS = 10_000L
     }
 }

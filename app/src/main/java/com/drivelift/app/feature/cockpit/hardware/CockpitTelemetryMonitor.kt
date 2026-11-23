@@ -63,7 +63,7 @@ class CockpitTelemetryMonitor(
         )
     },
     private val widgetPusher: suspend () -> Unit = {
-        CockpitGlanceWidget.pushRealtimeWidgetUpdate(context)
+        CockpitGlanceWidget.pushTelemetryUpdate(context)
     },
     private val trafficReader: () -> Pair<Long, Long> = {
         TrafficStats.getTotalTxBytes() to TrafficStats.getTotalRxBytes()
@@ -241,6 +241,20 @@ class CockpitTelemetryMonitor(
     internal fun refreshNetworkKind() {
         val (kind, telephonyType) = runCatching { networkReader() }
             .getOrDefault(IdleNetworkKind.OFFLINE to null)
+        applyNetworkKind(kind, telephonyType)
+    }
+
+    /**
+     * Updates the idle Dynamic Island pill directly from a `registerDefaultNetworkCallback`
+     * [NetworkCapabilities] event so switching off Wi-Fi or losing `TRANSPORT_WIFI` immediately
+     * flips the pill to Mobile Data (or Offline) with zero stale cache lag.
+     */
+    fun onDefaultNetworkCapabilitiesChanged(capabilities: NetworkCapabilities?) {
+        val (kind, telephonyType) = readNetworkKindFromCapabilities(appContext, capabilities)
+        applyNetworkKind(kind, telephonyType)
+    }
+
+    private fun applyNetworkKind(kind: IdleNetworkKind, telephonyType: Int?) {
         val label = CockpitNetworkFormat.label(kind, telephonyType)
         _network.update { current ->
             if (current.kind == kind && current.label == label) current else current.copy(kind = kind, label = label)
@@ -251,10 +265,24 @@ class CockpitTelemetryMonitor(
         if (networkCallback != null) return
         val cm = appContext.getSystemService(ConnectivityManager::class.java) ?: return
         val callback = object : ConnectivityManager.NetworkCallback() {
-            override fun onAvailable(network: Network) = refreshNetworkKind()
-            override fun onLost(network: Network) = refreshNetworkKind()
-            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) =
-                refreshNetworkKind()
+            override fun onAvailable(network: Network) {
+                val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
+                onDefaultNetworkCapabilitiesChanged(caps)
+            }
+
+            override fun onLost(network: Network) {
+                val active = runCatching { cm.activeNetwork }.getOrNull()
+                val caps = if (active != null && active != network) {
+                    runCatching { cm.getNetworkCapabilities(active) }.getOrNull()
+                } else {
+                    null
+                }
+                onDefaultNetworkCapabilitiesChanged(caps)
+            }
+
+            override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
+                onDefaultNetworkCapabilitiesChanged(networkCapabilities)
+            }
         }
         if (runCatching { cm.registerDefaultNetworkCallback(callback) }.isSuccess) {
             networkCallback = callback
@@ -322,19 +350,45 @@ class CockpitTelemetryMonitor(
             val cm = context.getSystemService(ConnectivityManager::class.java)
                 ?: return IdleNetworkKind.OFFLINE to null
             val caps = runCatching { cm.activeNetwork?.let { cm.getNetworkCapabilities(it) } }.getOrNull()
-                ?: return IdleNetworkKind.OFFLINE to null
-            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)) {
-                return IdleNetworkKind.OFFLINE to null
+            return readNetworkKindFromCapabilities(context, caps)
+        }
+
+        fun readNetworkKindFromCapabilities(
+            context: Context,
+            caps: NetworkCapabilities?,
+        ): Pair<IdleNetworkKind, Int?> {
+            if (caps == null) return IdleNetworkKind.OFFLINE to null
+            val hasInternet = caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+            val hasWifi = caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+            val hasEthernet = caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET)
+            val hasCellular = caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+            val telephonyType = if (hasCellular && !hasWifi && !hasEthernet) {
+                runCatching {
+                    context.getSystemService(TelephonyManager::class.java)?.dataNetworkType
+                }.getOrNull()
+            } else {
+                null
             }
+            return classifyNetworkCapabilities(
+                hasInternet = hasInternet,
+                hasWifi = hasWifi,
+                hasEthernet = hasEthernet,
+                hasCellular = hasCellular,
+                telephonyType = telephonyType,
+            )
+        }
+
+        fun classifyNetworkCapabilities(
+            hasInternet: Boolean,
+            hasWifi: Boolean,
+            hasEthernet: Boolean,
+            hasCellular: Boolean,
+            telephonyType: Int? = null,
+        ): Pair<IdleNetworkKind, Int?> {
+            if (!hasInternet) return IdleNetworkKind.OFFLINE to null
             return when {
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) ||
-                    caps.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) -> IdleNetworkKind.WIFI to null
-                caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) -> {
-                    val type = runCatching {
-                        context.getSystemService(TelephonyManager::class.java)?.dataNetworkType
-                    }.getOrNull()
-                    IdleNetworkKind.CELLULAR to type
-                }
+                hasWifi || hasEthernet -> IdleNetworkKind.WIFI to null
+                hasCellular -> IdleNetworkKind.CELLULAR to telephonyType
                 else -> IdleNetworkKind.OFFLINE to null
             }
         }

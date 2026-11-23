@@ -71,4 +71,19 @@ object TripDistanceFormat {
     /** `3.2 km drove · 8.4 km left`. */
     fun footer(droveKm: Double, remainingKm: Double, miles: Boolean): String =
         "${distance(droveKm, miles)} drove · ${distance(remainingKm, miles)} left"
+
+    /** Compact HUD metric string (`8.4 km`, `3.2 km`, `1.0 mi`) or `--` when unavailable. */
+    fun hudValue(km: Double?, miles: Boolean): String =
+        if (km == null || km.isNaN() || km.isInfinite() || km < 0.0) "--" else distance(km, miles)
+
+    /** Live speed readout in km/h (`64`) or `--` when no GPS speed fix is available. */
+    fun speedValue(speedKmh: Int?): String =
+        if (speedKmh == null || speedKmh < 0) "--" else speedKmh.toString()
+
+    /** Converts GPS speed in m/s to km/h, suppressing stationary sensor drift under 2 km/h. */
+    fun metersPerSecondToKmh(speedMetersPerSec: Float): Int {
+        if (speedMetersPerSec.isNaN() || speedMetersPerSec.isInfinite() || speedMetersPerSec <= 0f) return 0
+        val kmh = (speedMetersPerSec * 3.6f).roundToInt()
+        return if (kmh < 2) 0 else kmh
+    }
 }

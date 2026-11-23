@@ -197,8 +197,9 @@ object Tokens {
         val RecordingDot = 8.dp
         val RecordingStopBox = 14.dp
         val StopRingWidth = 2.dp
-        val NavManeuverBox = 56.dp
-        val NavLaneArrow = 22.dp
+        val HeaderActionWell = 36.dp
+        val NavTurnBadgeSize = 48.dp
+        val NavHudCellRadius = 12.dp
         val PagerDot = 5.dp
         val SpecularRimWidth = GlassBorderIsland
         val IslandBadgeShape = RoundedCornerShape(18.dp)

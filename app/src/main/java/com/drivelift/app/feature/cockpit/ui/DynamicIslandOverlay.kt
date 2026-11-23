@@ -15,7 +15,6 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
-import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -49,7 +48,8 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
+import androidx.compose.material.icons.automirrored.outlined.Reply
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.outlined.Apps
 import androidx.compose.material.icons.outlined.Bluetooth
@@ -73,25 +73,22 @@ import androidx.compose.material.icons.outlined.NotificationsOff
 import androidx.compose.material.icons.outlined.Restore
 import androidx.compose.material.icons.outlined.SignalCellularAlt
 import androidx.compose.material.icons.outlined.Sms
+import androidx.compose.material.icons.outlined.Stop
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.Timer
 import androidx.compose.material.icons.outlined.TurnLeft
 import androidx.compose.material.icons.outlined.TurnRight
 import androidx.compose.material.icons.outlined.UTurnLeft
 import androidx.compose.material.icons.outlined.Vibration
 import androidx.compose.material.icons.outlined.Videocam
-import androidx.compose.material.icons.outlined.VisibilityOff
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WifiOff
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -286,6 +283,7 @@ fun DynamicIslandOverlay(
             onLongPressExpand = onExpand,
             onCycleNext = onCycleNext,
             onCyclePrevious = onCyclePrevious,
+            onSwipeUpDismiss = onSoftDismiss,
             modifier = modifier,
         )
         return
@@ -513,6 +511,7 @@ fun CollapsedSplitIslandRow(
     onCycleNext: () -> Unit,
     onCyclePrevious: () -> Unit,
     modifier: Modifier = Modifier,
+    onSwipeUpDismiss: (String) -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -529,6 +528,7 @@ fun CollapsedSplitIslandRow(
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
         .coerceIn(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val canSwap = slotState.visibleQueue.size > 1
+    val canSwipeUpDismiss = primary is CockpitLiveActivity.WhatsAppAlertActivity
     val dragOffset = remember { Animatable(0f) }
 
     Row(
@@ -536,7 +536,8 @@ fun CollapsedSplitIslandRow(
             .testTag("cockpit-collapsed-row")
             .cockpitAxisLockedSwipe(
                 key = primary.id,
-                enableVertical = false,
+                enableHorizontal = canSwap,
+                enableVertical = canSwipeUpDismiss,
                 onSwipeNext = {
                     if (canSwap) {
                         CockpitHaptics.performTick(context)
@@ -553,6 +554,12 @@ fun CollapsedSplitIslandRow(
                     if (canSwap) scope.launch { dragOffset.snapTo(total * Tokens.Cockpit.SWAP_DRAG_DAMPING) }
                 },
                 onHorizontalEnd = { scope.launch { dragOffset.animateTo(0f, spring()) } },
+                onVerticalEnd = { shouldDismiss ->
+                    if (shouldDismiss && canSwipeUpDismiss) {
+                        CockpitHaptics.performTick(context)
+                        onSwipeUpDismiss(primary.id)
+                    }
+                },
             ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.SplitGap),
@@ -810,9 +817,11 @@ private fun ExpandedCockpitCardContent(
     val canSwap = slotState.visibleQueue.size > 1
     val dragOffset = remember { Animatable(0f) }
 
-    // One axis-locked detector: sideways swaps the activity, upward collapses, never both.
+    // One axis-locked detector on Initial pass: sideways swaps before child clickables, upward collapses
+    // (and dismisses transient chat alerts), never both.
     val swipeModifier = Modifier.cockpitAxisLockedSwipe(
         key = primary.id,
+        enableHorizontal = canSwap,
         enableVertical = true,
         onSwipeNext = {
             if (canSwap) {
@@ -833,7 +842,12 @@ private fun ExpandedCockpitCardContent(
         onVerticalStart = onVerticalDragStart,
         onVerticalDrag = onVerticalDragDelta,
         onVerticalEnd = { shouldCollapse ->
-            if (shouldCollapse) CockpitHaptics.performTick(context)
+            if (shouldCollapse) {
+                CockpitHaptics.performTick(context)
+                if (primary is CockpitLiveActivity.WhatsAppAlertActivity) {
+                    onSoftDismiss(primary.id)
+                }
+            }
             onVerticalDragFinish(shouldCollapse)
         },
     )
@@ -853,27 +867,54 @@ private fun ExpandedCockpitCardContent(
                 slotState = slotState,
                 callAudio = callAudio,
                 actions = activityActions,
+                onCycleNext = onCycleNext,
             )
         }
         return
     }
 
+    // Build compact icon-only controls for the header so zero oversized text pills clutter the card.
+    val primaryOpenDescription = when (primary) {
+        is CockpitLiveActivity.TransferActivity -> if (primary.isDesktopDrop) "Open Drop" else "Open Transfers"
+        is CockpitLiveActivity.WhatsAppAlertActivity -> "Open Chat"
+        is CockpitLiveActivity.MapsNavActivity -> "Open Maps"
+        is CockpitLiveActivity.IdleQuickDockActivity -> "Open Cockpit Hub"
+        else -> "Open App"
+    }
+    val onPrimaryOpenClick: () -> Unit = {
+        if (primary is CockpitLiveActivity.IdleQuickDockActivity) {
+            onOpenDriveLiftCockpit()
+        } else {
+            onTapActivity(primary)
+        }
+    }
+    val hasSecondaryActivityAction = (primary is CockpitLiveActivity.TransferActivity && primary.canStop) ||
+        (primary is CockpitLiveActivity.WhatsAppAlertActivity && primary.canInlineReply)
+    val hasActiveDismiss = primary !is CockpitLiveActivity.IdleQuickDockActivity
+    val hasRestore = slotState.dismissedCount > 0
+    val totalHeaderIcons = 2 + // Open + Collapse
+        (if (hasSecondaryActivityAction) 1 else 0) +
+        (if (canSwap) 1 else 0) +
+        (if (hasRestore) 1 else 0) +
+        (if (hasActiveDismiss) 1 else 0)
+    val splitCompactActionBar = compactWidthStack || totalHeaderIcons > 3
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .heightIn(max = maxCardHeight)
-            .verticalScroll(rememberScrollState())
             .then(swipeModifier)
+            .verticalScroll(rememberScrollState())
             .then(dragLayerModifier)
             .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
             .testTag("cockpit-expanded-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        // Header row: active badge, title with full weight(1f), hide & collapse controls.
+        // Header row: active badge, title + subtitle, and sleek compact icon-only controls.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
         ) {
             Box(
                 modifier = Modifier
@@ -906,71 +947,127 @@ private fun ExpandedCockpitCardContent(
                     overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (primary !is CockpitLiveActivity.IdleQuickDockActivity) {
-                IconButton(
+            if (!splitCompactActionBar) {
+                if (hasRestore) {
+                    CompactHeaderIconButton(
+                        icon = Icons.Outlined.Restore,
+                        contentDescription = "Restore hidden (${slotState.dismissedCount})",
+                        tint = MaterialTheme.colorScheme.secondary,
+                        tag = "cockpit-restore-hidden",
+                        onClick = onRestoreDismissed,
+                    )
+                }
+                CompactHeaderIconButton(
+                    icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                    contentDescription = primaryOpenDescription,
+                    tint = accent,
+                    tag = "cockpit-expanded-open-app",
+                    onClick = onPrimaryOpenClick,
+                )
+                if (canSwap) {
+                    CompactHeaderIconButton(
+                        icon = Icons.Outlined.SwapHoriz,
+                        contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
+                        tint = MaterialTheme.colorScheme.primary,
+                        tag = "cockpit-cycle-next",
+                        onClick = onCycleNext,
+                    )
+                }
+            } else if (!compactWidthStack && canSwap) {
+                CompactHeaderIconButton(
+                    icon = Icons.Outlined.SwapHoriz,
+                    contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
+                    tint = MaterialTheme.colorScheme.primary,
+                    tag = "cockpit-cycle-next",
+                    onClick = onCycleNext,
+                )
+            }
+            if (hasActiveDismiss) {
+                CompactHeaderIconButton(
+                    icon = Icons.Outlined.Close,
+                    contentDescription = "Dismiss activity",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    tag = "cockpit-soft-dismiss",
                     onClick = { onSoftDismiss(primary.id) },
-                    modifier = Modifier
-                        .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                        .testTag("cockpit-soft-dismiss"),
-                ) {
-                    Icon(
-                        imageVector = Icons.Outlined.VisibilityOff,
-                        contentDescription = "Hide activity from island",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            CompactHeaderIconButton(
+                icon = Icons.Outlined.KeyboardArrowUp,
+                contentDescription = "Collapse Dynamic Island",
+                tint = MaterialTheme.colorScheme.onSurface,
+                tag = "cockpit-collapse",
+                onClick = onCollapse,
+            )
+        }
+
+        // Sleek compact icon-only action strip (zero oversized text pills) when 4+ actions or compact width.
+        if (splitCompactActionBar) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("cockpit-header-actions"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny, Alignment.End),
+            ) {
+                when (primary) {
+                    is CockpitLiveActivity.TimerRecordingActivity ->
+                        StatusChip(label = primary.timeText, accent = accent)
+                    is CockpitLiveActivity.MediaActivity ->
+                        StatusChip(label = primary.artist.ifBlank { "Playing" }, accent = accent)
+                    is CockpitLiveActivity.IdleQuickDockActivity ->
+                        StatusChip(label = telemetry.statusHeadline, accent = accent)
+                    else -> Unit
+                }
+                Spacer(Modifier.weight(1f))
+                if (compactWidthStack && canSwap) {
+                    CompactHeaderIconButton(
+                        icon = Icons.Outlined.SwapHoriz,
+                        contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
+                        tint = MaterialTheme.colorScheme.primary,
+                        tag = "cockpit-cycle-next",
+                        onClick = onCycleNext,
+                    )
+                }
+                if (hasRestore) {
+                    CompactHeaderIconButton(
+                        icon = Icons.Outlined.Restore,
+                        contentDescription = "Restore hidden (${slotState.dismissedCount})",
+                        tint = MaterialTheme.colorScheme.secondary,
+                        tag = "cockpit-restore-hidden",
+                        onClick = onRestoreDismissed,
+                    )
+                }
+                CompactHeaderIconButton(
+                    icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                    contentDescription = primaryOpenDescription,
+                    tint = accent,
+                    tag = "cockpit-expanded-open-app",
+                    onClick = onPrimaryOpenClick,
+                )
+                if (primary is CockpitLiveActivity.TransferActivity && primary.canStop) {
+                    CompactHeaderIconButton(
+                        icon = Icons.Outlined.Stop,
+                        contentDescription = "Stop Desktop Drop",
+                        tint = MaterialTheme.colorScheme.error,
+                        destructive = true,
+                        tag = "cockpit-stop-drop",
+                        onClick = onStopDesktopDrop,
+                    )
+                }
+                if (primary is CockpitLiveActivity.WhatsAppAlertActivity && primary.canInlineReply) {
+                    CompactHeaderIconButton(
+                        icon = Icons.AutoMirrored.Outlined.Reply,
+                        contentDescription = if (slotState.inlineReplyOpen) "Hide Reply" else "Reply",
+                        tint = if (slotState.inlineReplyOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                        highlighted = slotState.inlineReplyOpen,
+                        tag = "cockpit-reply-toggle",
+                        onClick = { onToggleInlineReply(!slotState.inlineReplyOpen) },
                     )
                 }
             }
-            IconButton(
-                onClick = onCollapse,
-                modifier = Modifier
-                    .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                    .testTag("cockpit-collapse"),
-            ) {
-                Icon(
-                    imageVector = Icons.Outlined.KeyboardArrowUp,
-                    contentDescription = "Collapse Dynamic Island",
-                    tint = MaterialTheme.colorScheme.onSurface,
-                )
-            }
         }
 
-        // Queue switcher & soft-dismiss restore strip when multiple or hidden items exist.
-        if (slotState.visibleQueue.size > 1 || slotState.dismissedCount > 0) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-            ) {
-                if (slotState.visibleQueue.size > 1) {
-                    OutlinedButton(
-                        onClick = onCycleNext,
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-cycle-next"),
-                    ) {
-                        Text("Next activity (${slotState.visibleQueue.size})", maxLines = 1)
-                    }
-                }
-                if (slotState.dismissedCount > 0) {
-                    TextButton(
-                        onClick = onRestoreDismissed,
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-restore-hidden"),
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.Restore,
-                            contentDescription = null,
-                            modifier = Modifier.size(Tokens.IconSmall),
-                        )
-                        Spacer(Modifier.width(Tokens.Tiny))
-                        Text("Restore (${slotState.dismissedCount})", maxLines = 1)
-                    }
-                }
-            }
-        }
-
-        // Active Live Activity interactive body.
+        // Active Live Activity minimal body (progress bar or inline reply field only).
         when (primary) {
             is CockpitLiveActivity.TransferActivity -> {
                 if (primary.progressFraction != null) {
@@ -984,66 +1081,9 @@ private fun ExpandedCockpitCardContent(
                         trackColor = GlassPalette.Dim,
                     )
                 }
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    Button(
-                        onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text(if (primary.isDesktopDrop) "Open Drop" else "Open Transfers", maxLines = 1)
-                    }
-                    if (primary.canStop) {
-                        OutlinedButton(
-                            onClick = onStopDesktopDrop,
-                            border = BorderStroke(Tokens.GlassBorderHero, MaterialTheme.colorScheme.error),
-                            colors = ButtonDefaults.outlinedButtonColors(
-                                containerColor = GlassPalette.DestructiveGlow,
-                                contentColor = MaterialTheme.colorScheme.error,
-                            ),
-                            modifier = Modifier
-                                .defaultMinSize(minHeight = Tokens.TouchTarget)
-                                .testTag("cockpit-stop-drop"),
-                        ) {
-                            Icon(Icons.Outlined.Close, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
-                            Spacer(Modifier.width(Tokens.Tiny))
-                            Text("Stop", maxLines = 1)
-                        }
-                    }
-                }
             }
 
             is CockpitLiveActivity.WhatsAppAlertActivity -> {
-                FlowRow(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-                ) {
-                    Button(
-                        onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text("Open Chat", maxLines = 1)
-                    }
-                    if (primary.canInlineReply) {
-                        OutlinedButton(
-                            onClick = { onToggleInlineReply(!slotState.inlineReplyOpen) },
-                            modifier = Modifier
-                                .defaultMinSize(minHeight = Tokens.TouchTarget)
-                                .testTag("cockpit-reply-toggle"),
-                        ) {
-                            Icon(Icons.Outlined.Sms, contentDescription = null, modifier = Modifier.size(Tokens.IconSmall))
-                            Spacer(Modifier.width(Tokens.Tiny))
-                            Text(if (slotState.inlineReplyOpen) "Hide Reply" else "Reply", maxLines = 1)
-                        }
-                    }
-                }
                 AnimatedVisibility(visible = slotState.inlineReplyOpen && primary.canInlineReply) {
                     Row(
                         modifier = Modifier
@@ -1083,93 +1123,12 @@ private fun ExpandedCockpitCardContent(
                 }
             }
 
-            is CockpitLiveActivity.MapsNavActivity -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    if (primary.distanceText.isNotEmpty()) {
-                        StatusChip(label = primary.distanceText, accent = accent)
-                    }
-                    if (primary.etaText.isNotEmpty()) {
-                        StatusChip(label = primary.etaText, accent = secondaryAccent)
-                    }
-                    Spacer(Modifier.weight(1f))
-                    Button(
-                        onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text("Open Maps", maxLines = 1)
-                    }
-                }
-            }
-
-            is CockpitLiveActivity.TimerRecordingActivity -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    StatusChip(label = primary.timeText, accent = accent)
-                    Button(
-                        onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text("Open App", maxLines = 1)
-                    }
-                }
-            }
-
-            is CockpitLiveActivity.MediaActivity -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    StatusChip(label = primary.artist.ifBlank { "Playing" }, accent = accent)
-                    Button(
-                        onClick = { onTapActivity(primary) },
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text("Open App", maxLines = 1)
-                    }
-                }
-            }
-
-            // Calls, screen recordings and navigation own the whole island and never reach this card.
+            is CockpitLiveActivity.MapsNavActivity,
+            is CockpitLiveActivity.TimerRecordingActivity,
+            is CockpitLiveActivity.MediaActivity,
             is CockpitLiveActivity.CallActivity,
-            is CockpitLiveActivity.ScreenRecordingActivity -> Unit
-
-            is CockpitLiveActivity.IdleQuickDockActivity -> {
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    StatusChip(label = telemetry.statusHeadline, accent = accent)
-                    OutlinedButton(
-                        onClick = onOpenDriveLiftCockpit,
-                        modifier = Modifier
-                            .defaultMinSize(minHeight = Tokens.TouchTarget)
-                            .testTag("cockpit-expanded-open-app"),
-                    ) {
-                        Text("Cockpit Hub", maxLines = 1)
-                        Spacer(Modifier.width(Tokens.Tiny))
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                            contentDescription = null,
-                            modifier = Modifier.size(Tokens.IconSmall),
-                        )
-                    }
-                }
-            }
+            is CockpitLiveActivity.ScreenRecordingActivity,
+            is CockpitLiveActivity.IdleQuickDockActivity -> Unit
         }
 
         // 5-Control Tactile Glass Quick Deck (Android 17 Pixel Style):
@@ -1880,6 +1839,50 @@ private fun TorchSosPillButton(
             color = fgColor,
             maxLines = 1,
         )
+    }
+}
+
+@Composable
+private fun CompactHeaderIconButton(
+    icon: ImageVector,
+    contentDescription: String,
+    tint: Color,
+    tag: String,
+    onClick: () -> Unit,
+    destructive: Boolean = false,
+    highlighted: Boolean = false,
+) {
+    val wellModifier = when {
+        destructive -> Modifier.destructiveGlowBorder(CircleShape)
+        highlighted -> Modifier
+            .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.22f), CircleShape)
+            .border(Tokens.Hairline, MaterialTheme.colorScheme.primary.copy(alpha = 0.7f), CircleShape)
+        else -> Modifier
+            .background(GlassPalette.Well, CircleShape)
+            .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape)
+    }
+    Box(
+        modifier = Modifier
+            .size(Tokens.TouchTarget)
+            .clip(CircleShape)
+            .clickable(role = Role.Button, onClickLabel = contentDescription, onClick = onClick)
+            .testTag(tag),
+        contentAlignment = Alignment.Center,
+    ) {
+        Box(
+            modifier = Modifier
+                .size(Tokens.Cockpit.HeaderActionWell)
+                .clip(CircleShape)
+                .then(wellModifier),
+            contentAlignment = Alignment.Center,
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = contentDescription,
+                tint = tint,
+                modifier = Modifier.size(Tokens.IconSmall),
+            )
+        }
     }
 }
 

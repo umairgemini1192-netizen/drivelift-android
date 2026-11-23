@@ -269,8 +269,12 @@ class CockpitWindowOrderAndTelemetryTest {
             CockpitQuickControlsController.sanitizeSsid("\"StormFiber\"", true, true, false),
         )
         assertEquals(
-            "Off",
+            "Wi-Fi Off",
             CockpitQuickControlsController.sanitizeSsid("\"StormFiber\"", false, false, true),
+        )
+        assertEquals(
+            "Wi-Fi Off",
+            CockpitQuickControlsController.sanitizeSsid("\"StormFiber\"", true, false, true),
         )
 
         assertEquals("2 connected", CockpitQuickControlsController.formatBluetoothStatus(true, true, 2))

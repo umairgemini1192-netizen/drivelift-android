@@ -1,11 +1,18 @@
 package com.drivelift.app.feature.cockpit.overlay
 
+import android.Manifest
+import android.annotation.SuppressLint
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.PixelFormat
 import android.graphics.Rect
+import android.location.Location
+import android.location.LocationListener
+import android.location.LocationManager
 import android.os.Build
+import android.os.Looper
 import android.view.DisplayCutout
 import android.view.Gravity
 import android.view.MotionEvent
@@ -18,12 +25,14 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.wrapContentSize
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.core.content.ContextCompat
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
@@ -39,6 +48,7 @@ import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
+import com.drivelift.app.feature.cockpit.activities.TripDistanceFormat
 import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.notifications.CockpitNotificationListener
 import com.drivelift.app.feature.cockpit.ui.CockpitActivityActions
@@ -391,6 +401,50 @@ internal class CockpitOverlayWindowController(
                 }
                 val pinnedApps = remember(prefs.pinnedPackages) {
                     cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
+                }
+                val hasActiveNavigation = slotState.visibleQueue.any { it is CockpitLiveActivity.MapsNavActivity }
+                DisposableEffect(hasActiveNavigation) {
+                    if (!hasActiveNavigation) {
+                        onDispose {}
+                    } else {
+                        val hasFine = ContextCompat.checkSelfPermission(
+                            serviceContext,
+                            Manifest.permission.ACCESS_FINE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val hasCoarse = ContextCompat.checkSelfPermission(
+                            serviceContext,
+                            Manifest.permission.ACCESS_COARSE_LOCATION,
+                        ) == PackageManager.PERMISSION_GRANTED
+                        val locationManager = if (hasFine || hasCoarse) {
+                            serviceContext.getSystemService(LocationManager::class.java)
+                        } else {
+                            null
+                        }
+                        val listener = LocationListener { location: Location ->
+                            if (location.hasSpeed()) {
+                                cockpit.coordinator.updateNavigationSpeed(
+                                    TripDistanceFormat.metersPerSecondToKmh(location.speed),
+                                )
+                            }
+                        }
+                        if (locationManager != null) {
+                            @SuppressLint("MissingPermission")
+                            runCatching {
+                                locationManager.requestLocationUpdates(
+                                    LocationManager.PASSIVE_PROVIDER,
+                                    1_000L,
+                                    0f,
+                                    listener,
+                                    Looper.getMainLooper(),
+                                )
+                            }
+                        }
+                        onDispose {
+                            if (locationManager != null) {
+                                runCatching { locationManager.removeUpdates(listener) }
+                            }
+                        }
+                    }
                 }
                 var fullOverlayActive by remember { mutableStateOf(slotState.isExpanded) }
 
