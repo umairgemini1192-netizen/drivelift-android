@@ -26,5 +26,7 @@ jobs:
           persist-credentials: false
       - name: Test the check itself
         run: python3 -m unittest discover -s .github/gate -p 'test_*.py'
+      - name: Check glass surface and token lint
+        run: python3 .github/gate/glass_lint.py
       - name: Check entry points and current-head UI evidence
         run: python3 .github/gate/ui_contract.py

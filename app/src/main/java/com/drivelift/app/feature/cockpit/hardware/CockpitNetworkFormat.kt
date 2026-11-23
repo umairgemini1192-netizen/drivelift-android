@@ -19,18 +19,37 @@ data class IdleNetworkSnapshot(
     val uploadText: String get() = CockpitNetworkFormat.formatRate(uploadBytesPerSec)
     val downloadText: String get() = CockpitNetworkFormat.formatRate(downloadBytesPerSec)
 
+    /** True only when upload throughput would format to at least `1K` (never `0K`). */
+    val hasUploadTraffic: Boolean
+        get() = kind != IdleNetworkKind.OFFLINE &&
+            uploadBytesPerSec >= CockpitNetworkFormat.MIN_VISIBLE_RATE_BYTES_PER_SEC
+
+    /** True only when download throughput would format to at least `1K` (never `0K`). */
+    val hasDownloadTraffic: Boolean
+        get() = kind != IdleNetworkKind.OFFLINE &&
+            downloadBytesPerSec >= CockpitNetworkFormat.MIN_VISIBLE_RATE_BYTES_PER_SEC
+
+    /** True when at least one direction has measurable throughput (`>= 1K`); false hides idle `0K`. */
+    val hasActiveTraffic: Boolean get() = hasUploadTraffic || hasDownloadTraffic
+
     /** Spoken form for the pill, since the arrows and units are visual shorthand. */
     val contentDescription: String
-        get() = if (kind == IdleNetworkKind.OFFLINE) {
-            "Offline"
-        } else {
-            "$label, uploading ${CockpitNetworkFormat.spokenRate(uploadBytesPerSec)}, " +
-                "downloading ${CockpitNetworkFormat.spokenRate(downloadBytesPerSec)}"
+        get() = when {
+            kind == IdleNetworkKind.OFFLINE -> "Offline"
+            !hasActiveTraffic -> label
+            else -> {
+                val parts = buildList {
+                    if (hasUploadTraffic) add("uploading ${CockpitNetworkFormat.spokenRate(uploadBytesPerSec)}")
+                    if (hasDownloadTraffic) add("downloading ${CockpitNetworkFormat.spokenRate(downloadBytesPerSec)}")
+                }
+                "$label, ${parts.joinToString(", ")}"
+            }
         }
 }
 
 /** Pure formatting and arithmetic for the idle network readout. Nothing here touches Android. */
 object CockpitNetworkFormat {
+    const val MIN_VISIBLE_RATE_BYTES_PER_SEC = 1024L
     private const val KIB = 1024L
     private const val MIB = 1024L * 1024L
     private const val TELEPHONY_NR = 20

@@ -80,10 +80,10 @@ import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.ui.GlassPalette
+import com.drivelift.app.ui.GlassWidgetStyle.glassWidgetSurface
 import com.drivelift.app.ui.MainActivity
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.CoroutineScope
@@ -316,7 +316,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 widthPx = tileW,
                 heightPx = tileH,
                 active = isDropActive,
-                accentColor = GlassPalette.HudCoral,
+                accentColor = GlassPalette.DestructiveRed,
                 density = density,
                 enabled = isDropAvailable,
             ),
@@ -324,7 +324,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 widthPx = tileW,
                 heightPx = tileH,
                 active = isTorchOn,
-                accentColor = GlassPalette.HudAmber,
+                accentColor = GlassPalette.PrimaryCyan,
                 density = density,
                 enabled = isTorchAvailable,
             ),
@@ -332,7 +332,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 widthPx = tileW,
                 heightPx = tileH,
                 active = isIslandOn,
-                accentColor = GlassPalette.HudVioletBlue,
+                accentColor = GlassPalette.SecondaryViolet,
                 density = density,
                 enabled = true,
             ),
@@ -413,11 +413,12 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     ) {
         val primaryText = resColorProvider(context, R.color.cockpit_on_surface)
         val disabledText = resColorProvider(context, R.color.cockpit_on_surface_variant)
-        val dropAccent = directColorProvider(GlassPalette.HudElectricCyan)
-        val stopAccent = directColorProvider(GlassPalette.HudCoral)
-        val torchAccent = directColorProvider(GlassPalette.HudAmber)
-        val islandAccent = directColorProvider(GlassPalette.HudVioletBlue)
-        val readyAccent = directColorProvider(GlassPalette.HudEmerald)
+        val dropAccent = directColorProvider(GlassPalette.PrimaryCyan)
+        val stopAccent = directColorProvider(GlassPalette.DestructiveRed)
+        val torchAccent = directColorProvider(GlassPalette.PrimaryCyan)
+        val islandAccent = directColorProvider(GlassPalette.SecondaryViolet)
+        val readyAccent = directColorProvider(GlassPalette.SuccessGreen)
+        val drainAccent = directColorProvider(GlassPalette.SecondaryViolet)
         val dropTile = CockpitWidgetModel.dropTile(dropLive = dropLive, available = dropAvailable)
         val statusPill = CockpitWidgetModel.statusPill(dropLive = dropLive, torchOn = torchOn)
         val statusBackground = when (statusPill.tone) {
@@ -428,18 +429,18 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         val statusColor = when (statusPill.tone) {
             WidgetStatusTone.READY -> readyAccent
             WidgetStatusTone.DROP_LIVE -> dropAccent
-            WidgetStatusTone.TORCH_ON -> torchAccent
+            WidgetStatusTone.TORCH_ON -> islandAccent
         }
         val currentColor = when (battery.current.tone) {
             BatteryCurrentTone.CHARGING -> readyAccent
-            BatteryCurrentTone.DISCHARGING -> torchAccent
+            BatteryCurrentTone.DISCHARGING -> drainAccent
             BatteryCurrentTone.UNKNOWN -> disabledText
         }
 
         Column(
             modifier = GlanceModifier
                 .fillMaxSize()
-                .background(ImageProvider(bitmaps.shell))
+                .glassWidgetSurface(bitmaps.shell)
                 .padding(Tokens.Medium),
             verticalAlignment = Alignment.Vertical.CenterVertically,
         ) {
@@ -483,7 +484,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                         Image(
                             provider = ImageProvider(R.drawable.cockpit_widget_dot),
                             contentDescription = null,
-                            modifier = GlanceModifier.size(CockpitTokens.HudStatusDotSize),
+                            modifier = GlanceModifier.size(Tokens.Cockpit.HudStatusDotSize),
                             colorFilter = ColorFilter.tint(statusColor),
                         )
                         Spacer(GlanceModifier.width(Tokens.Tiny))
@@ -507,7 +508,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                             Image(
                                 provider = ImageProvider(bitmaps.batteryGauge),
                                 contentDescription = "Battery ${battery.valueText}",
-                                modifier = GlanceModifier.size(CockpitTokens.HudGaugeSize),
+                                modifier = GlanceModifier.size(Tokens.Cockpit.HudGaugeSize),
                             )
                             Text(
                                 text = battery.current.text,
@@ -536,11 +537,11 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                                 )
                             }
                         }
-                        Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
+                        Spacer(GlanceModifier.width(Tokens.Cockpit.HudPillSpacing))
                         Image(
                             provider = ImageProvider(bitmaps.ramGauge),
                             contentDescription = "RAM usage",
-                            modifier = GlanceModifier.size(CockpitTokens.HudGaugeSize),
+                            modifier = GlanceModifier.size(Tokens.Cockpit.HudGaugeSize),
                         )
                     }
                 }
@@ -564,10 +565,10 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     plateBitmap = bitmaps.dropTile,
                     modifier = GlanceModifier
                         .defaultWeight()
-                        .height(CockpitTokens.HudControlHeight)
+                        .height(Tokens.Cockpit.HudControlHeight)
                         .clickable(actionRunCallback<ToggleDesktopDropAction>()),
                 )
-                Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
+                Spacer(GlanceModifier.width(Tokens.Cockpit.HudPillSpacing))
                 SculpturalControlTile(
                     iconRes = if (torchOn) R.drawable.ic_cockpit_torch_on else R.drawable.ic_cockpit_torch_off,
                     label = when {
@@ -583,10 +584,10 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     plateBitmap = bitmaps.torchTile,
                     modifier = GlanceModifier
                         .defaultWeight()
-                        .height(CockpitTokens.HudControlHeight)
+                        .height(Tokens.Cockpit.HudControlHeight)
                         .clickable(actionRunCallback<ToggleTorchAction>()),
                 )
-                Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
+                Spacer(GlanceModifier.width(Tokens.Cockpit.HudPillSpacing))
                 SculpturalControlTile(
                     iconRes = R.drawable.ic_cockpit_tile,
                     label = if (islandOn) "Island On" else "Island",
@@ -598,7 +599,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     plateBitmap = bitmaps.islandTile,
                     modifier = GlanceModifier
                         .defaultWeight()
-                        .height(CockpitTokens.HudControlHeight)
+                        .height(Tokens.Cockpit.HudControlHeight)
                         .clickable(actionRunCallback<ToggleIslandAction>()),
                 )
             }
@@ -611,7 +612,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                 Column(
                     modifier = GlanceModifier
                         .fillMaxWidth()
-                        .background(ImageProvider(bitmaps.dockTray))
+                        .glassWidgetSurface(bitmaps.dockTray)
                         .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
                     horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
                 ) {
@@ -621,7 +622,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                     ) {
                         if (paged) PinnedPagerArrow(glyph = "‹", delta = -1, label = "Previous pinned apps", color = dropAccent)
                         pinnedApps.take(maxPinned).forEachIndexed { index, app ->
-                            if (index > 0) Spacer(GlanceModifier.width(CockpitTokens.HudPillSpacing))
+                            if (index > 0) Spacer(GlanceModifier.width(Tokens.Cockpit.HudPillSpacing))
                             val halo = bitmaps.appHalos[app.packageName]
                             // Icon above the name so four apps per page keep readable labels.
                             Column(
@@ -639,13 +640,13 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                                     Image(
                                         provider = ImageProvider(halo),
                                         contentDescription = null,
-                                        modifier = GlanceModifier.size(CockpitTokens.HudDockIconHaloSize),
+                                        modifier = GlanceModifier.size(Tokens.Cockpit.HudDockIconHaloSize),
                                     )
                                 } else {
                                     Image(
                                         provider = ImageProvider(R.drawable.ic_cockpit_app_default),
                                         contentDescription = null,
-                                        modifier = GlanceModifier.size(CockpitTokens.WidgetAppIconSize),
+                                        modifier = GlanceModifier.size(Tokens.Cockpit.WidgetAppIconSize),
                                         colorFilter = ColorFilter.tint(dropAccent),
                                     )
                                 }
@@ -669,11 +670,11 @@ class CockpitGlanceWidget : GlanceAppWidget() {
                             verticalAlignment = Alignment.Vertical.CenterVertically,
                         ) {
                             repeat(pinnedPageCount) { page ->
-                                if (page > 0) Spacer(GlanceModifier.width(CockpitTokens.HudPagerDotGap))
+                                if (page > 0) Spacer(GlanceModifier.width(Tokens.Cockpit.HudPagerDotGap))
                                 Image(
                                     provider = ImageProvider(R.drawable.cockpit_widget_dot),
                                     contentDescription = null,
-                                    modifier = GlanceModifier.size(CockpitTokens.PagerDot),
+                                    modifier = GlanceModifier.size(Tokens.Cockpit.PagerDot),
                                     colorFilter = ColorFilter.tint(if (page == pinnedPageIndex) dropAccent else disabledText),
                                 )
                             }
@@ -688,8 +689,8 @@ class CockpitGlanceWidget : GlanceAppWidget() {
     private fun PinnedPagerArrow(glyph: String, delta: Int, label: String, color: GlanceColorProvider) {
         Box(
             modifier = GlanceModifier
-                .width(CockpitTokens.HudPagerArrowWidth)
-                .height(CockpitTokens.HudDockIconHaloSize + Tokens.Small)
+                .width(Tokens.Cockpit.HudPagerArrowWidth)
+                .height(Tokens.Cockpit.HudDockIconHaloSize + Tokens.Small)
                 .semantics { contentDescription = label }
                 .clickable(actionRunCallback<PinnedPageAction>(actionParametersOf(PARAM_PAGE_DELTA to delta))),
             contentAlignment = Alignment.Center,
@@ -721,7 +722,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
         }
         Column(
             modifier = modifier
-                .background(ImageProvider(plateBitmap))
+                .glassWidgetSurface(plateBitmap)
                 .padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
             verticalAlignment = Alignment.Vertical.CenterVertically,
             horizontalAlignment = Alignment.Horizontal.CenterHorizontally,
@@ -729,7 +730,7 @@ class CockpitGlanceWidget : GlanceAppWidget() {
             Image(
                 provider = ImageProvider(iconRes),
                 contentDescription = null,
-                modifier = GlanceModifier.size(CockpitTokens.WidgetBadgeIconSize),
+                modifier = GlanceModifier.size(Tokens.Cockpit.WidgetBadgeIconSize),
                 colorFilter = ColorFilter.tint(fg),
             )
             Spacer(GlanceModifier.height(Tokens.Stroke))

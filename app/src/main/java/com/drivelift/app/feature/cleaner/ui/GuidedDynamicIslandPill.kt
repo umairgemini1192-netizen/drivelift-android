@@ -32,7 +32,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.drivelift.app.feature.cleaner.cache.GuidedPillMode
 import com.drivelift.app.feature.cleaner.cache.GuidedPillState
 import com.drivelift.app.ui.CockpitLivePalette
+import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
+import com.drivelift.app.ui.GlassSurface
 import com.drivelift.app.ui.Tokens
 
 /**
@@ -60,26 +62,17 @@ fun GuidedDynamicIslandPill(
         GuidedPillMode.GUIDED_SLEEP -> "Guided Sleep"
     }
 
-    Box(
+    GlassSurface(
+        level = GlassLevel.Island,
+        shape = Tokens.Cleaner.PillShape,
         modifier = modifier
             .fillMaxWidth()
-            .clip(CleanerTokens.PillShape)
-            .background(CockpitLivePalette.Oled)
-            .border(
-                width = Tokens.Hairline,
-                brush = Brush.verticalGradient(
-                    listOf(
-                        GlassPalette.HudRimTop,
-                        GlassPalette.HudRimBottom,
-                    ),
-                ),
-                shape = CleanerTokens.PillShape,
-            )
-            .padding(Tokens.Gutter)
             .testTag("guided-dynamic-island-pill"),
     ) {
         Column(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Tokens.Gutter),
             verticalArrangement = Arrangement.spacedBy(Tokens.Row),
         ) {
             Row(
@@ -93,7 +86,7 @@ fun GuidedDynamicIslandPill(
                 ) {
                     Spacer(
                         modifier = Modifier
-                            .size(CleanerTokens.StatusDotSize)
+                            .size(Tokens.Cleaner.StatusDotSize)
                             .clip(CircleShape)
                             .background(accent),
                     )
@@ -130,8 +123,8 @@ fun GuidedDynamicIslandPill(
                 progress = { state.progressFraction },
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(CleanerTokens.PillProgressHeight)
-                    .clip(CleanerTokens.CapacityBarShape),
+                    .height(Tokens.Cleaner.PillProgressHeight)
+                    .clip(Tokens.Cleaner.CapacityBarShape),
                 color = accent,
                 trackColor = GlassPalette.HudTrackRecessed,
             )

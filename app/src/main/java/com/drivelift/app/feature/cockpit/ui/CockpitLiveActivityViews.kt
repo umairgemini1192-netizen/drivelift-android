@@ -160,7 +160,7 @@ internal fun rememberTickingNowMs(): State<Long> {
     val provider = LocalCockpitNowMs.current
     return produceState(initialValue = provider(), provider) {
         while (true) {
-            delay(CockpitTokens.TICK_INTERVAL_MS)
+            delay(Tokens.Cockpit.TICK_INTERVAL_MS)
             value = provider()
         }
     }
@@ -187,7 +187,7 @@ internal fun SwapTransition(
     }
     LaunchedEffect(progress) {
         if (progress.value < 1f) {
-            progress.animateTo(1f, tween(CockpitTokens.SWAP_SLIDE_MS, easing = FastOutSlowInEasing))
+            progress.animateTo(1f, tween(Tokens.Cockpit.SWAP_SLIDE_MS, easing = FastOutSlowInEasing))
         }
     }
     Box(
@@ -239,13 +239,13 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                 when (axis) {
                     AXIS_HORIZONTAL -> {
                         horizontalEnd()
-                        if (total.x <= -CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
+                        if (total.x <= -Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
                             next()
-                        } else if (total.x >= CockpitTokens.CYCLE_SWIPE_THRESHOLD_PX) {
+                        } else if (total.x >= Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
                             previous()
                         }
                     }
-                    AXIS_VERTICAL -> verticalEnd(verticalTotal <= CockpitTokens.EXPAND_SWIPE_COLLAPSE_PX)
+                    AXIS_VERTICAL -> verticalEnd(verticalTotal <= Tokens.Cockpit.EXPAND_SWIPE_COLLAPSE_PX)
                     else -> Unit
                 }
             },
@@ -351,7 +351,7 @@ internal fun VoiceWaveform(modifier: Modifier = Modifier) {
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = CockpitTokens.WAVEFORM_PERIOD_MS, easing = LinearEasing),
+            animation = tween(durationMillis = Tokens.Cockpit.WAVEFORM_PERIOD_MS, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "waveform_phase",
@@ -361,13 +361,13 @@ internal fun VoiceWaveform(modifier: Modifier = Modifier) {
     Canvas(
         modifier = modifier
             .size(
-                width = CockpitTokens.WaveformBarWidth * barCount + CockpitTokens.WaveformGap * (barCount - 1),
-                height = CockpitTokens.WaveformHeight,
+                width = Tokens.Cockpit.WaveformBarWidth * barCount + Tokens.Cockpit.WaveformGap * (barCount - 1),
+                height = Tokens.Cockpit.WaveformHeight,
             )
             .semantics { contentDescription = "Call audio is active" },
     ) {
-        val barWidth = CockpitTokens.WaveformBarWidth.toPx()
-        val gap = CockpitTokens.WaveformGap.toPx()
+        val barWidth = Tokens.Cockpit.WaveformBarWidth.toPx()
+        val gap = Tokens.Cockpit.WaveformGap.toPx()
         val minHeight = size.height * WAVEFORM_MIN_FRACTION
         for (index in 0 until barCount) {
             val turn = 2f * PI.toFloat()
@@ -394,14 +394,14 @@ internal fun PulsingDot(color: Color, modifier: Modifier = Modifier) {
         initialValue = 1f,
         targetValue = DOT_MIN_ALPHA,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = CockpitTokens.RECORDING_PULSE_MS, easing = LinearEasing),
+            animation = tween(durationMillis = Tokens.Cockpit.RECORDING_PULSE_MS, easing = LinearEasing),
             repeatMode = RepeatMode.Reverse,
         ),
         label = "dot_alpha",
     )
     Box(
         modifier = modifier
-            .size(CockpitTokens.RecordingDot)
+            .size(Tokens.Cockpit.RecordingDot)
             .graphicsLayer { alpha = if (reducedMotion) 1f else pulseAlpha }
             .clip(CircleShape)
             .background(color),
@@ -478,7 +478,7 @@ internal fun RowScope.CollapsedRecordingContent(recording: CockpitLiveActivity.S
     Spacer(Modifier.width(Tokens.Small))
     Box(
         modifier = Modifier
-            .size(CockpitTokens.RecordingStopBox)
+            .size(Tokens.Cockpit.RecordingStopBox)
             .clip(RoundedCornerShape(Tokens.Tiny))
             .background(CockpitLivePalette.Recording)
             .semantics { contentDescription = "Screen recording in progress" },
@@ -561,7 +561,7 @@ private fun ActivityPagerDots(count: Int, activeIndex: Int) {
         for (index in 0 until count) {
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.PagerDot)
+                    .size(Tokens.Cockpit.PagerDot)
                     .clip(CircleShape)
                     .background(
                         if (index == activeIndex) CockpitLivePalette.White else CockpitLivePalette.Charcoal,
@@ -623,7 +623,7 @@ private fun IncomingCallBanner(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = CockpitTokens.ANSWER_PULSE_MS, easing = LinearEasing),
+            animation = tween(durationMillis = Tokens.Cockpit.ANSWER_PULSE_MS, easing = LinearEasing),
             repeatMode = RepeatMode.Restart,
         ),
         label = "answer_pulse",
@@ -635,7 +635,7 @@ private fun IncomingCallBanner(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        CallAvatar(avatar = call.avatar, name = call.callerName, size = CockpitTokens.CallAvatar)
+        CallAvatar(avatar = call.avatar, name = call.callerName, size = Tokens.Cockpit.CallAvatar)
         Column(modifier = Modifier.weight(1f)) {
             Text(
                 text = call.callerName,
@@ -654,7 +654,7 @@ private fun IncomingCallBanner(
             )
         }
         CallCircleButton(
-            size = CockpitTokens.CallActionButton,
+            size = Tokens.Cockpit.CallActionButton,
             container = CockpitLivePalette.Decline,
             content = CockpitLivePalette.White,
             icon = Icons.Outlined.CallEnd,
@@ -666,7 +666,7 @@ private fun IncomingCallBanner(
             if (!reducedMotion) {
                 Box(
                     modifier = Modifier
-                        .size(CockpitTokens.CallActionButton)
+                        .size(Tokens.Cockpit.CallActionButton)
                         .graphicsLayer {
                             val scale = 1f + PULSE_HALO_SCALE * pulse
                             scaleX = scale
@@ -678,7 +678,7 @@ private fun IncomingCallBanner(
                 )
             }
             CallCircleButton(
-                size = CockpitTokens.CallActionButton,
+                size = Tokens.Cockpit.CallActionButton,
                 container = CockpitLivePalette.Answer,
                 content = CockpitLivePalette.White,
                 icon = Icons.Outlined.Call,
@@ -701,7 +701,7 @@ private fun OngoingCallCard(
     LaunchedEffect(call.id) {
         while (true) {
             refresh(call)
-            delay(CockpitTokens.AUDIO_REFRESH_MS)
+            delay(Tokens.Cockpit.AUDIO_REFRESH_MS)
         }
     }
     Column(
@@ -715,7 +715,7 @@ private fun OngoingCallCard(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
         ) {
-            CallAvatar(avatar = call.avatar, name = call.callerName, size = CockpitTokens.CallAvatar)
+            CallAvatar(avatar = call.avatar, name = call.callerName, size = Tokens.Cockpit.CallAvatar)
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = call.callerName,
@@ -735,7 +735,7 @@ private fun OngoingCallCard(
                 )
             }
             CallCircleButton(
-                size = CockpitTokens.CallInfoButton,
+                size = Tokens.Cockpit.CallInfoButton,
                 container = CockpitLivePalette.Charcoal,
                 content = CockpitLivePalette.White,
                 icon = Icons.Outlined.Info,
@@ -745,10 +745,10 @@ private fun OngoingCallCard(
             )
         }
         BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
-            val buttonSize = if (maxWidth < CockpitTokens.COMPACT_CALL_WIDTH_DP.dp) {
-                CockpitTokens.CallControlCompact
+            val buttonSize = if (maxWidth < Tokens.Cockpit.COMPACT_CALL_WIDTH_DP.dp) {
+                Tokens.Cockpit.CallControlCompact
             } else {
-                CockpitTokens.CallControlStandard
+                Tokens.Cockpit.CallControlStandard
             }
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -862,14 +862,14 @@ private fun RecordingBanner(
         ) {
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.CallControlCompact)
+                    .size(Tokens.Cockpit.CallControlCompact)
                     .clip(CircleShape)
-                    .border(CockpitTokens.StopRingWidth, CockpitLivePalette.White, CircleShape),
+                    .border(Tokens.Cockpit.StopRingWidth, CockpitLivePalette.White, CircleShape),
                 contentAlignment = Alignment.Center,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(CockpitTokens.RecordingStopBox + Tokens.Tiny)
+                        .size(Tokens.Cockpit.RecordingStopBox + Tokens.Tiny)
                         .clip(RoundedCornerShape(Tokens.Tiny))
                         .background(CockpitLivePalette.Recording)
                         .semantics { contentDescription = "Stop screen recording" },
@@ -948,7 +948,7 @@ private fun NavigationCard(
             }
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.NavManeuverBox)
+                    .size(Tokens.Cockpit.NavManeuverBox)
                     .clip(RoundedCornerShape(Tokens.RowLoose))
                     .background(
                         if (maneuverStyle == ManeuverIconStyle.LIGHT_BADGE) {
@@ -970,7 +970,7 @@ private fun NavigationCard(
                         } else {
                             null
                         },
-                        modifier = Modifier.size(CockpitTokens.NavManeuverBox - Tokens.Medium),
+                        modifier = Modifier.size(Tokens.Cockpit.NavManeuverBox - Tokens.Medium),
                     )
                 } else {
                     Icon(
@@ -1010,7 +1010,7 @@ private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
                 Text(
                     text = TripDistanceFormat.footer(trip.droveKm, trip.remainingKm, nav.tripUsesMiles),
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = CockpitTokens.NavTripTextSize,
+                        fontSize = Tokens.Cockpit.NavTripTextSize,
                         fontFeatureSettings = "tnum",
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1027,7 +1027,7 @@ private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
                 Text(
                     text = nav.etaText,
                     style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = CockpitTokens.NavTripTextSize,
+                        fontSize = Tokens.Cockpit.NavTripTextSize,
                         fontFeatureSettings = "tnum",
                     ),
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1040,7 +1040,7 @@ private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .height(CockpitTokens.NavProgressHairline)
+                    .height(Tokens.Cockpit.NavProgressHairline)
                     .clip(CircleShape)
                     .background(CockpitLivePalette.Charcoal)
                     .testTag("cockpit-nav-progress"),
@@ -1063,7 +1063,7 @@ private fun LaneArrow(icon: ImageVector, active: Boolean, tag: String) {
         contentDescription = null,
         tint = if (active) CockpitLivePalette.White else MaterialTheme.colorScheme.onSurfaceVariant,
         modifier = Modifier
-            .size(CockpitTokens.NavLaneArrow)
+            .size(Tokens.Cockpit.NavLaneArrow)
             .testTag(tag),
     )
 }

@@ -12,6 +12,8 @@ import android.graphics.Typeface
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import com.drivelift.app.ui.GlassPalette
+import com.drivelift.app.ui.GlassWidgetLevel
+import com.drivelift.app.ui.GlassWidgetStyle
 import java.util.Locale
 import kotlin.math.cos
 import kotlin.math.roundToInt
@@ -79,71 +81,13 @@ object CockpitHudBitmapRenderer {
         heightPx: Int,
         cornerRadiusDp: Float = 26f,
         density: Float = 2.5f,
-    ): Bitmap {
-        val w = widthPx.coerceAtLeast(120)
-        val h = heightPx.coerceAtLeast(80)
-        val radiusPx = cornerRadiusDp.coerceAtMost(MAX_SYSTEM_WIDGET_RADIUS_DP) * density
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
-
-        // Base smoked obsidian gradient shell (~82% alpha).
-        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            shader = LinearGradient(
-                0f,
-                0f,
-                w.toFloat(),
-                h.toFloat(),
-                GlassPalette.HudShellFill.toArgb(),
-                GlassPalette.HudShellDeep.toArgb(),
-                Shader.TileMode.CLAMP,
-            )
-        }
-        canvas.drawRoundRect(rect, radiusPx, radiusPx, basePaint)
-
-        // Upper-left radial aurora bloom inside the obsidian shell.
-        val auroraPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            shader = RadialGradient(
-                w * 0.14f,
-                h * 0.12f,
-                maxOf(w, h) * 0.72f,
-                intArrayOf(
-                    GlassPalette.HudAuroraCyan.toArgb(),
-                    GlassPalette.HudAuroraViolet.toArgb(),
-                    android.graphics.Color.TRANSPARENT,
-                ),
-                floatArrayOf(0f, 0.45f, 1f),
-                Shader.TileMode.CLAMP,
-            )
-        }
-        canvas.drawRoundRect(rect, radiusPx, radiusPx, auroraPaint)
-
-        // 1dp diagonal specular rim stroke (#40FFFFFF -> #0DFFFFFF).
-        val strokePx = 1f * density
-        val rimRect = RectF(
-            strokePx * 0.5f,
-            strokePx * 0.5f,
-            w - strokePx * 0.5f,
-            h - strokePx * 0.5f,
-        )
-        val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = strokePx
-            shader = LinearGradient(
-                0f,
-                0f,
-                w.toFloat(),
-                h.toFloat(),
-                GlassPalette.HudRimTop.toArgb(),
-                GlassPalette.HudRimBottom.toArgb(),
-                Shader.TileMode.CLAMP,
-            )
-        }
-        canvas.drawRoundRect(rimRect, radiusPx, radiusPx, rimPaint)
-        return bitmap
-    }
+    ): Bitmap = GlassWidgetStyle.renderSurfaceBitmap(
+        widthPx = widthPx,
+        heightPx = heightPx,
+        cornerRadiusDp = cornerRadiusDp,
+        density = density,
+        level = GlassWidgetLevel.Shell,
+    )
 
     fun renderArcGaugeBitmap(
         sizePx: Int,
@@ -336,69 +280,16 @@ object CockpitHudBitmapRenderer {
         accentColor: Color,
         density: Float = 2.5f,
         enabled: Boolean = true,
-    ): Bitmap {
-        val w = widthPx.coerceAtLeast(64)
-        val h = heightPx.coerceAtLeast(36)
-        val radiusPx = cornerRadiusDp.coerceAtMost(24f) * density
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
-
-        val fillPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = when {
-                !enabled -> GlassPalette.HudTileDisabled.toArgb()
-                active -> accentColor.copy(alpha = 0.24f).toArgb()
-                else -> GlassPalette.HudTileRecessed.toArgb()
-            }
-        }
-        canvas.drawRoundRect(rect, radiusPx, radiusPx, fillPaint)
-
-        if (enabled && active) {
-            val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                shader = RadialGradient(
-                    w * 0.5f,
-                    h * 0.45f,
-                    maxOf(w, h) * 0.65f,
-                    intArrayOf(
-                        accentColor.copy(alpha = 0.34f).toArgb(),
-                        android.graphics.Color.TRANSPARENT,
-                    ),
-                    floatArrayOf(0f, 1f),
-                    Shader.TileMode.CLAMP,
-                )
-            }
-            canvas.drawRoundRect(rect, radiusPx, radiusPx, glowPaint)
-        }
-
-        val strokePx = if (enabled && active) 1.5f * density else 1f * density
-        val strokeRect = RectF(
-            strokePx * 0.5f,
-            strokePx * 0.5f,
-            w - strokePx * 0.5f,
-            h - strokePx * 0.5f,
-        )
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = strokePx
-            when {
-                !enabled -> color = GlassPalette.HudTileDisabledBorder.toArgb()
-                active -> color = accentColor.copy(alpha = 0.92f).toArgb()
-                else -> shader = LinearGradient(
-                    0f,
-                    0f,
-                    w.toFloat(),
-                    h.toFloat(),
-                    GlassPalette.HudTrackRing.toArgb(),
-                    GlassPalette.HudRimBottom.toArgb(),
-                    Shader.TileMode.CLAMP,
-                )
-            }
-        }
-        canvas.drawRoundRect(strokeRect, radiusPx, radiusPx, borderPaint)
-        return bitmap
-    }
+    ): Bitmap = GlassWidgetStyle.renderSurfaceBitmap(
+        widthPx = widthPx,
+        heightPx = heightPx,
+        cornerRadiusDp = cornerRadiusDp,
+        density = density,
+        level = GlassWidgetLevel.Tile,
+        accentColor = accentColor,
+        active = active,
+        enabled = enabled,
+    )
 
     fun renderStatusPillBitmap(
         widthPx: Int,
@@ -406,79 +297,29 @@ object CockpitHudBitmapRenderer {
         active: Boolean,
         accentColor: Color,
         density: Float = 2.5f,
-    ): Bitmap {
-        val w = widthPx.coerceAtLeast(64)
-        val h = heightPx.coerceAtLeast(24)
-        val radiusPx = (14f * density).coerceAtMost(h * 0.5f)
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
-
-        // High-contrast dark obsidian backing keeps status badges sharp on light & dark wallpapers.
-        val basePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = GlassPalette.HudStatusPillBg.toArgb()
-        }
-        canvas.drawRoundRect(rect, radiusPx, radiusPx, basePaint)
-
-        if (active) {
-            val tintPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                style = Paint.Style.FILL
-                color = accentColor.copy(alpha = 0.22f).toArgb()
-            }
-            canvas.drawRoundRect(rect, radiusPx, radiusPx, tintPaint)
-        }
-
-        val strokePx = 1.2f * density
-        val strokeRect = RectF(
-            strokePx * 0.5f,
-            strokePx * 0.5f,
-            w - strokePx * 0.5f,
-            h - strokePx * 0.5f,
-        )
-        val borderPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = strokePx
-            color = accentColor.copy(alpha = if (active) 0.9f else 0.7f).toArgb()
-        }
-        canvas.drawRoundRect(strokeRect, radiusPx, radiusPx, borderPaint)
-        return bitmap
-    }
+    ): Bitmap = GlassWidgetStyle.renderSurfaceBitmap(
+        widthPx = widthPx,
+        heightPx = heightPx,
+        cornerRadiusDp = 14f,
+        density = density,
+        level = GlassWidgetLevel.StatusPill,
+        accentColor = accentColor,
+        active = active,
+        enabled = true,
+    )
 
     fun renderDockTrayBitmap(
         widthPx: Int,
         heightPx: Int,
         cornerRadiusDp: Float = 18f,
         density: Float = 2.5f,
-    ): Bitmap {
-        val w = widthPx.coerceAtLeast(80)
-        val h = heightPx.coerceAtLeast(36)
-        val radiusPx = cornerRadiusDp.coerceAtMost(24f) * density
-        val bitmap = Bitmap.createBitmap(w, h, Bitmap.Config.ARGB_8888)
-        val canvas = Canvas(bitmap)
-        val rect = RectF(0f, 0f, w.toFloat(), h.toFloat())
-
-        val trayPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.FILL
-            color = GlassPalette.HudDockFill.toArgb()
-        }
-        canvas.drawRoundRect(rect, radiusPx, radiusPx, trayPaint)
-
-        val strokePx = 1f * density
-        val rimRect = RectF(
-            strokePx * 0.5f,
-            strokePx * 0.5f,
-            w - strokePx * 0.5f,
-            h - strokePx * 0.5f,
-        )
-        val rimPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            style = Paint.Style.STROKE
-            strokeWidth = strokePx
-            color = GlassPalette.HudTrackRing.toArgb()
-        }
-        canvas.drawRoundRect(rimRect, radiusPx, radiusPx, rimPaint)
-        return bitmap
-    }
+    ): Bitmap = GlassWidgetStyle.renderSurfaceBitmap(
+        widthPx = widthPx,
+        heightPx = heightPx,
+        cornerRadiusDp = cornerRadiusDp,
+        density = density,
+        level = GlassWidgetLevel.Dock,
+    )
 
     fun renderAppHaloBitmap(
         sizePx: Int,

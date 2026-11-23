@@ -123,36 +123,49 @@ Enforce these in code and tests, not only in this document.
 ## Native design system
 
 One theme, one source of truth. Every screen follows these rules. The look was set by the owner
-on 17 November 2026: futuristic dark glass.
+on 17 November 2026 and consolidated in PR #92: futuristic dark glass with unified semantic tokens.
 
-1. **One dark theme.** A deep indigo night sky that warms to violet at the bottom, with
-   translucent glass panels on it. There is no light theme. All raw colour values live in
-   `ui/Theme.kt` and nowhere else; screens read `MaterialTheme.colorScheme` and `GlassPalette`.
-   Android XML resources cannot read Compose colours, so the launcher icon and the window
-   theme repeat values from `ui/Theme.kt`; `LauncherIconTest` fails if the icon uses any other.
-2. **Colour by meaning.** Coral (primary) is the one accent and marks the main action. Rose red
-   (error) is used only for removal and failure. Violet and sky blue are atmosphere (backdrop,
-   progress gauge), never an action.
-3. **Glass.** `GlassBackdrop` is drawn once at the root, and once more inside a full-screen
-   dialog because a dialog is its own window. Screens and scaffolds on it are transparent.
-   Panels and rows use `GlassPanel` or `Modifier.glass`. Pinned bars use `Modifier.glassBar`,
-   which is denser. Sheets, dialogs and menus stay solid (`surfaceContainer` roles) so text on
-   them is readable. Do not nest a glass panel inside a glass panel. Inside a glass panel, flat
-   or tinted control wells and capsule pills are allowed for buttons, step controls and badges:
-   they use semantic surface and border tokens and have no glass effect of their own (owner
-   decision, issue #32).
-4. **Tokens.** Spacing, sizes, shapes and durations come from `ui/Tokens.kt`. No raw `dp` or
-   millisecond values in screens. A new token needs a reason stated in the pull request.
+1. **One dark theme.** A deep indigo night sky that warms to violet at the bottom, with deep
+   navy/charcoal translucent glass surfaces on it. There is no light theme. All raw colour values
+   live in `ui/Theme.kt` and nowhere else; screens read `MaterialTheme.colorScheme` and
+   `GlassPalette`. Android XML resources cannot read Compose colours, so the launcher icon, widget
+   drawables, and window theme repeat values from `ui/Theme.kt`; `LauncherIconTest` fails if the
+   icon uses any other.
+2. **Colour by meaning.** Electric cyan (`#00D4FF`, `primary`) marks primary actions and lead
+   interactive highlights. Soft violet (`#A78BFA`, `secondary`) provides secondary accents and
+   atmosphere. Neon green (`#34F5A0`, `tertiary` / `SuccessGreen`) marks live, charging, verified,
+   and success states. Red outline and glow (`#FF4D6D`, `error` / `DestructiveRed`) is reserved
+   strictly for stop and destructive actions (never for neutral body text or inactive tiles).
+3. **Single shared GlassSurface.** `GlassBackdrop` is drawn once at the root, and once more inside
+   a full-screen dialog because a dialog is its own window. Screens and scaffolds on it are
+   transparent. Every glass surface uses `GlassSurface` in `ui/Glass.kt` with one of four levels:
+   `Panel`, `Bar`, `Island`, and `Hero` (deep navy/charcoal 70-85% opacity, 1-1.5 dp top-left lit
+   border, real backdrop blur via `RenderEffect` on API 31+ with denser glass fallback on API 30).
+   `GlassPanel`, `Modifier.glass`, and `Modifier.glassBar` delegate to this single implementation.
+   Glance RemoteViews widgets use the matching `GlassWidgetStyle` in `ui/GlassWidgetStyle.kt`
+   (translucent gradient, hairline border, top-left highlight). Sheets, dialogs, and menus stay
+   solid (`surfaceContainer` roles) so text on them is readable. Never nest glass inside glass:
+   nested `GlassSurface` calls degrade to flat semantic control wells (`GlassPalette.Well` and
+   `GlassPalette.WellEdge`). Screens must not define ad-hoc local glass variants or local blur
+   effects (enforced by `.github/gate/glass_lint.py`).
+4. **Consolidated tokens and concentric corners.** All spacing, sizes, shapes, motion durations,
+   and feature-specific dimensions (`Tokens`, `Tokens.Cockpit`, `Tokens.Cleaner`, `Tokens.AppLock`)
+   live in `ui/Tokens.kt`. No raw `dp` or millisecond values in screens, and no scattered
+   per-feature `*Tokens.kt` objects. Nested rounded surfaces derive concentric corner radii using
+   `Tokens.concentricRadius` / `Tokens.concentricShape` (`inner = outer - inset`). A new token
+   needs a reason stated in the pull request.
 5. **Motion.** State feedback (selection, progress) and navigation: a new level slides and fades
    in, bottom bars (selection bar, move pill) rise and sink, thumbnails fade and grow in as their
    picture arrives, and the predictive back gesture previews a step up (owner decision, 19
    November 2026: full motion). Durations come from `Tokens.Motion` through `AppMotion.spec` and
    `ui/Motion.kt`, so everything snaps when the phone has animations turned off. Nothing loops or
-   moves on its own: no animated backdrop, nothing that runs without a change of state.
+   moves on its own: no animated backdrop, no auto-scrolling marquee SSID text, nothing that runs
+   without a change of state.
 6. **One thing leads** on each screen: the display-size figure, title or the dot gauge on
    Transfers, or the Play/Pause control on the video player. Glow and gradient are reserved
-   for the backdrop, that lead element, and a selected thumbnail's coral glow (owner decision,
-   19 November 2026). Ordinary panels, wells and pills use plain token borders and no glow.
+   for the backdrop, that lead element, a selected thumbnail's electric cyan glow, and destructive
+   stop controls' red outline and glow. Ordinary panels, wells, and pills use plain token borders
+   and no glow.
 7. Every interactive element has a touch target of at least `Tokens.TouchTarget` (48 dp) and a
    content description or visible label. A secondary circular well or compact pill may draw a
    smaller visual container (40 to 44 dp) only when its touch target is still at least 48 dp
@@ -203,4 +216,5 @@ Keep this list honest and update it when it changes.
   listing is made-up entries from a fake. They do not show real photographs or video frames,
   the real Drive service, animation, scrolling, or Android's own dialogs (permission, Google
   consent, removal).
-- Glass here is a translucent fill with a lit edge. There is no live blur of what is behind it.
+- Glass uses `RenderEffect` blur on API 31+ with denser glass fallback on API 30; hardware GPU blur
+  compositing has not been verified on a physical phone yet.

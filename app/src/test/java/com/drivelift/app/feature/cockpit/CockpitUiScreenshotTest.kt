@@ -80,8 +80,8 @@ import com.drivelift.app.feature.cockpit.notifications.NotificationSnapshot
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
 import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
+import com.drivelift.app.feature.cockpit.ui.computeSafePillMaxWidthDp
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.LocalCockpitNowMs
 import com.drivelift.app.feature.cockpit.ui.LocalIdleNetworkOverride
@@ -451,9 +451,9 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("Stop").assertExists()
                 compose.onNodeWithTag("cockpit-widget-battery-gauge").assertExists()
                 compose.onNodeWithTag("cockpit-widget-ram-gauge").assertExists()
-                compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
-                compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
-                compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 compose.onNodeWithTag("cockpit-widget-pinned-row").assertIsDisplayed()
             },
         )
@@ -707,7 +707,7 @@ class CockpitUiScreenshotTest {
 
             // Collapsed pill has >= 52dp hit target and expands on single tap.
             compose.onNodeWithTag("cockpit-primary-pill")
-                .assertHeightIsAtLeast(CockpitTokens.PillTouchTargetHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.PillTouchTargetHeight)
                 .performClick()
             pump(18)
             compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
@@ -930,15 +930,15 @@ class CockpitUiScreenshotTest {
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[0].assertIsNotEnabled()
 
             compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Drop"))
                 .performClick()
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Torch"))
                 .performClick()
             compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Island"))
                 .performClick()
             pump(8)
@@ -1483,12 +1483,17 @@ class CockpitUiScreenshotTest {
     private fun assertPillsClearTheStatusIcons(count: Int) {
         val root = compose.onRoot().getBoundsInRoot()
         val pills = compose.onAllNodesWithTag("cockpit-primary-pill")
+        val safeMaxWidth = computeSafePillMaxWidthDp(
+            screenWidthDp = (root.right - root.left).value.toInt(),
+            widthDeltaDp = 0,
+            hasSatelliteBubble = false,
+        )
         for (index in 0 until count) {
             val bounds = pills[index].assertIsDisplayed().getBoundsInRoot()
             assertTrue("pill $index stays on screen", bounds.left >= root.left && bounds.right <= root.right)
             assertTrue(
-                "pill $index is at most ${CockpitTokens.StatusClearPillMaxWidth}",
-                (bounds.right - bounds.left).value <= CockpitTokens.StatusClearPillMaxWidth.value + 0.5f,
+                "pill $index is at most ${safeMaxWidth}dp",
+                (bounds.right - bounds.left).value <= safeMaxWidth + 0.5f,
             )
         }
     }
