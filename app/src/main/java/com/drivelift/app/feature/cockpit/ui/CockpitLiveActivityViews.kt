@@ -947,10 +947,10 @@ private fun NavigationCard(
         null
     }
     val etaValue = nav.etaText.ifBlank { "--" }
-    val leftLabel = if (nav.tripUsesMiles) "MI LEFT" else "KM LEFT"
+    val leftLabel = "LEFT"
     val leftValue = TripDistanceFormat.hudValue(nav.remainingTripKm, nav.tripUsesMiles)
     val speedValue = TripDistanceFormat.speedValue(nav.speedKmh)
-    val drivenLabel = if (nav.tripUsesMiles) "MI DRIVEN" else "KM DRIVEN"
+    val drivenLabel = "DRIVEN"
     val drivenValue = TripDistanceFormat.hudValue(nav.droveTripKm, nav.tripUsesMiles)
 
     Column(

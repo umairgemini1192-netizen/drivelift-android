@@ -1480,6 +1480,7 @@ class CockpitUiScreenshotTest {
             label = "BATT",
             isCharging = false,
             current = CockpitWidgetModel.formatBatteryCurrent(microAmps = -510_000L, isCharging = false),
+            charge = CockpitWidgetModel.formatBatteryCharge(microAmpHours = 3_120_000L),
         )
         val charging = BatteryHudMetric(
             percent = 84,
@@ -1488,6 +1489,7 @@ class CockpitUiScreenshotTest {
             label = "CHRG",
             isCharging = true,
             current = CockpitWidgetModel.formatBatteryCurrent(microAmps = 2_450_000L, isCharging = true),
+            charge = CockpitWidgetModel.formatBatteryCharge(microAmpHours = 4_210_000L),
         )
         val ram = CockpitHudBitmapRenderer.formatRamHudMetric(
             availBytes = (1.8 * 1024 * 1024 * 1024).toLong(),
