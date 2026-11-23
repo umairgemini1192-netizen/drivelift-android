@@ -47,7 +47,9 @@ import androidx.compose.ui.semantics.semantics
 import com.drivelift.app.feature.cleaner.engine.StorageCapacityBreakdown
 import com.drivelift.app.ui.AppMotion
 import com.drivelift.app.ui.CockpitLivePalette
+import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
+import com.drivelift.app.ui.GlassSurface
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
 import com.drivelift.app.ui.formatBytes
@@ -100,7 +102,7 @@ fun CleanerMoodHeroCard(
     val targetSeverity = if (isCelebration) 0f else breakdown.healthSeverity.coerceIn(0f, 1f)
     val animatedSeverity by animateFloatAsState(
         targetValue = targetSeverity,
-        animationSpec = AppMotion.spec(CleanerTokens.MOOD_TRANSITION_MS),
+        animationSpec = AppMotion.spec(Tokens.Cleaner.MOOD_TRANSITION_MS),
         label = "cleaner-mood-severity",
     )
 
@@ -121,83 +123,87 @@ fun CleanerMoodHeroCard(
         }
     }
 
-    Box(
+    GlassSurface(
+        level = GlassLevel.Hero,
+        shape = Tokens.Cleaner.HeroShape,
+        borderBrush = Brush.linearGradient(
+            listOf(
+                activePrimary.copy(alpha = 0.65f),
+                GlassPalette.BorderMid,
+                GlassPalette.BorderBottomRight,
+            ),
+        ),
         modifier = modifier
             .fillMaxWidth()
-            .heightIn(min = CleanerTokens.HeroMinHeight)
-            .clip(CleanerTokens.HeroShape)
-            .drawBehind {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && agslShader != null) {
-                    val renderedWithAgsl = runCatching {
-                        agslShader.setFloatUniform("iResolution", size.width.coerceAtLeast(1f), size.height.coerceAtLeast(1f))
-                        agslShader.setFloatUniform("iSeverity", animatedSeverity)
-                        agslShader.setColorUniform("uCleanPrimary", cleanPrimary.toArgbInt())
-                        agslShader.setColorUniform("uCleanSecondary", cleanSecondary.toArgbInt())
-                        agslShader.setColorUniform("uAlertPrimary", alertPrimary.toArgbInt())
-                        agslShader.setColorUniform("uAlertSecondary", alertSecondary.toArgbInt())
-                        agslShader.setColorUniform("uBaseColor", baseColor.toArgbInt())
-                        drawRect(brush = ShaderBrush(agslShader))
-                    }.isSuccess
-                    if (!renderedWithAgsl) {
+            .heightIn(min = Tokens.Cleaner.HeroMinHeight)
+            .testTag("cleaner-mood-hero"),
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(min = Tokens.Cleaner.HeroMinHeight)
+                .drawBehind {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU && agslShader != null) {
+                        val renderedWithAgsl = runCatching {
+                            agslShader.setFloatUniform("iResolution", size.width.coerceAtLeast(1f), size.height.coerceAtLeast(1f))
+                            agslShader.setFloatUniform("iSeverity", animatedSeverity)
+                            agslShader.setColorUniform("uCleanPrimary", cleanPrimary.toArgbInt())
+                            agslShader.setColorUniform("uCleanSecondary", cleanSecondary.toArgbInt())
+                            agslShader.setColorUniform("uAlertPrimary", alertPrimary.toArgbInt())
+                            agslShader.setColorUniform("uAlertSecondary", alertSecondary.toArgbInt())
+                            agslShader.setColorUniform("uBaseColor", baseColor.toArgbInt())
+                            drawRect(brush = ShaderBrush(agslShader))
+                        }.isSuccess
+                        if (!renderedWithAgsl) {
+                            drawFallbackMoodBackdrop(
+                                baseColor = baseColor,
+                                primary = activePrimary,
+                                secondary = activeSecondary,
+                            )
+                        }
+                    } else {
                         drawFallbackMoodBackdrop(
                             baseColor = baseColor,
                             primary = activePrimary,
                             secondary = activeSecondary,
                         )
                     }
-                } else {
-                    drawFallbackMoodBackdrop(
-                        baseColor = baseColor,
-                        primary = activePrimary,
-                        secondary = activeSecondary,
-                    )
                 }
-            }
-            .border(
-                width = Tokens.Hairline,
-                brush = Brush.verticalGradient(
-                    listOf(
-                        activePrimary.copy(alpha = 0.55f),
-                        GlassPalette.HudRimBottom,
-                    ),
-                ),
-                shape = CleanerTokens.HeroShape,
-            )
-            .padding(Tokens.Edge)
-            .testTag("cleaner-mood-hero"),
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
-            verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                .padding(Tokens.Edge),
         ) {
-            Row(
+            Column(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically,
+                verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
             ) {
-                Text(
-                    text = headlineLabel,
-                    style = MaterialTheme.typography.labelLarge,
-                    color = activePrimary,
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        text = headlineLabel,
+                        style = MaterialTheme.typography.labelLarge,
+                        color = activePrimary,
+                    )
+                    badgeContent?.invoke()
+                }
+
+                RollingOdometerBytesCounter(
+                    bytes = reclaimableBytes,
+                    modifier = Modifier.testTag("cleaner-odometer-counter"),
                 )
-                badgeContent?.invoke()
+
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+
+                SegmentedCapacityBar(
+                    breakdown = breakdown,
+                    modifier = Modifier.fillMaxWidth(),
+                )
             }
-
-            RollingOdometerBytesCounter(
-                bytes = reclaimableBytes,
-                modifier = Modifier.testTag("cleaner-odometer-counter"),
-            )
-
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-
-            SegmentedCapacityBar(
-                breakdown = breakdown,
-                modifier = Modifier.fillMaxWidth(),
-            )
         }
     }
 }
@@ -249,8 +255,8 @@ fun RollingOdometerBytesCounter(
             snap()
         } else {
             spring(
-                dampingRatio = CleanerTokens.ODOMETER_SPRING_DAMPING,
-                stiffness = CleanerTokens.ODOMETER_SPRING_STIFFNESS,
+                dampingRatio = Tokens.Cleaner.ODOMETER_SPRING_DAMPING,
+                stiffness = Tokens.Cleaner.ODOMETER_SPRING_STIFFNESS,
                 visibilityThreshold = Spring.DefaultDisplacementThreshold,
             )
         },
@@ -300,8 +306,8 @@ fun SegmentedCapacityBar(
         Canvas(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(CleanerTokens.CapacityBarHeight)
-                .clip(CleanerTokens.CapacityBarShape)
+                .height(Tokens.Cleaner.CapacityBarHeight)
+                .clip(Tokens.Cleaner.CapacityBarShape)
                 .semantics {
                     progressBarRangeInfo = ProgressBarRangeInfo(
                         current = breakdown.healthSeverity.coerceIn(0f, 1f),
@@ -316,7 +322,7 @@ fun SegmentedCapacityBar(
                 cornerRadius = radius,
             )
 
-            val gapPx = CleanerTokens.CapacitySegmentGap.toPx()
+            val gapPx = Tokens.Cleaner.CapacitySegmentGap.toPx()
             val segments = listOf(
                 safeFraction to GlassPalette.HudEmerald,
                 cacheFraction to GlassPalette.HudElectricCyan,
@@ -383,7 +389,7 @@ private fun CapacityLegendItem(
     ) {
         Spacer(
             modifier = Modifier
-                .size(CleanerTokens.LegendDotSize)
+                .size(Tokens.Cleaner.LegendDotSize)
                 .clip(CircleShape)
                 .background(dotColor),
         )

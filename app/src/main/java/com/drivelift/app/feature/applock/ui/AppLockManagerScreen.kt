@@ -382,7 +382,7 @@ private fun MasterStatusPanel(
 ) {
     GlassPanel(
         modifier = Modifier.fillMaxWidth().testTag("applock-master-card"),
-        shape = AppLockTokens.StatusCardShape,
+        shape = Tokens.AppLock.StatusCardShape,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(Tokens.Gutter),
@@ -578,7 +578,7 @@ private fun MonitoringEngineCard(
             ) {
                 Box(
                     modifier = Modifier
-                        .size(AppLockTokens.StatusDotSize)
+                        .size(Tokens.AppLock.StatusDotSize)
                         .clip(CircleShape)
                         .background(dotColor),
                 )
@@ -650,7 +650,7 @@ private fun ProtectSettingsCard(
 ) {
     GlassPanel(
         modifier = Modifier.fillMaxWidth().testTag("applock-protect-settings-card"),
-        shape = AppLockTokens.StatusCardShape,
+        shape = Tokens.AppLock.StatusCardShape,
     ) {
         Column(
             modifier = Modifier.fillMaxWidth().padding(Tokens.Gutter),
@@ -663,7 +663,7 @@ private fun ProtectSettingsCard(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(AppLockTokens.AppIconBadgeSize)
+                            .size(Tokens.AppLock.AppIconBadgeSize)
                             .clip(CircleShape)
                             .background(
                                 if (isProtected) MaterialTheme.colorScheme.tertiaryContainer
@@ -847,9 +847,9 @@ private fun GracePeriodPill(
     Box(
         modifier = Modifier
             .heightIn(min = Tokens.TouchTarget)
-            .clip(AppLockTokens.ChipShape)
+            .clip(Tokens.AppLock.ChipShape)
             .background(bg)
-            .border(Tokens.Hairline, border, AppLockTokens.ChipShape)
+            .border(Tokens.Hairline, border, Tokens.AppLock.ChipShape)
             .clickable(role = Role.RadioButton, onClick = onClick)
             .padding(horizontal = Tokens.Gutter, vertical = Tokens.Row)
             .testTag(tag),
@@ -884,7 +884,7 @@ private fun InstalledAppToggleRow(
         ) {
             Box(
                 modifier = Modifier
-                    .size(AppLockTokens.AppIconBadgeSize)
+                    .size(Tokens.AppLock.AppIconBadgeSize)
                     .clip(CircleShape)
                     .background(
                         if (entry.isLocked) MaterialTheme.colorScheme.primaryContainer

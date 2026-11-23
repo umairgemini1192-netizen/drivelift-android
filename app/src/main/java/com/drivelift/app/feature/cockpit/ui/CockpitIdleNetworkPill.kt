@@ -29,12 +29,14 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.hardware.CockpitNetworkFormat
 import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
 import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.ui.CockpitLivePalette
+import com.drivelift.app.ui.TABULAR_DIGITS
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -67,8 +69,8 @@ private fun rememberIdleNetworkSnapshot(): IdleNetworkSnapshot {
 
 /**
  * The collapsed pill when no live activity is on screen. Left of the camera cutout: the active
- * connection. Right of it: upload and download rate, for example `12K` with a triangle up and
- * `1.4M` with a triangle down.
+ * connection (left-aligned with end ellipsis). Right of it: live tabular upload and download rates
+ * only while traffic is active (`>= 1K`), hiding `0K up / 0K down` when idle.
  */
 @Composable
 internal fun RowScope.CollapsedIdleNetworkContent() {
@@ -81,7 +83,7 @@ internal fun RowScope.CollapsedIdleNetworkContent() {
     val connectionTint = if (net.kind == IdleNetworkKind.OFFLINE) {
         MaterialTheme.colorScheme.onSurfaceVariant
     } else {
-        MaterialTheme.colorScheme.tertiary
+        MaterialTheme.colorScheme.primary
     }
     Row(
         modifier = Modifier
@@ -101,25 +103,39 @@ internal fun RowScope.CollapsedIdleNetworkContent() {
             text = net.label,
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurface,
+            textAlign = TextAlign.Start,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
     }
-    Spacer(Modifier.width(Tokens.Small))
-    if (net.kind != IdleNetworkKind.OFFLINE) {
+    if (net.hasActiveTraffic) {
+        Spacer(Modifier.width(Tokens.Small))
         Row(
             modifier = Modifier
                 .testTag("cockpit-idle-speed")
                 .semantics(mergeDescendants = true) {
-                    contentDescription = "Uploading ${CockpitNetworkFormat.spokenRate(net.uploadBytesPerSec)}, " +
-                        "downloading ${CockpitNetworkFormat.spokenRate(net.downloadBytesPerSec)}"
+                    val parts = buildList {
+                        if (net.hasUploadTraffic) {
+                            add("Uploading ${CockpitNetworkFormat.spokenRate(net.uploadBytesPerSec)}")
+                        }
+                        if (net.hasDownloadTraffic) {
+                            add("downloading ${CockpitNetworkFormat.spokenRate(net.downloadBytesPerSec)}")
+                        }
+                    }
+                    contentDescription = parts.joinToString(", ")
                 },
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
         ) {
-            SpeedFigure(text = net.uploadText, up = true, tint = CockpitLivePalette.Cyan)
-            Spacer(Modifier.width(Tokens.Tiny))
-            SpeedFigure(text = net.downloadText, up = false, tint = CockpitLivePalette.Emerald)
+            if (net.hasUploadTraffic) {
+                SpeedFigure(text = net.uploadText, up = true, tint = CockpitLivePalette.Cyan)
+            }
+            if (net.hasUploadTraffic && net.hasDownloadTraffic) {
+                Spacer(Modifier.width(Tokens.Tiny))
+            }
+            if (net.hasDownloadTraffic) {
+                SpeedFigure(text = net.downloadText, up = false, tint = CockpitLivePalette.Emerald)
+            }
         }
     }
 }
@@ -134,7 +150,7 @@ private fun SpeedFigure(text: String, up: Boolean, tint: Color) {
             text = text,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.SemiBold,
-                fontFeatureSettings = "tnum",
+                fontFeatureSettings = TABULAR_DIGITS,
             ),
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
@@ -146,7 +162,7 @@ private fun SpeedFigure(text: String, up: Boolean, tint: Color) {
 /** A small filled triangle. Drawn rather than typed so it renders the same on every font. */
 @Composable
 private fun SpeedTriangle(up: Boolean, tint: Color) {
-    Canvas(Modifier.size(CockpitTokens.IdleSpeedArrow)) {
+    Canvas(Modifier.size(Tokens.Cockpit.IdleSpeedArrow)) {
         val w = size.width
         val h = size.height
         val inset = w * 0.12f

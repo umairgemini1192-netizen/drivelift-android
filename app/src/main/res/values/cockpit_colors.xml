@@ -8,26 +8,29 @@
     <color name="cockpit_surface_container_high">#FF202358</color>
     <color name="cockpit_on_surface">#FFF3F1FF</color>
     <color name="cockpit_on_surface_variant">#FFBDB9DE</color>
-    <color name="cockpit_primary">#FFFF8F70</color>
-    <color name="cockpit_secondary">#FFA596FF</color>
-    <color name="cockpit_tertiary">#FF62C6FF</color>
-    <color name="cockpit_error">#FFFF6482</color>
+    <color name="cockpit_primary">#FF00D4FF</color>
+    <color name="cockpit_secondary">#FFA78BFA</color>
+    <color name="cockpit_tertiary">#FF34F5A0</color>
+    <color name="cockpit_error">#FFFF4D6D</color>
     <color name="cockpit_outline_variant">#FF373A72</color>
     <color name="cockpit_scrim">#FF000000</color>
 
-    <!-- Translucent glass strokes and tinted pill fills matching GlassPalette. -->
-    <color name="cockpit_glass_card_stroke">#52FFFFFF</color>
-    <color name="cockpit_glass_well_fill">#FF151842</color>
-    <color name="cockpit_glass_well_stroke">#38FFFFFF</color>
-    <color name="cockpit_pill_cyan_fill">#FF123E5C</color>
-    <color name="cockpit_pill_coral_fill">#FF5A2A22</color>
-    <color name="cockpit_pill_violet_fill">#FF2F2876</color>
+    <!-- Translucent navy/charcoal glass fills, top-left highlights, and hairline borders matching GlassWidgetStyle. -->
+    <color name="cockpit_glass_fill_top">#B80E1428</color>
+    <color name="cockpit_glass_fill_bottom">#D9050811</color>
+    <color name="cockpit_glass_highlight_top_left">#28FFFFFF</color>
+    <color name="cockpit_glass_card_stroke">#5CFFFFFF</color>
+    <color name="cockpit_glass_well_fill">#A6101628</color>
+    <color name="cockpit_glass_well_stroke">#33FFFFFF</color>
+    <color name="cockpit_pill_cyan_fill">#FF003B4D</color>
+    <color name="cockpit_pill_coral_fill">#FF5E1429</color>
+    <color name="cockpit_pill_violet_fill">#FF332366</color>
 
-    <!-- Status pill colours matched to GlassPalette.Hud* (Home Screen widget cannot read Compose colours). -->
+    <!-- Status pill colours matched to GlassPalette semantic accents (Home Screen widget cannot read Compose colours). -->
     <color name="cockpit_status_pill_bg">#EB070A14</color>
-    <color name="cockpit_status_ready_stroke">#B334D399</color>
-    <color name="cockpit_status_live_tint">#3838BDF8</color>
-    <color name="cockpit_status_live_stroke">#E638BDF8</color>
-    <color name="cockpit_status_torch_tint">#38FBBF24</color>
-    <color name="cockpit_status_torch_stroke">#E6FBBF24</color>
+    <color name="cockpit_status_ready_stroke">#B334F5A0</color>
+    <color name="cockpit_status_live_tint">#3800D4FF</color>
+    <color name="cockpit_status_live_stroke">#E600D4FF</color>
+    <color name="cockpit_status_torch_tint">#38A78BFA</color>
+    <color name="cockpit_status_torch_stroke">#E6A78BFA</color>
 </resources>

@@ -74,7 +74,6 @@ import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
 import com.drivelift.app.feature.cockpit.ui.CockpitSetupContent
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.feature.cockpit.ui.LocalCockpitNowMs
@@ -443,9 +442,9 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("Stop").assertExists()
                 compose.onNodeWithTag("cockpit-widget-battery-gauge").assertExists()
                 compose.onNodeWithTag("cockpit-widget-ram-gauge").assertExists()
-                compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
-                compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
-                compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
+                compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 compose.onNodeWithTag("cockpit-widget-pinned-row").assertIsDisplayed()
             },
         )
@@ -699,7 +698,7 @@ class CockpitUiScreenshotTest {
 
             // Collapsed pill has >= 52dp hit target and expands on single tap.
             compose.onNodeWithTag("cockpit-primary-pill")
-                .assertHeightIsAtLeast(CockpitTokens.PillTouchTargetHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.PillTouchTargetHeight)
                 .performClick()
             pump(18)
             compose.onNodeWithTag("cockpit-expanded-card").assertIsDisplayed()
@@ -922,15 +921,15 @@ class CockpitUiScreenshotTest {
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[0].assertIsNotEnabled()
 
             compose.onAllNodesWithTag("cockpit-widget-toggle-drop")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Drop"))
                 .performClick()
             compose.onAllNodesWithTag("cockpit-widget-toggle-torch")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Torch"))
                 .performClick()
             compose.onAllNodesWithTag("cockpit-widget-toggle-island")[1]
-                .assertHeightIsAtLeast(CockpitTokens.HudControlHeight)
+                .assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight)
                 .assert(hasText("Island"))
                 .performClick()
             pump(8)

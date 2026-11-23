@@ -22,7 +22,6 @@ import androidx.compose.ui.graphics.colorspace.ColorSpaces
 import androidx.compose.ui.graphics.drawOutline
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.unit.Dp
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
@@ -72,7 +71,7 @@ fun Modifier.cockpitSpecularRim(
             initialValue = 0f,
             targetValue = 1f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = CockpitTokens.RIM_PULSE_MS, easing = LinearEasing),
+                animation = tween(durationMillis = Tokens.Cockpit.RIM_PULSE_MS, easing = LinearEasing),
                 repeatMode = RepeatMode.Restart,
             ),
             label = "phase",

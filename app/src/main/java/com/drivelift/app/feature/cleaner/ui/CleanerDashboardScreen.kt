@@ -488,7 +488,7 @@ fun ShizukuSilentModeBanner(
     modifier: Modifier = Modifier,
 ) {
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
     val isSilent = status.effectiveMode == HibernationMode.SHIZUKU_SILENT
     val accent = when (status.availability) {
         ShizukuAvailability.READY -> GlassPalette.HudEmerald
@@ -521,7 +521,7 @@ fun ShizukuSilentModeBanner(
     }
 
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = modifier
             .fillMaxWidth()
             .testTag("shizuku-status-banner"),
@@ -641,9 +641,9 @@ private fun ExecutionModeBadge(status: ShizukuStatusSnapshot) {
 
     Row(
         modifier = Modifier
-            .clip(CleanerTokens.BadgeShape)
+            .clip(Tokens.Cleaner.BadgeShape)
             .background(GlassPalette.Well)
-            .border(Tokens.Hairline, accent.copy(alpha = 0.5f), CleanerTokens.BadgeShape)
+            .border(Tokens.Hairline, accent.copy(alpha = 0.5f), Tokens.Cleaner.BadgeShape)
             .padding(horizontal = Tokens.Row, vertical = Tokens.Tiny)
             .testTag("cleaner-mode-badge"),
         verticalAlignment = Alignment.CenterVertically,
@@ -666,7 +666,7 @@ private fun ExecutionModeBadge(status: ShizukuStatusSnapshot) {
 @Composable
 private fun CleanerLoadingPanel(scannedFileCount: Int) {
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cleaner-loading-panel"),
@@ -709,10 +709,10 @@ private fun CleanerErrorAndPermissionBanner(
     onRetry: () -> Unit,
 ) {
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
 
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cleaner-error-banner"),
@@ -786,7 +786,7 @@ private fun CleanerErrorAndPermissionBanner(
 @Composable
 private fun CleanerEmptyStatePanel(onRescan: () -> Unit) {
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cleaner-empty-panel"),
@@ -832,7 +832,7 @@ private fun PostCleanCelebrationPanel(
 ) {
     val context = LocalContext.current
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cleaner-celebration-panel"),
@@ -893,10 +893,10 @@ private fun CleanerCategoryAccordion(
     val selectedInGroup = group.items.count { it.id in selectedItemIds }
     val allSelected = group.items.isNotEmpty() && selectedInGroup == group.items.size
     val stackHeader = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
 
     GlassPanel(
-        shape = CleanerTokens.AccordionShape,
+        shape = Tokens.Cleaner.AccordionShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cleaner-accordion-${group.category.name.lowercase()}"),
@@ -908,7 +908,7 @@ private fun CleanerCategoryAccordion(
         ) {
             Box(
                 modifier = Modifier
-                    .width(CleanerTokens.SafetyRailWidth)
+                    .width(Tokens.Cleaner.SafetyRailWidth)
                     .fillMaxHeight()
                     .background(railColor),
             )
@@ -993,10 +993,10 @@ private fun CleanerCategoryAccordion(
 
                 AnimatedVisibility(
                     visible = expanded,
-                    enter = expandVertically(AppMotion.spec(CleanerTokens.ACCORDION_EXPAND_MS)) +
-                        fadeIn(AppMotion.spec(CleanerTokens.ACCORDION_EXPAND_MS)),
-                    exit = shrinkVertically(AppMotion.spec(CleanerTokens.ACCORDION_EXPAND_MS)) +
-                        fadeOut(AppMotion.spec(CleanerTokens.ACCORDION_EXPAND_MS)),
+                    enter = expandVertically(AppMotion.spec(Tokens.Cleaner.ACCORDION_EXPAND_MS)) +
+                        fadeIn(AppMotion.spec(Tokens.Cleaner.ACCORDION_EXPAND_MS)),
+                    exit = shrinkVertically(AppMotion.spec(Tokens.Cleaner.ACCORDION_EXPAND_MS)) +
+                        fadeOut(AppMotion.spec(Tokens.Cleaner.ACCORDION_EXPAND_MS)),
                 ) {
                     Column(
                         modifier = Modifier
@@ -1094,11 +1094,11 @@ private fun DeepCleanCardsSection(
             val icon = deepCleanIcon(card.destination)
             val accent = deepCleanAccent(card.destination)
             GlassPanel(
-                shape = CleanerTokens.DeepCleanCardShape,
+                shape = Tokens.Cleaner.DeepCleanCardShape,
                 onClick = { onOpenDeepClean(card.destination) },
                 onClickLabel = "Open ${card.title}",
                 modifier = Modifier
-                    .widthIn(min = CleanerTokens.DeepCleanCardMinWidth)
+                    .widthIn(min = Tokens.Cleaner.DeepCleanCardMinWidth)
                     .weight(1f)
                     .heightIn(min = Tokens.TouchTarget)
                     .testTag("deep-clean-card-${card.destination.name.lowercase()}"),
@@ -1146,7 +1146,7 @@ private fun CleanerBottomActionBar(
 ) {
     val context = LocalContext.current
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
 
     Box(
         modifier = Modifier
@@ -1235,7 +1235,7 @@ private fun deepCleanAccent(destination: DeepCleanDestination): Color = when (de
     DeepCleanDestination.LARGE_FILES -> GlassPalette.HudAmber
     DeepCleanDestination.DUPLICATES -> GlassPalette.HudElectricCyan
     DeepCleanDestination.SLEEP_MODE -> GlassPalette.HudVioletBlue
-    DeepCleanDestination.RARELY_USED -> GlassPalette.HudCoral
+    DeepCleanDestination.RARELY_USED -> GlassPalette.SecondaryViolet
 }
 
 fun categoryDisplayName(category: CleanerCategory): String = when (category) {
