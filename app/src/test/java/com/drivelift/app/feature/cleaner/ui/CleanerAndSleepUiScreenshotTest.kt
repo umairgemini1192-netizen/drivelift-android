@@ -406,6 +406,7 @@ class CleanerAndSleepUiScreenshotTest {
                 compose.onNodeWithTag("guided-dynamic-island-pill").assertIsDisplayed()
                 compose.onNodeWithText("2 of 4").assertIsDisplayed()
                 compose.onNodeWithTag("guided-pill-open-settings").assertHeightIsAtLeast(Tokens.TouchTarget)
+                compose.onNodeWithTag("guided-pill-next-app").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("guided-pill-confirm").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("guided-pill-skip").assertHeightIsAtLeast(Tokens.TouchTarget)
                 compose.onNodeWithTag("guided-pill-cancel").assertHeightIsAtLeast(Tokens.TouchTarget)

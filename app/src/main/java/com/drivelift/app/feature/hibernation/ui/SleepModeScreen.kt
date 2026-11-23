@@ -130,8 +130,21 @@ fun SleepModeScreen(
             }
         },
         onConfirmGuidedStep = { module.confirmGuidedSleepStep() },
+        onNextGuidedApp = {
+            val nextPkg = module.advanceGuidedSleepToNextApp()
+            if (nextPkg != null) {
+                runCatching {
+                    context.startActivity(ShizukuSilentAdapter.createAppInfoIntent(nextPkg))
+                }
+            }
+        },
         onSkipGuidedStep = { module.skipGuidedSleepStep() },
         onCancelGuidedSession = { module.cancelGuidedSleepSession() },
+        onShizukuAction = {
+            module.handleShizukuBannerAction { intent ->
+                runCatching { context.startActivity(intent) }
+            }
+        },
         modifier = modifier,
     )
 }
@@ -157,6 +170,8 @@ fun SleepModeContent(
     onSkipGuidedStep: () -> Unit,
     onCancelGuidedSession: () -> Unit,
     modifier: Modifier = Modifier,
+    onShizukuAction: () -> Unit = {},
+    onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
 ) {
     val haptics = LocalHapticFeedback.current
 
@@ -211,6 +226,7 @@ fun SleepModeContent(
                     state = state.guidedPill,
                     onOpenAppInfo = onOpenGuidedAppInfo,
                     onConfirmStep = onConfirmGuidedStep,
+                    onNextApp = onNextGuidedApp,
                     onSkipStep = onSkipGuidedStep,
                     onCancel = onCancelGuidedSession,
                 )
@@ -234,6 +250,7 @@ fun SleepModeContent(
                 SleepModeStatusCard(
                     shizukuStatus = state.shizukuStatus,
                     candidateCount = state.candidates.size,
+                    onShizukuAction = onShizukuAction,
                 )
             }
 
@@ -377,9 +394,24 @@ fun SleepModeContent(
 private fun SleepModeStatusCard(
     shizukuStatus: ShizukuStatusSnapshot,
     candidateCount: Int,
+    onShizukuAction: () -> Unit,
 ) {
     val isSilent = shizukuStatus.effectiveMode == HibernationMode.SHIZUKU_SILENT
-    val accent = if (isSilent) GlassPalette.HudEmerald else GlassPalette.HudElectricCyan
+    val accent = when (shizukuStatus.availability) {
+        ShizukuAvailability.READY -> GlassPalette.HudEmerald
+        ShizukuAvailability.PERMISSION_REQUIRED -> MaterialTheme.colorScheme.primary
+        ShizukuAvailability.NOT_RUNNING -> GlassPalette.HudAmber
+        ShizukuAvailability.NOT_INSTALLED,
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
+        -> GlassPalette.HudElectricCyan
+    }
+    val actionLabel = when (shizukuStatus.availability) {
+        ShizukuAvailability.READY -> "Refresh Shizuku"
+        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku Silent Mode"
+        ShizukuAvailability.NOT_RUNNING -> "Open Shizuku"
+        ShizukuAvailability.NOT_INSTALLED -> "Enable Shizuku Silent Mode"
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> null
+    }
 
     GlassPanel(
         shape = CleanerTokens.CardShape,
@@ -419,6 +451,29 @@ private fun SleepModeStatusCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (actionLabel != null) {
+                if (isSilent) {
+                    OutlinedButton(
+                        onClick = onShizukuAction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("shizuku-banner-action"),
+                    ) {
+                        Text(actionLabel)
+                    }
+                } else {
+                    Button(
+                        onClick = onShizukuAction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("shizuku-banner-action"),
+                    ) {
+                        Text(actionLabel)
+                    }
+                }
+            }
         }
     }
 }

@@ -6,6 +6,12 @@ import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -317,5 +323,85 @@ class CockpitSlotPriorityTest {
                 accessibilityOverlayActive = false,
             ),
         )
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun transientEmptyStateEmissionIsDebounced500msAndIgnoredWhenActivityReturns() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val coordinator = CockpitStateCoordinator(
+            scope = scope,
+            emptyStateDebounceMs = CockpitStateCoordinator.EMPTY_STATE_DEBOUNCE_MS,
+        )
+
+        coordinator.upsertActivity(mapsActivity)
+        coordinator.setExpanded(true)
+        assertEquals(mapsActivity.id, coordinator.slotState.value.primary.id)
+        assertTrue(coordinator.slotState.value.isExpanded)
+
+        // Notification momentarily removed during an update: must NOT drop to empty before 500ms.
+        coordinator.removeByNotificationKey("notif_maps")
+        scope.advanceTimeBy(300L)
+        scope.runCurrent()
+        assertEquals(mapsActivity.id, coordinator.slotState.value.primary.id)
+        assertTrue(coordinator.slotState.value.isExpanded)
+        assertTrue(coordinator.hasPendingEmptyDebounceForTest())
+
+        // Activity re-emits within 500ms: debounce cancels and Island stays open without glitch.
+        coordinator.upsertActivity(mapsActivity.copy(distanceText = "200 m"))
+        scope.advanceTimeBy(1_000L)
+        scope.runCurrent()
+        assertEquals(mapsActivity.id, coordinator.slotState.value.primary.id)
+        assertFalse(coordinator.hasPendingEmptyDebounceForTest())
+
+        // Genuine removal lasting >= 500ms cleanly commits empty/idle state.
+        coordinator.removeByNotificationKey("notif_maps")
+        scope.advanceTimeBy(500L)
+        scope.runCurrent()
+        assertTrue(coordinator.slotState.value.primary is CockpitLiveActivity.IdleQuickDockActivity)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun pendingAutoCollapseTimerIsCancelledOnTouchExpansionOrStateUpdate() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        val coordinator = CockpitStateCoordinator(scope = scope)
+
+        coordinator.upsertActivity(timerActivity)
+        coordinator.setExpanded(true)
+
+        // Touch cancels pending auto-collapse.
+        coordinator.scheduleAutoCollapse(3_000L)
+        assertTrue(coordinator.hasPendingAutoCollapseForTest())
+        coordinator.onUserInteraction()
+        assertFalse(coordinator.hasPendingAutoCollapseForTest())
+        scope.advanceTimeBy(5_000L)
+        scope.runCurrent()
+        assertTrue(coordinator.slotState.value.isExpanded)
+
+        // New state update cancels pending auto-collapse.
+        coordinator.scheduleAutoCollapse(3_000L)
+        assertTrue(coordinator.hasPendingAutoCollapseForTest())
+        coordinator.upsertActivity(timerActivity.copy(timeText = "04:11"))
+        assertFalse(coordinator.hasPendingAutoCollapseForTest())
+        scope.advanceTimeBy(5_000L)
+        scope.runCurrent()
+        assertTrue(coordinator.slotState.value.isExpanded)
+
+        // Re-expanding cancels pending auto-collapse.
+        coordinator.scheduleAutoCollapse(3_000L)
+        coordinator.setExpanded(true)
+        assertFalse(coordinator.hasPendingAutoCollapseForTest())
+        scope.advanceTimeBy(5_000L)
+        scope.runCurrent()
+        assertTrue(coordinator.slotState.value.isExpanded)
+
+        // Uninterrupted timer collapses cleanly.
+        coordinator.scheduleAutoCollapse(3_000L)
+        scope.advanceTimeBy(3_000L)
+        scope.runCurrent()
+        assertFalse(coordinator.slotState.value.isExpanded)
     }
 }

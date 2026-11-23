@@ -245,13 +245,22 @@ internal class CockpitOverlayWindowController(
             setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
             setViewTreeViewModelStoreOwner(viewModelStoreOwner)
             setOnTouchListener { _, event ->
-                if (event.actionMasked == MotionEvent.ACTION_OUTSIDE &&
-                    cockpit.coordinator.slotState.value.isExpanded
-                ) {
-                    cockpit.coordinator.setExpanded(false)
-                    true
-                } else {
-                    false
+                when (event.actionMasked) {
+                    MotionEvent.ACTION_OUTSIDE -> {
+                        if (cockpit.coordinator.slotState.value.isExpanded) {
+                            cockpit.coordinator.setExpanded(false)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    MotionEvent.ACTION_DOWN,
+                    MotionEvent.ACTION_POINTER_DOWN,
+                    -> {
+                        cockpit.coordinator.onUserInteraction()
+                        false
+                    }
+                    else -> false
                 }
             }
             visibility = if (isLandscapeFullscreen.value) View.GONE else View.VISIBLE

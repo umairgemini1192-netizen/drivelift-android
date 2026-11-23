@@ -305,6 +305,9 @@ fun DynamicIslandOverlay(
             .then(surfaceSizeModifier)
             .clip(currentShape)
             .background(surfaceBrush)
+            .pointerInput(Unit) {
+                detectTapGestures { /* Consume non-button taps so they do not dismiss the backdrop scrim. */ }
+            }
             .cockpitSpecularRim(
                 shape = currentShape,
                 primaryAccent = accent,

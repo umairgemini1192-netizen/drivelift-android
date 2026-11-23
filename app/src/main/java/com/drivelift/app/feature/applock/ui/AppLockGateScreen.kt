@@ -33,9 +33,11 @@ import androidx.compose.material.icons.automirrored.outlined.Backspace
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PauseCircleOutline
+import androidx.compose.material3.Button
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
@@ -77,6 +79,8 @@ data class AppLockGateUiState(
     val hasPinConfigured: Boolean = true,
     val biometricAvailable: Boolean = true,
     val allowBiometric: Boolean = true,
+    val showPinInput: Boolean = true,
+    val isBiometricActive: Boolean = false,
     val errorMessage: String? = null,
     val errorShakeTrigger: Int = 0,
     val lockoutRemainingMs: Long = 0L,
@@ -100,6 +104,7 @@ fun AppLockGateScreen(
     onBiometricPressed: () -> Unit,
     onCancelPressed: () -> Unit,
     modifier: Modifier = Modifier,
+    onUsePinPressed: () -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
     val reducedMotion = LocalReducedMotion.current
@@ -234,49 +239,92 @@ fun AppLockGateScreen(
 
                     Spacer(Modifier.height(Tokens.Gutter))
 
-                    if (state.isLockedOut) {
-                        LockoutBanner(remainingMs = state.lockoutRemainingMs)
-                    } else if (!state.hasPinConfigured) {
-                        Text(
-                            text = "No backup PIN configured. Use biometric unlock or set a PIN in App Lock settings.",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("applock-gate-no-pin"),
-                        )
-                    } else {
-                        PinDotsRow(
-                            enteredCount = state.enteredDigitsCount,
-                            totalDots = state.expectedPinLength,
-                            hasError = state.errorMessage != null,
+                    if (!state.showPinInput && !state.isLockedOut) {
+                        Column(
                             modifier = Modifier
-                                .graphicsLayer { translationX = shakeOffsetPx.value }
-                                .testTag("applock-pin-dots"),
+                                .fillMaxWidth()
+                                .testTag("applock-biometric-active-panel"),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                        ) {
+                            Text(
+                                text = if (state.isBiometricActive) {
+                                    "Waiting for biometric verification."
+                                } else {
+                                    "Verify with biometric to continue."
+                                },
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                            )
+                            if (state.canUseBiometric) {
+                                Button(
+                                    onClick = onBiometricPressed,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = Tokens.TouchTarget)
+                                        .testTag("applock-gate-retry-biometric"),
+                                ) {
+                                    Text("Unlock with biometric")
+                                }
+                            }
+                            if (state.hasPinConfigured) {
+                                OutlinedButton(
+                                    onClick = onUsePinPressed,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = Tokens.TouchTarget)
+                                        .testTag("applock-gate-use-pin"),
+                                ) {
+                                    Text("Use PIN")
+                                }
+                            }
+                        }
+                    } else {
+                        if (state.isLockedOut) {
+                            LockoutBanner(remainingMs = state.lockoutRemainingMs)
+                        } else if (!state.hasPinConfigured) {
+                            Text(
+                                text = "No backup PIN configured. Use biometric unlock or set a PIN in App Lock settings.",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.testTag("applock-gate-no-pin"),
+                            )
+                        } else {
+                            PinDotsRow(
+                                enteredCount = state.enteredDigitsCount,
+                                totalDots = state.expectedPinLength,
+                                hasError = state.errorMessage != null,
+                                modifier = Modifier
+                                    .graphicsLayer { translationX = shakeOffsetPx.value }
+                                    .testTag("applock-pin-dots"),
+                            )
+                        }
+
+                        if (!state.errorMessage.isNullOrBlank()) {
+                            Spacer(Modifier.height(Tokens.Small))
+                            Text(
+                                text = state.errorMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.error,
+                                textAlign = TextAlign.Center,
+                                modifier = Modifier.testTag("applock-gate-error"),
+                            )
+                        }
+
+                        Spacer(Modifier.height(Tokens.Section))
+
+                        SpringPinKeypad(
+                            enabled = !state.isLockedOut && state.hasPinConfigured,
+                            canUseBiometric = state.canUseBiometric,
+                            canBackspace = state.enteredDigitsCount > 0 && !state.isLockedOut,
+                            compact = isCompact,
+                            onDigit = onDigitPressed,
+                            onBackspace = onBackspacePressed,
+                            onBiometric = onBiometricPressed,
                         )
                     }
-
-                    if (!state.errorMessage.isNullOrBlank()) {
-                        Spacer(Modifier.height(Tokens.Small))
-                        Text(
-                            text = state.errorMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.error,
-                            textAlign = TextAlign.Center,
-                            modifier = Modifier.testTag("applock-gate-error"),
-                        )
-                    }
-
-                    Spacer(Modifier.height(Tokens.Section))
-
-                    SpringPinKeypad(
-                        enabled = !state.isLockedOut && state.hasPinConfigured,
-                        canUseBiometric = state.canUseBiometric,
-                        canBackspace = state.enteredDigitsCount > 0 && !state.isLockedOut,
-                        compact = isCompact,
-                        onDigit = onDigitPressed,
-                        onBackspace = onBackspacePressed,
-                        onBiometric = onBiometricPressed,
-                    )
 
                     Spacer(Modifier.height(Tokens.Gutter))
 

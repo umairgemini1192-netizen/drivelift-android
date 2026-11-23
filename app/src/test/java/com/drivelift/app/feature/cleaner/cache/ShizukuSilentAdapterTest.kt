@@ -18,6 +18,7 @@ class ShizukuSilentAdapterTest {
         var commandResult: Result<Unit> = Result.success(Unit),
     ) : ShizukuRuntimeBridge {
         val executedCommands = mutableListOf<List<String>>()
+        var permissionRequestCount = 0
 
         override fun isShizukuAppInstalled(): Boolean {
             if (throwOnProbe) error("Simulated PackageManager restriction")
@@ -32,6 +33,11 @@ class ShizukuSilentAdapterTest {
         override fun hasPermission(): Boolean {
             if (throwOnProbe) error("Simulated permission check error")
             return permission
+        }
+
+        override fun requestPermission(requestCode: Int): Boolean {
+            permissionRequestCount += 1
+            return alive
         }
 
         override suspend fun executeCommand(args: List<String>): Result<Unit> {
@@ -155,5 +161,16 @@ class ShizukuSilentAdapterTest {
             listOf("cmd", "package", "clear-cache", "com.example.browser"),
             bridge.executedCommands.single(),
         )
+    }
+
+    @Test
+    fun requestsShizukuPermissionInOneTapWhenBinderIsAlive() {
+        val bridge = FakeBridge(installed = true, alive = true, permission = false)
+        val adapter = ShizukuSilentAdapter(
+            bridge = bridge,
+            sdkIntProvider = { 35 },
+        )
+        assertTrue(adapter.requestSilentModePermission())
+        assertEquals(1, bridge.permissionRequestCount)
     }
 }

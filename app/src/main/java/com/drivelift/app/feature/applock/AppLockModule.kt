@@ -163,6 +163,10 @@ class AppLockModule(
         onForegroundEvent = { pkg, cls -> onForegroundWindowChanged(pkg, cls) },
     )
 
+    private val unlockLock = Any()
+    @Volatile
+    private var activeUnlockedPackage: String? = null
+
     private var cachedRawApps: List<Pair<String, String>> = emptyList()
 
     private val _openManagerPending = MutableStateFlow(false)
@@ -192,7 +196,26 @@ class AppLockModule(
                 timestampMs = graph.clock(),
             ),
         )
+        if (filtered is ForegroundFilterResult.Ignored) {
+            if (filtered.reason == com.drivelift.app.feature.applock.engine.IgnoreReason.LAUNCHER) {
+                synchronized(unlockLock) {
+                    activeUnlockedPackage = null
+                }
+                monitorFilter.reset()
+            }
+            return
+        }
         val accepted = filtered as? ForegroundFilterResult.Accepted ?: return
+        val stayUnlocked = synchronized(unlockLock) {
+            if (accepted.packageName == activeUnlockedPackage) {
+                true
+            } else {
+                activeUnlockedPackage = null
+                false
+            }
+        }
+        if (stayUnlocked) return
+
         val evaluation = engine.evaluateForegroundPackage(accepted.packageName, prefs.config.value)
         if (evaluation.decision == LockDecision.REQUIRE_AUTH) {
             val label = resolveAppLabel(accepted.packageName)
@@ -211,6 +234,9 @@ class AppLockModule(
      * Immediately revokes all per-app grace grants when the screen turns off.
      */
     fun onScreenOff() {
+        synchronized(unlockLock) {
+            activeUnlockedPackage = null
+        }
         engine.onScreenOff()
         monitorFilter.reset()
         refreshUiState()
@@ -254,6 +280,9 @@ class AppLockModule(
     fun setEnabled(enabled: Boolean) {
         prefs.setEnabled(enabled)
         if (!enabled) {
+            synchronized(unlockLock) {
+                activeUnlockedPackage = null
+            }
             engine.resumeAppLock()
             monitorFilter.reset()
         }
@@ -311,6 +340,9 @@ class AppLockModule(
         when (mode) {
             AppLockGateMode.UNLOCK_APP -> {
                 if (targetPackage.isNotBlank()) {
+                    synchronized(unlockLock) {
+                        activeUnlockedPackage = targetPackage
+                    }
                     engine.recordUnlock(targetPackage)
                 } else {
                     engine.recordPinSuccess()
@@ -325,7 +357,12 @@ class AppLockModule(
         requestTileRefresh()
     }
 
+    internal fun currentActiveUnlockedPackage(): String? = activeUnlockedPackage
+
     fun resumeFromPause() {
+        synchronized(unlockLock) {
+            activeUnlockedPackage = null
+        }
         engine.resumeAppLock()
         monitorFilter.reset()
         refreshUiState()

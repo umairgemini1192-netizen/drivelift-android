@@ -49,6 +49,7 @@ fun GuidedDynamicIslandPill(
     onSkipStep: () -> Unit,
     onCancel: () -> Unit,
     modifier: Modifier = Modifier,
+    onNextApp: () -> Unit = onConfirmStep,
 ) {
     val accent = when (state.mode) {
         GuidedPillMode.GUIDED_CLEAN -> CockpitLivePalette.Emerald
@@ -151,6 +152,15 @@ fun GuidedDynamicIslandPill(
                         .testTag("guided-pill-open-settings"),
                 ) {
                     Text("Open App Info")
+                }
+
+                Button(
+                    onClick = onNextApp,
+                    modifier = Modifier
+                        .heightIn(min = Tokens.TouchTarget)
+                        .testTag("guided-pill-next-app"),
+                ) {
+                    Text("Next App ->")
                 }
 
                 OutlinedButton(

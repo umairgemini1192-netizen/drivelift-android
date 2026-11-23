@@ -48,8 +48,16 @@ class AppLockGateActivity : FragmentActivity() {
     private var errorMessage by mutableStateOf<String?>(null)
     private var errorShakeTrigger by mutableIntStateOf(0)
     private var lockoutRemainingMs by mutableLongStateOf(0L)
+    private var showPinInput by mutableStateOf(false)
+    private var isBiometricActive by mutableStateOf(false)
     private var biometricPrompt: BiometricPrompt? = null
     private var hasAutoPrompted = false
+
+    internal var biometricPromptTriggerCount: Int = 0
+        private set
+
+    internal fun isPinInputVisibleForTest(): Boolean = showPinInput
+    internal fun isBiometricActiveForTest(): Boolean = isBiometricActive
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -63,6 +71,12 @@ class AppLockGateActivity : FragmentActivity() {
 
         parseIntent(intent)
 
+        if (savedInstanceState != null) {
+            hasAutoPrompted = savedInstanceState.getBoolean(KEY_HAS_AUTO_PROMPTED, false)
+            showPinInput = savedInstanceState.getBoolean(KEY_SHOW_PIN_INPUT, false)
+            isBiometricActive = savedInstanceState.getBoolean(KEY_IS_BIOMETRIC_ACTIVE, false)
+        }
+
         val graph = Graph.get(this)
         val appLock = graph.appLock
         lockoutRemainingMs = appLock.engine.currentLockoutState().remainingLockoutMs(graph.clock())
@@ -72,17 +86,11 @@ class AppLockGateActivity : FragmentActivity() {
             ContextCompat.getMainExecutor(this),
             object : BiometricPrompt.AuthenticationCallback() {
                 override fun onAuthenticationSucceeded(result: BiometricPrompt.AuthenticationResult) {
-                    appLock.onAuthenticationSucceeded(gateMode, targetPackage)
-                    finishUnlocked()
+                    handleBiometricSucceeded()
                 }
 
                 override fun onAuthenticationError(errorCode: Int, errString: CharSequence) {
-                    if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
-                        errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
-                        errorCode != BiometricPrompt.ERROR_CANCELED
-                    ) {
-                        errorMessage = errString.toString().ifBlank { "Biometric check could not complete." }
-                    }
+                    handleBiometricError(errorCode, errString)
                 }
             },
         )
@@ -96,8 +104,17 @@ class AppLockGateActivity : FragmentActivity() {
             },
         )
 
-        val canBiometricStrong = BiometricManager.from(this)
-            .canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+        val canBiometricStrong = isBiometricStrongAvailable()
+        val shouldAutoPrompt = savedInstanceState == null &&
+            !hasAutoPrompted &&
+            appLock.prefs.config.value.allowBiometric &&
+            canBiometricStrong &&
+            lockoutRemainingMs <= 0L
+
+        if (savedInstanceState == null) {
+            showPinInput = !shouldAutoPrompt
+            isBiometricActive = shouldAutoPrompt
+        }
 
         setContent {
             val config = appLock.prefs.config.value
@@ -122,12 +139,14 @@ class AppLockGateActivity : FragmentActivity() {
                         hasPinConfigured = hasPin,
                         biometricAvailable = canBiometricStrong,
                         allowBiometric = config.allowBiometric,
+                        showPinInput = showPinInput || lockoutRemainingMs > 0L,
+                        isBiometricActive = isBiometricActive,
                         errorMessage = errorMessage,
                         errorShakeTrigger = errorShakeTrigger,
                         lockoutRemainingMs = lockoutRemainingMs,
                     ),
                     onDigitPressed = { digit ->
-                        if (lockoutRemainingMs > 0L || !hasPin) return@AppLockGateScreen
+                        if (lockoutRemainingMs > 0L || !hasPin || !showPinInput) return@AppLockGateScreen
                         if (enteredPin.length < expectedPinLength) {
                             errorMessage = null
                             enteredPin += digit
@@ -142,7 +161,8 @@ class AppLockGateActivity : FragmentActivity() {
                             errorMessage = null
                         }
                     },
-                    onBiometricPressed = { triggerBiometricPrompt() },
+                    onBiometricPressed = { triggerBiometricPrompt(userInitiated = true) },
+                    onUsePinPressed = { revealPinInputFromUserAction() },
                     onCancelPressed = { handleCancelOrBack() },
                 )
             }
@@ -151,18 +171,43 @@ class AppLockGateActivity : FragmentActivity() {
         // Harden the Compose content root view against obscured touches as well.
         window.decorView.findViewById<android.view.View>(android.R.id.content)?.filterTouchesWhenObscured = true
 
-        if (!hasAutoPrompted && appLock.prefs.config.value.allowBiometric && canBiometricStrong && lockoutRemainingMs <= 0L) {
+        if (shouldAutoPrompt) {
             hasAutoPrompted = true
-            triggerBiometricPrompt()
+            isBiometricActive = false
+            triggerBiometricPrompt(userInitiated = false)
         }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        super.onSaveInstanceState(outState)
+        outState.putBoolean(KEY_HAS_AUTO_PROMPTED, hasAutoPrompted)
+        outState.putBoolean(KEY_SHOW_PIN_INPUT, showPinInput)
+        outState.putBoolean(KEY_IS_BIOMETRIC_ACTIVE, isBiometricActive)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        val previousMode = gateMode
+        val previousPackage = targetPackage
         parseIntent(intent)
+        if (gateMode == previousMode && targetPackage == previousPackage) {
+            // Same gate launch: never re-trigger BiometricPrompt on duplicate focus/intent delivery.
+            return
+        }
         enteredPin = ""
         errorMessage = null
+        hasAutoPrompted = false
+        isBiometricActive = false
+        val appLock = Graph.get(this).appLock
+        val canStrong = isBiometricStrongAvailable()
+        if (appLock.prefs.config.value.allowBiometric && canStrong && lockoutRemainingMs <= 0L) {
+            hasAutoPrompted = true
+            showPinInput = false
+            triggerBiometricPrompt(userInitiated = false)
+        } else {
+            showPinInput = true
+        }
     }
 
     private fun parseIntent(intent: Intent?) {
@@ -206,12 +251,48 @@ class AppLockGateActivity : FragmentActivity() {
         }
     }
 
-    private fun triggerBiometricPrompt() {
-        val prompt = biometricPrompt ?: return
-        if (lockoutRemainingMs > 0L) return
-        val canStrong = BiometricManager.from(this)
-            .canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
-        if (!canStrong) return
+    internal fun handleBiometricSucceeded() {
+        isBiometricActive = false
+        // Commit unlocked state in memory synchronously BEFORE finishing so the foreground monitor
+        // never re-locks the app as focus returns to it.
+        Graph.get(this).appLock.onAuthenticationSucceeded(gateMode, targetPackage)
+        finishUnlocked()
+    }
+
+    internal fun handleBiometricError(errorCode: Int, errString: CharSequence) {
+        isBiometricActive = false
+        showPinInput = true
+        if (errorCode != BiometricPrompt.ERROR_NEGATIVE_BUTTON &&
+            errorCode != BiometricPrompt.ERROR_USER_CANCELED &&
+            errorCode != BiometricPrompt.ERROR_CANCELED
+        ) {
+            errorMessage = errString.toString().ifBlank { "Biometric check could not complete." }
+        }
+    }
+
+    internal fun revealPinInputFromUserAction() {
+        runCatching { biometricPrompt?.cancelAuthentication() }
+        isBiometricActive = false
+        showPinInput = true
+    }
+
+    private fun isBiometricStrongAvailable(): Boolean =
+        biometricAvailableOverrideForTest ?: (
+            BiometricManager.from(this)
+                .canAuthenticate(BIOMETRIC_STRONG) == BiometricManager.BIOMETRIC_SUCCESS
+            )
+
+    internal fun triggerBiometricPrompt(userInitiated: Boolean = true) {
+        if (isBiometricActive) return
+        if (lockoutRemainingMs > 0L) {
+            showPinInput = true
+            return
+        }
+        val canStrong = isBiometricStrongAvailable()
+        if (!canStrong) {
+            showPinInput = true
+            return
+        }
 
         val title = if (gateMode == AppLockGateMode.AUTHORIZE_PAUSE) {
             "Pause App Lock for 15 min"
@@ -230,7 +311,24 @@ class AppLockGateActivity : FragmentActivity() {
             .setAllowedAuthenticators(BIOMETRIC_STRONG)
             .setConfirmationRequired(false)
             .build()
-        prompt.authenticate(info)
+
+        isBiometricActive = true
+        showPinInput = false
+        errorMessage = null
+        biometricPromptTriggerCount += 1
+
+        val testLauncher = biometricLauncherForTest
+        if (testLauncher != null) {
+            testLauncher(info)
+        } else {
+            val prompt = biometricPrompt
+            if (prompt == null) {
+                isBiometricActive = false
+                showPinInput = true
+                return
+            }
+            prompt.authenticate(info)
+        }
     }
 
     internal fun handleCancelOrBack() {
@@ -258,6 +356,15 @@ class AppLockGateActivity : FragmentActivity() {
         const val EXTRA_MODE = "com.drivelift.app.applock.EXTRA_MODE"
         const val EXTRA_PACKAGE_NAME = "com.drivelift.app.applock.EXTRA_PACKAGE_NAME"
         const val EXTRA_APP_LABEL = "com.drivelift.app.applock.EXTRA_APP_LABEL"
+        private const val KEY_HAS_AUTO_PROMPTED = "applock_has_auto_prompted"
+        private const val KEY_SHOW_PIN_INPUT = "applock_show_pin_input"
+        private const val KEY_IS_BIOMETRIC_ACTIVE = "applock_is_biometric_active"
+
+        /** Replaceable in tests to verify BiometricPrompt launch count without system hardware. */
+        internal var biometricLauncherForTest: ((BiometricPrompt.PromptInfo) -> Unit)? = null
+
+        /** Replaceable in tests to simulate Class 3 biometric availability deterministically. */
+        internal var biometricAvailableOverrideForTest: Boolean? = null
 
         /** Replaceable in tests to verify Home routing without relying on a real launcher. */
         internal var homeRouter: (Context) -> Unit = { context ->

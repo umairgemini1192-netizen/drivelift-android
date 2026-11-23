@@ -19,6 +19,13 @@ data class BatteryCurrentReading(
     val tone: BatteryCurrentTone,
 )
 
+/** Remaining battery charge from `BATTERY_PROPERTY_CHARGE_COUNTER` (converted from uAh to mAh). */
+data class BatteryChargeReading(
+    /** Remaining charge in mAh, or null when the device does not report a valid counter. */
+    val milliAmpHours: Int?,
+    val text: String,
+)
+
 /** What the Drop control tile on the widget and its in-app preview shows. */
 data class WidgetDropTile(val label: String, val active: Boolean, val enabled: Boolean)
 
@@ -69,6 +76,33 @@ object CockpitWidgetModel {
 
     fun unknownCurrent(): BatteryCurrentReading =
         BatteryCurrentReading(milliAmps = null, text = "-- mA", tone = BatteryCurrentTone.UNKNOWN)
+
+    /**
+     * Remaining battery charge from `BATTERY_PROPERTY_CHARGE_COUNTER` (microamp-hours -> mAh).
+     * Values <= 0 or [Long.MIN_VALUE] / [Int.MIN_VALUE] indicate unsupported hardware.
+     */
+    fun formatBatteryCharge(microAmpHours: Long): BatteryChargeReading {
+        if (microAmpHours == UNSUPPORTED_CURRENT ||
+            microAmpHours == Int.MIN_VALUE.toLong() ||
+            microAmpHours <= 0L
+        ) {
+            return unknownCharge()
+        }
+        val mah = (microAmpHours / 1000L).coerceIn(0L, Int.MAX_VALUE.toLong()).toInt()
+        if (mah <= 0) return unknownCharge()
+        val digits = String.format(Locale.US, "%,d", mah)
+        return BatteryChargeReading(milliAmpHours = mah, text = "$digits mAh")
+    }
+
+    fun unknownCharge(): BatteryChargeReading =
+        BatteryChargeReading(milliAmpHours = null, text = "-- mAh")
+
+    /** True when a change in charge counter (mAh) is big enough to redraw the widget. */
+    fun chargeChangedEnough(previous: Int?, current: Int?, thresholdMah: Int = 5): Boolean {
+        if (previous == null && current == null) return false
+        if (previous == null || current == null) return true
+        return abs(previous - current) >= thresholdMah
+    }
 
     /** True when a change in current is big enough to redraw the widget. */
     fun currentChangedEnough(previous: Int?, current: Int?, thresholdMa: Int = 50): Boolean {

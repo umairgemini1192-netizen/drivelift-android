@@ -53,6 +53,7 @@ data class GuidedPillState(
 class GuidedSessionController(
     private val sleepStateMachine: SleepSessionStateMachine = SleepSessionStateMachine(),
     private val nowMs: () -> Long = System::currentTimeMillis,
+    private val isAppAlreadyStopped: (String) -> Boolean = { false },
 ) {
     private var cleanQueue: List<GuidedCleanTarget> = emptyList()
     private var cleanIndex: Int = 0
@@ -86,12 +87,13 @@ class GuidedSessionController(
         candidates: List<AppDrainCandidate>,
     ): GuidedPillState? {
         cleanQueue = emptyList()
-        val state = sleepStateMachine.startSession(
+        val initial = sleepStateMachine.startSession(
             sessionId = sessionId,
             mode = HibernationMode.GUIDED_PILL,
             candidates = candidates,
             nowMs = nowMs(),
         )
+        val state = skipAlreadyStoppedSleepCandidates(initial)
         sleepState = state
         if (state.isTerminal) {
             lastSleepReport = sleepStateMachine.buildReport(state)
@@ -113,7 +115,8 @@ class GuidedSessionController(
             }
             GuidedPillMode.GUIDED_SLEEP -> {
                 val state = sleepState ?: return null
-                val next = sleepStateMachine.confirmGuidedStep(state, nowMs())
+                val confirmed = sleepStateMachine.confirmGuidedStep(state, nowMs())
+                val next = skipAlreadyStoppedSleepCandidates(confirmed)
                 sleepState = next
                 if (next.isTerminal) {
                     lastSleepReport = sleepStateMachine.buildReport(next)
@@ -136,7 +139,8 @@ class GuidedSessionController(
             }
             GuidedPillMode.GUIDED_SLEEP -> {
                 val state = sleepState ?: return null
-                val next = sleepStateMachine.skipGuidedStep(state, nowMs())
+                val skipped = sleepStateMachine.skipGuidedStep(state, nowMs())
+                val next = skipAlreadyStoppedSleepCandidates(skipped)
                 sleepState = next
                 if (next.isTerminal) {
                     lastSleepReport = sleepStateMachine.buildReport(next)
@@ -145,6 +149,21 @@ class GuidedSessionController(
                 activePill
             }
         }
+    }
+
+    private fun skipAlreadyStoppedSleepCandidates(initial: SleepSessionState): SleepSessionState {
+        var current = initial
+        while (current.phase == SleepSessionPhase.AWAITING_GUIDED_STEP) {
+            val candidate = current.currentCandidate ?: break
+            val alreadyStopped = runCatching { isAppAlreadyStopped(candidate.packageName) }.getOrDefault(false)
+            if (!alreadyStopped) break
+            current = sleepStateMachine.skipGuidedStep(
+                state = current,
+                nowMs = nowMs(),
+                reason = "Already stopped",
+            )
+        }
+        return current
     }
 
     fun cancelActiveSession() {

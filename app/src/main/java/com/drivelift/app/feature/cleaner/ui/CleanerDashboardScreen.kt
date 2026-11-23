@@ -201,8 +201,21 @@ fun CleanerDashboardScreen(
             }
         },
         onConfirmGuidedStep = { module.confirmGuidedCleanStep() },
+        onNextGuidedApp = {
+            val nextPkg = module.advanceGuidedCleanToNextApp()
+            if (nextPkg != null) {
+                runCatching {
+                    context.startActivity(com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter.createAppInfoIntent(nextPkg))
+                }
+            }
+        },
         onSkipGuidedStep = { module.skipGuidedCleanStep() },
         onCancelGuidedSession = { module.cancelGuidedCleanSession() },
+        onShizukuAction = {
+            module.handleShizukuBannerAction { intent ->
+                runCatching { context.startActivity(intent) }
+            }
+        },
         modifier = modifier,
     )
 }
@@ -228,6 +241,8 @@ fun CleanerDashboardContent(
     onSkipGuidedStep: () -> Unit,
     onCancelGuidedSession: () -> Unit,
     modifier: Modifier = Modifier,
+    onShizukuAction: () -> Unit = {},
+    onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -282,6 +297,7 @@ fun CleanerDashboardContent(
                         state = state.guidedPill,
                         onOpenAppInfo = onOpenGuidedAppInfo,
                         onConfirmStep = onConfirmGuidedStep,
+                        onNextApp = onNextGuidedApp,
                         onSkipStep = onSkipGuidedStep,
                         onCancel = onCancelGuidedSession,
                     )
@@ -313,6 +329,15 @@ fun CleanerDashboardContent(
                                 needsUsageAccess = state.needsUsageAccess,
                                 onGrantUsageAccess = onGrantUsageAccess,
                                 onRetry = onRescan,
+                            )
+                        }
+                    }
+
+                    if (!state.isCelebration) {
+                        item(key = "shizuku-status-banner") {
+                            ShizukuSilentModeBanner(
+                                status = state.shizukuStatus,
+                                onAction = onShizukuAction,
                             )
                         }
                     }
@@ -449,6 +474,162 @@ fun CleanerDashboardContent(
                 }
             },
         )
+    }
+}
+
+/**
+ * Clear top status banner for enabling or binding Shizuku Silent Mode in 1 tap across Cleaner
+ * and Sleep Mode so users skip manual App Info screens whenever Shizuku is active.
+ */
+@Composable
+fun ShizukuSilentModeBanner(
+    status: ShizukuStatusSnapshot,
+    onAction: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+    val isSilent = status.effectiveMode == HibernationMode.SHIZUKU_SILENT
+    val accent = when (status.availability) {
+        ShizukuAvailability.READY -> GlassPalette.HudEmerald
+        ShizukuAvailability.PERMISSION_REQUIRED -> MaterialTheme.colorScheme.primary
+        ShizukuAvailability.NOT_RUNNING -> GlassPalette.HudAmber
+        ShizukuAvailability.NOT_INSTALLED,
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
+        -> GlassPalette.HudElectricCyan
+    }
+    val headline = when (status.availability) {
+        ShizukuAvailability.READY -> "Shizuku Silent Mode active"
+        ShizukuAvailability.PERMISSION_REQUIRED -> "Enable Shizuku Silent Mode"
+        ShizukuAvailability.NOT_RUNNING -> "Start Shizuku for Silent Mode"
+        ShizukuAvailability.NOT_INSTALLED -> "Silent Mode via Shizuku"
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> "Guided Pill Mode active"
+    }
+    val subtitle = when (status.availability) {
+        ShizukuAvailability.READY -> "Apps clean and sleep silently without App Info screens."
+        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku in 1 tap to skip manual App Info screens."
+        ShizukuAvailability.NOT_RUNNING -> "Shizuku is installed but stopped. Start it to avoid App Info screens."
+        ShizukuAvailability.NOT_INSTALLED -> "Install Shizuku for 1-tap silent clean and sleep, or use Guided Pill."
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> status.detail
+    }
+    val actionLabel = when (status.availability) {
+        ShizukuAvailability.READY -> "Refresh"
+        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku"
+        ShizukuAvailability.NOT_RUNNING -> "Open Shizuku"
+        ShizukuAvailability.NOT_INSTALLED -> "Enable Shizuku"
+        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> null
+    }
+
+    GlassPanel(
+        shape = CleanerTokens.CardShape,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("shizuku-status-banner"),
+    ) {
+        if (compact) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Tokens.Gutter),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Shield,
+                        contentDescription = null,
+                        tint = accent,
+                        modifier = Modifier.size(Tokens.IconSmall),
+                    )
+                    Text(
+                        text = headline,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = accent,
+                    )
+                }
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                if (actionLabel != null) {
+                    if (isSilent) {
+                        OutlinedButton(
+                            onClick = onAction,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = Tokens.TouchTarget)
+                                .testTag("shizuku-banner-action"),
+                        ) {
+                            Text(actionLabel)
+                        }
+                    } else {
+                        Button(
+                            onClick = onAction,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = Tokens.TouchTarget)
+                                .testTag("shizuku-banner-action"),
+                        ) {
+                            Text(actionLabel)
+                        }
+                    }
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Tokens.Gutter),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Shield,
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(Tokens.Icon),
+                )
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                ) {
+                    Text(
+                        text = headline,
+                        style = MaterialTheme.typography.titleSmall,
+                        color = accent,
+                    )
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                if (actionLabel != null) {
+                    if (isSilent) {
+                        OutlinedButton(
+                            onClick = onAction,
+                            modifier = Modifier
+                                .heightIn(min = Tokens.TouchTarget)
+                                .testTag("shizuku-banner-action"),
+                        ) {
+                            Text(actionLabel)
+                        }
+                    } else {
+                        Button(
+                            onClick = onAction,
+                            modifier = Modifier
+                                .heightIn(min = Tokens.TouchTarget)
+                                .testTag("shizuku-banner-action"),
+                        ) {
+                            Text(actionLabel)
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

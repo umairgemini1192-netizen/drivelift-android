@@ -2,6 +2,7 @@ package com.drivelift.app.feature.applock
 
 import android.view.WindowManager
 import android.service.quicksettings.Tile
+import androidx.biometric.BiometricPrompt
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
@@ -47,6 +48,8 @@ class AppLockModuleAndWiringTest {
     @After
     fun tearDown() {
         AppLockGateActivity.homeRouter = originalHomeRouter
+        AppLockGateActivity.biometricLauncherForTest = null
+        AppLockGateActivity.biometricAvailableOverrideForTest = null
         Graph.get(app).clock = System::currentTimeMillis
     }
 
@@ -279,5 +282,88 @@ class AppLockModuleAndWiringTest {
         assertEquals(Tile.STATE_ACTIVE, paused.state)
         assertEquals("App Lock Paused", paused.label)
         assertEquals("15m left", paused.subtitle)
+    }
+
+    @Test
+    fun gateActivity_triggersBiometricOnce_hidesPinUntilFallback_andCommitsUnlockBeforeFinish() {
+        val graph = Graph.get(app)
+        graph.appLock.savePin("123456", iterations = 1_000)
+        graph.appLock.setAllowBiometric(true)
+        graph.appLock.setEnabled(true)
+        graph.appLock.setGracePeriod(ReLockGracePeriod.IMMEDIATE)
+        graph.appLock.toggleAppLocked("com.example.vault")
+
+        var promptInvocations = 0
+        AppLockGateActivity.biometricAvailableOverrideForTest = true
+        AppLockGateActivity.biometricLauncherForTest = { promptInvocations += 1 }
+
+        val unlockIntent = AppLockGateActivity.createIntent(
+            app,
+            AppLockGateRequest(
+                mode = AppLockGateMode.UNLOCK_APP,
+                packageName = "com.example.vault",
+                appLabel = "Private Vault",
+            ),
+        )
+
+        ActivityScenario.launch<AppLockGateActivity>(unlockIntent).use { scenario ->
+            scenario.onActivity { activity ->
+                assertEquals(1, promptInvocations)
+                assertEquals(1, activity.biometricPromptTriggerCount)
+                assertTrue(activity.isBiometricActiveForTest())
+                assertFalse("PIN pad must stay hidden while BiometricPrompt is active", activity.isPinInputVisibleForTest())
+
+                // Calling trigger again while active does not stack prompts.
+                activity.triggerBiometricPrompt(userInitiated = false)
+                assertEquals(1, promptInvocations)
+
+                // Biometric cancel / Use PIN reveals PIN pad.
+                activity.handleBiometricError(BiometricPrompt.ERROR_NEGATIVE_BUTTON, "Use PIN")
+                assertFalse(activity.isBiometricActiveForTest())
+                assertTrue(activity.isPinInputVisibleForTest())
+
+                // Explicit user biometric tap re-triggers prompt and hides PIN pad again.
+                activity.triggerBiometricPrompt(userInitiated = true)
+                assertEquals(2, promptInvocations)
+                assertTrue(activity.isBiometricActiveForTest())
+                assertFalse(activity.isPinInputVisibleForTest())
+
+                // Biometric success commits unlocked package state in memory BEFORE finishing.
+                activity.handleBiometricSucceeded()
+                assertEquals("com.example.vault", graph.appLock.currentActiveUnlockedPackage())
+                assertTrue(activity.isFinishing)
+            }
+        }
+    }
+
+    @Test
+    fun immediateGracePeriod_keepsUnlockedAppOpenUntilUserLeavesToLauncherOrOtherApp() {
+        val module = AppLockModule(app, Graph.get(app))
+        val launched = mutableListOf<AppLockGateRequest>()
+        module.gateLauncher = { _, req -> launched.add(req) }
+        module.accessibilityConnectedProvider = { true }
+        module.setEnabled(true)
+        module.setGracePeriod(ReLockGracePeriod.IMMEDIATE)
+        module.toggleAppLocked("com.example.vault")
+
+        // Opening protected app launches gate once.
+        module.onForegroundWindowChanged("com.example.vault", "VaultActivity")
+        assertEquals(1, launched.size)
+
+        // Unlock commits package in memory before gate finishes.
+        module.onAuthenticationSucceeded(AppLockGateMode.UNLOCK_APP, "com.example.vault")
+        assertEquals("com.example.vault", module.currentActiveUnlockedPackage())
+
+        // Returning focus to com.example.vault immediately after gate finish does NOT re-lock.
+        fakeNowMs += 500L
+        module.onForegroundWindowChanged("com.example.vault", "VaultActivity")
+        assertEquals(1, launched.size)
+
+        // Leaving to Home launcher clears active unlocked session so re-opening re-locks.
+        fakeNowMs += 500L
+        module.onForegroundWindowChanged("com.google.android.apps.nexuslauncher", "Launcher")
+        fakeNowMs += 500L
+        module.onForegroundWindowChanged("com.example.vault", "VaultActivity")
+        assertEquals(2, launched.size)
     }
 }
