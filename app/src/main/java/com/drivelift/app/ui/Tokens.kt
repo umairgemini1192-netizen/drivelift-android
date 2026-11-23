@@ -212,6 +212,7 @@ object Tokens {
 
         const val RIM_PULSE_MS = 3_600
         const val EXPAND_SWIPE_COLLAPSE_PX = -44f
+        const val COLLAPSED_SWIPE_DISMISS_PX = -24f
         const val CYCLE_SWIPE_THRESHOLD_PX = 48f
         const val OVERLAY_BLUR_RADIUS_PX = 32
         const val MORPH_SPRING_DAMPING = 0.80f

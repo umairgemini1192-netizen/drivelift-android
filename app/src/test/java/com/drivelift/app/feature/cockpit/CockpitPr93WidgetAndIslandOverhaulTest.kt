@@ -24,6 +24,7 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
+import com.drivelift.app.R
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
@@ -191,7 +192,11 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
     fun multiTapTorchBroadcastTogglesRepeatedlyAndPagerPersistsPageIndex() {
         val cockpit = Graph.get(app).cockpit
         val receiver = CockpitGlanceWidgetReceiver()
-        val widgetId = 77
+        val appWidgetManager = AppWidgetManager.getInstance(app)
+        val widgetId = shadowOf(appWidgetManager).createWidget(
+            CockpitGlanceWidgetReceiver::class.java,
+            R.layout.cockpit_widget_master,
+        )
 
         // Seed available torch state and fire rapid multi-tap broadcasts.
         cockpit.torchController.seedForTest(TorchUiState(available = true, isOn = false, brightnessLevel = 1, maxLevel = 1))
@@ -199,33 +204,14 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
             action = CockpitWidgetActions.ACTION_TOGGLE_TORCH
             putExtra(CockpitWidgetActions.EXTRA_APP_WIDGET_ID, widgetId)
         }
-        // In Robolectric there is no physical camera flash hardware, so seed toggle expectations via direct call check:
-        // Verify onReceive handles multiple rapid ACTION_TOGGLE_TORCH broadcasts cleanly without throwing or freezing.
         repeat(4) {
             receiver.onReceive(app, torchIntent)
         }
 
-        // Pin 6 synthetic packages (2 pages of 4) and verify '<' and '>' broadcasts persist wrapped page index.
-        val sixApps = listOf(
-            "com.example.a",
-            "com.example.b",
-            "com.example.c",
-            "com.example.d",
-            "com.example.e",
-            "com.example.f",
-        )
-        runBlocking {
-            sixApps.forEach { pkg ->
-                if (pkg !in cockpit.prefsRepo.state.value.pinnedPackages) {
-                    cockpit.prefsRepo.togglePinnedPackage(pkg)
-                }
-            }
-        }
+        // Verify '<' and '>' pager broadcasts persist wrapped page index and trigger AppWidgetManager.updateAppWidget().
         CockpitGlanceWidget.savePage(app, widgetId, 0)
         assertEquals(0, CockpitGlanceWidget.readSavedPage(app, widgetId))
 
-        // Note: Robolectric PackageManager may resolve 0 external packages for synthetic IDs, so also test direct
-        // page persistence & wrap math via CockpitWidgetModel + savePage/readSavedPage.
         val resolvedCount = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages).size
         val pageCount = CockpitWidgetModel.pageCount(resolvedCount)
         val nextIntent = Intent(app, CockpitGlanceWidgetReceiver::class.java).apply {
@@ -243,10 +229,12 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
         receiver.onReceive(app, prevIntent)
         assertEquals(0, CockpitGlanceWidget.readSavedPage(app, widgetId))
 
-        // Explicit updateWidget call with AppWidgetManager succeeds cleanly.
+        // Explicit updateWidget call with AppWidgetManager inflates the widget view cleanly.
         val fullViews = CockpitGlanceWidget.buildFullRemoteViews(app, widgetId, overridePageIndex = 0)
         assertNotNull(fullViews)
-        AppWidgetManager.getInstance(app).updateAppWidget(widgetId, fullViews)
+        appWidgetManager.updateAppWidget(widgetId, fullViews)
+        assertNotNull(shadowOf(appWidgetManager).getViewFor(widgetId))
+        CockpitGlanceWidget.clearWidgetState(app, widgetId)
     }
 
     @Test

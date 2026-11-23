@@ -224,6 +224,7 @@ internal fun Modifier.cockpitAxisLockedSwipe(
     onSwipeNext: () -> Unit,
     onSwipePrevious: () -> Unit,
     enableHorizontal: Boolean = true,
+    verticalThresholdPx: Float = Tokens.Cockpit.EXPAND_SWIPE_COLLAPSE_PX,
     onHorizontalDrag: (totalPx: Float) -> Unit = {},
     onHorizontalEnd: () -> Unit = {},
     onVerticalStart: () -> Unit = {},
@@ -237,7 +238,7 @@ internal fun Modifier.cockpitAxisLockedSwipe(
     val verticalStart by rememberUpdatedState(onVerticalStart)
     val verticalDrag by rememberUpdatedState(onVerticalDrag)
     val verticalEnd by rememberUpdatedState(onVerticalEnd)
-    return this.pointerInput(key, enableHorizontal, enableVertical) {
+    return this.pointerInput(key, enableHorizontal, enableVertical, verticalThresholdPx) {
         awaitEachGesture {
             val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
             var total = Offset.Zero
@@ -267,7 +268,7 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                         }
                         AXIS_VERTICAL -> {
                             change.consume()
-                            verticalEnd(verticalTotal <= Tokens.Cockpit.EXPAND_SWIPE_COLLAPSE_PX)
+                            verticalEnd(verticalTotal <= verticalThresholdPx)
                         }
                         else -> Unit
                     }
@@ -275,6 +276,7 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                 }
                 val delta = change.position - change.previousPosition
                 total += delta
+                var justLockedVertical = false
                 if (axis == AXIS_NONE &&
                     (abs(total.x) >= AXIS_LOCK_PX || abs(total.y) >= AXIS_LOCK_PX)
                 ) {
@@ -282,6 +284,8 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                         if (enableHorizontal) AXIS_HORIZONTAL else AXIS_IGNORED
                     } else if (enableVertical && total.y < 0f) {
                         verticalStart()
+                        verticalTotal = total.y.coerceAtMost(0f)
+                        justLockedVertical = true
                         AXIS_VERTICAL
                     } else {
                         AXIS_IGNORED
@@ -294,7 +298,9 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                     }
                     AXIS_VERTICAL -> {
                         change.consume()
-                        verticalTotal = (verticalTotal + delta.y).coerceAtMost(0f)
+                        if (!justLockedVertical) {
+                            verticalTotal = (verticalTotal + delta.y).coerceAtMost(0f)
+                        }
                         verticalDrag(verticalTotal)
                     }
                     else -> Unit

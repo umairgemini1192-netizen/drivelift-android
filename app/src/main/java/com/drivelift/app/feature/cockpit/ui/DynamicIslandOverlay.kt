@@ -538,6 +538,7 @@ fun CollapsedSplitIslandRow(
                 key = primary.id,
                 enableHorizontal = canSwap,
                 enableVertical = canSwipeUpDismiss,
+                verticalThresholdPx = Tokens.Cockpit.COLLAPSED_SWIPE_DISMISS_PX,
                 onSwipeNext = {
                     if (canSwap) {
                         CockpitHaptics.performTick(context)
