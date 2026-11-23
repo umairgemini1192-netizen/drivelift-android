@@ -15,10 +15,10 @@ import androidx.compose.animation.expandVertically
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
-import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -126,6 +126,7 @@ import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
@@ -143,11 +144,56 @@ import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.cockpitSpecularRim
 import com.drivelift.app.feature.cockpit.overlay.toWideGamutP3
 import com.drivelift.app.ui.CockpitLivePalette
+import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
+import com.drivelift.app.ui.destructiveGlowBorder
+import com.drivelift.app.ui.glass
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+
+/**
+ * Computes the maximum width (in dp) for the collapsed Dynamic Island primary pill so it never
+ * collides with system status-bar icons (left clock/notifications or right signal/Wi-Fi/battery),
+ * even with positive calibration deltas or a simultaneous satellite bubble.
+ */
+internal fun computeSafePillMaxWidthDp(
+    screenWidthDp: Int,
+    widthDeltaDp: Int,
+    hasSatelliteBubble: Boolean,
+): Int {
+    val minFloor = (Tokens.Cockpit.PillMinWidth - Tokens.Header).value.toInt()
+    val sideMargin = if (screenWidthDp < Tokens.COMPACT_WIDTH_DP) {
+        Tokens.Cockpit.StatusBarCompactSideMargin.value.toInt()
+    } else {
+        Tokens.Cockpit.StatusBarSafeSideMargin.value.toInt()
+    }
+    val satelliteReserve = if (hasSatelliteBubble) {
+        (Tokens.Cockpit.BubbleSize + Tokens.Cockpit.SplitGap).value.toInt()
+    } else {
+        0
+    }
+    val maxForScreen = (screenWidthDp - (sideMargin * 2) - satelliteReserve).coerceAtLeast(minFloor)
+    val hardCap = (Tokens.Cockpit.PillHardMaxWidth.value.toInt() - satelliteReserve).coerceAtLeast(minFloor)
+    val desired = (Tokens.Cockpit.PillMaxWidth.value.toInt() + widthDeltaDp).coerceAtLeast(minFloor)
+    return minOf(desired, maxForScreen, hardCap)
+}
+
+/**
+ * Formats a TransferActivity subtitle without duplicating identical status text (prevents
+ * `"Ready (Ready)"`).
+ */
+internal fun formatTransferActivitySubtitle(subtitle: String, speedText: String): String {
+    val cleanSub = subtitle.trim()
+    val cleanSpeed = speedText.trim()
+    return when {
+        cleanSub.isEmpty() -> cleanSpeed
+        cleanSpeed.isEmpty() -> cleanSub
+        cleanSub.equals(cleanSpeed, ignoreCase = true) -> cleanSub
+        else -> "$cleanSub ($cleanSpeed)"
+    }
+}
 
 /**
  * System-wide HDR+ Tactile Glass Dynamic Island UI:
@@ -201,8 +247,8 @@ fun DynamicIslandOverlay(
             snap<Float>()
         } else {
             spring(
-                dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
-                stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                dampingRatio = Tokens.Cockpit.MORPH_SPRING_DAMPING,
+                stiffness = Tokens.Cockpit.MORPH_SPRING_STIFFNESS,
             )
         }
     }
@@ -247,24 +293,24 @@ fun DynamicIslandOverlay(
 
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
-    val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp)
-        .coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
+    val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
+        .coerceAtLeast(Tokens.Cockpit.PillMinWidth - Tokens.Header)
     val collapsedSurfaceWidth = if (slotState.secondary != null) {
-        minPillWidth + CockpitTokens.SplitGap + CockpitTokens.BubbleSize
+        minPillWidth + Tokens.Cockpit.SplitGap + Tokens.Cockpit.BubbleSize
     } else {
         minPillWidth
     }
     val screenWidthDp = LocalConfiguration.current.screenWidthDp.dp
-    val maxAvailableWidth = (screenWidthDp - (CockpitTokens.MorphBackdropHorizontalPad * 2))
+    val maxAvailableWidth = (screenWidthDp - (Tokens.Cockpit.MorphBackdropHorizontalPad * 2))
         .coerceAtLeast(minPillWidth)
-    val expandedCardWidth = minOf(CockpitTokens.ExpandedMaxWidth, maxAvailableWidth)
+    val expandedCardWidth = minOf(Tokens.Cockpit.ExpandedMaxWidth, maxAvailableWidth)
 
-    var measuredExpandedHeight by remember { mutableStateOf(CockpitTokens.ExpandedDefaultHeight) }
+    var measuredExpandedHeight by remember { mutableStateOf(Tokens.Cockpit.ExpandedDefaultHeight) }
     val currentWidth = lerp(collapsedSurfaceWidth, expandedCardWidth, progress)
-    val currentHeight = lerp(CockpitTokens.PillHeight, measuredExpandedHeight, progress)
+    val currentHeight = lerp(Tokens.Cockpit.PillHeight, measuredExpandedHeight, progress)
     val currentCornerRadius = lerp(
-        CockpitTokens.MorphCollapsedCornerRadius,
-        CockpitTokens.MorphExpandedCornerRadius,
+        Tokens.Cockpit.MorphCollapsedCornerRadius,
+        Tokens.Cockpit.MorphExpandedCornerRadius,
         progress,
     )
     val currentShape = RoundedCornerShape(currentCornerRadius)
@@ -275,23 +321,14 @@ fun DynamicIslandOverlay(
     val settleSizeModifier = if (settledExpanded && !reducedMotion) {
         Modifier.animateContentSize(
             animationSpec = spring(
-                dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
-                stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                dampingRatio = Tokens.Cockpit.MORPH_SPRING_DAMPING,
+                stiffness = Tokens.Cockpit.MORPH_SPRING_STIFFNESS,
             ),
         )
     } else {
         Modifier
     }
-    val surfaceBrush: Brush = if (usesDedicatedCard(primary)) {
-        SolidColor(CockpitLivePalette.Oled)
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
-                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
-            ),
-        )
-    }
+    val dedicatedCard = usesDedicatedCard(primary)
     val surfaceSizeModifier = if (settledExpanded) {
         Modifier.width(expandedCardWidth)
     } else {
@@ -304,7 +341,13 @@ fun DynamicIslandOverlay(
         modifier = modifier
             .then(surfaceSizeModifier)
             .clip(currentShape)
-            .background(surfaceBrush)
+            .then(
+                if (dedicatedCard) {
+                    Modifier.background(CockpitLivePalette.Oled)
+                } else {
+                    Modifier.glass(shape = currentShape, level = GlassLevel.Island)
+                },
+            )
             .pointerInput(Unit) {
                 detectTapGestures { /* Consume non-button taps so they do not dismiss the backdrop scrim. */ }
             }
@@ -337,7 +380,7 @@ fun DynamicIslandOverlay(
                 .requiredWidth(expandedCardWidth)
                 .onSizeChanged { size ->
                     val measuredDp = with(density) { size.height.toDp() }
-                    if (measuredDp > CockpitTokens.PillHeight) {
+                    if (measuredDp > Tokens.Cockpit.PillHeight) {
                         measuredExpandedHeight = measuredDp
                     }
                 }
@@ -408,7 +451,7 @@ private fun CollapsedPillSurfaceContent(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .height(CockpitTokens.PillHeight)
+            .height(Tokens.Cockpit.PillHeight)
             .padding(horizontal = Tokens.Medium),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
@@ -477,9 +520,14 @@ fun CollapsedSplitIslandRow(
     val primary = slotState.primary
     val secondary = slotState.secondary
     val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
-    val minPillWidth = (CockpitTokens.PillMinWidth + widthDeltaDp.dp)
-        .coerceAtLeast(CockpitTokens.PillMinWidth - Tokens.Header)
-    val maxPillWidth = (CockpitTokens.PillMaxWidth + widthDeltaDp.dp).coerceAtLeast(minPillWidth)
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val maxPillWidth = computeSafePillMaxWidthDp(
+        screenWidthDp = screenWidthDp,
+        widthDeltaDp = widthDeltaDp,
+        hasSatelliteBubble = secondary != null,
+    ).dp
+    val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
+        .coerceIn(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val canSwap = slotState.visibleQueue.size > 1
     val dragOffset = remember { Animatable(0f) }
 
@@ -502,18 +550,18 @@ fun CollapsedSplitIslandRow(
                     }
                 },
                 onHorizontalDrag = { total ->
-                    if (canSwap) scope.launch { dragOffset.snapTo(total * CockpitTokens.SWAP_DRAG_DAMPING) }
+                    if (canSwap) scope.launch { dragOffset.snapTo(total * Tokens.Cockpit.SWAP_DRAG_DAMPING) }
                 },
                 onHorizontalEnd = { scope.launch { dragOffset.animateTo(0f, spring()) } },
             ),
         verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.SplitGap),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.SplitGap),
     ) {
-        // Primary Pill melting into the Pixel camera punch-hole with pure OLED #000000 core.
+        // Primary Pill centered strictly on WindowInsets.displayCutout with zero hardcoded top offset.
         // Outer hit box meets >= 52 dp height below the cutout to clear Pixel status-bar dead zones.
         Box(
             modifier = Modifier
-                .defaultMinSize(minHeight = CockpitTokens.PillTouchTargetHeight)
+                .defaultMinSize(minHeight = Tokens.Cockpit.PillTouchTargetHeight)
                 .combinedClickable(
                     onClickLabel = "Expand ${activityTitle(primary)}",
                     onLongClickLabel = "Expand DriveLift Cockpit",
@@ -526,14 +574,14 @@ fun CollapsedSplitIslandRow(
                         onLongPressExpand()
                     },
                 )
-                .padding(top = Tokens.Tiny, bottom = Tokens.Small)
+                .padding(bottom = Tokens.Small)
                 .testTag("cockpit-primary-pill"),
             contentAlignment = Alignment.TopCenter,
         ) {
             Row(
                 modifier = Modifier
                     .widthIn(min = minPillWidth, max = maxPillWidth)
-                    .height(CockpitTokens.PillHeight)
+                    .height(Tokens.Cockpit.PillHeight)
                     .clip(Tokens.PillShape)
                     .background(CockpitLivePalette.Oled)
                     .cockpitSpecularRim(
@@ -569,7 +617,7 @@ fun CollapsedSplitIslandRow(
                 modifier = Modifier
                     .defaultMinSize(
                         minWidth = Tokens.TouchTarget,
-                        minHeight = CockpitTokens.PillTouchTargetHeight,
+                        minHeight = Tokens.Cockpit.PillTouchTargetHeight,
                     )
                     .combinedClickable(
                         onClickLabel = "Switch to ${activityTitle(secondary)}",
@@ -583,13 +631,13 @@ fun CollapsedSplitIslandRow(
                             onLongPressExpand()
                         },
                     )
-                    .padding(top = Tokens.Tiny, bottom = Tokens.Small)
+                    .padding(bottom = Tokens.Small)
                     .testTag("cockpit-secondary-bubble"),
                 contentAlignment = Alignment.TopCenter,
             ) {
                 Box(
                     modifier = Modifier
-                        .size(CockpitTokens.BubbleSize)
+                        .size(Tokens.Cockpit.BubbleSize)
                         .clip(CircleShape)
                         .background(CockpitLivePalette.Oled)
                         .cockpitSpecularRim(
@@ -650,16 +698,7 @@ fun ExpandedCockpitCard(
 ) {
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
-    val surfaceBrush: Brush = if (usesDedicatedCard(primary)) {
-        SolidColor(CockpitLivePalette.Oled)
-    } else {
-        Brush.verticalGradient(
-            listOf(
-                MaterialTheme.colorScheme.scrim.copy(alpha = 0.95f),
-                MaterialTheme.colorScheme.surfaceContainerLow.copy(alpha = 0.93f),
-            ),
-        )
-    }
+    val dedicatedCard = usesDedicatedCard(primary)
     val cachedAppIcons = remember(pinnedApps) {
         pinnedApps.associate { app ->
             app.packageName to app.iconBitmap?.takeIf { !it.isRecycled }?.asImageBitmap()
@@ -668,12 +707,18 @@ fun ExpandedCockpitCard(
 
     Box(
         modifier = modifier
-            .widthIn(max = CockpitTokens.ExpandedMaxWidth)
+            .widthIn(max = Tokens.Cockpit.ExpandedMaxWidth)
             .fillMaxWidth()
-            .clip(CockpitTokens.ExpandedCardShape)
-            .background(surfaceBrush)
+            .clip(Tokens.Cockpit.ExpandedCardShape)
+            .then(
+                if (dedicatedCard) {
+                    Modifier.background(CockpitLivePalette.Oled)
+                } else {
+                    Modifier.glass(shape = Tokens.Cockpit.ExpandedCardShape, level = GlassLevel.Island)
+                },
+            )
             .cockpitSpecularRim(
-                shape = CockpitTokens.ExpandedCardShape,
+                shape = Tokens.Cockpit.ExpandedCardShape,
                 primaryAccent = accent,
                 secondaryAccent = secondaryAccent,
                 intensity = 0.95f,
@@ -758,7 +803,7 @@ private fun ExpandedCockpitCardContent(
     val compactWidthStack = largeFontStack ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
     val maxCardHeight = (LocalConfiguration.current.screenHeightDp.dp - Tokens.Section)
-        .coerceAtLeast(CockpitTokens.ExpandedDefaultHeight)
+        .coerceAtLeast(Tokens.Cockpit.ExpandedDefaultHeight)
     val primary = slotState.primary
     val (accent, secondaryAccent) = activityAccentPair(primary)
     var replyDraft by rememberSaveable(primary.id) { mutableStateOf("") }
@@ -782,7 +827,7 @@ private fun ExpandedCockpitCardContent(
             }
         },
         onHorizontalDrag = { total ->
-            if (canSwap) scope.launch { dragOffset.snapTo(total * CockpitTokens.SWAP_DRAG_DAMPING) }
+            if (canSwap) scope.launch { dragOffset.snapTo(total * Tokens.Cockpit.SWAP_DRAG_DAMPING) }
         },
         onHorizontalEnd = { scope.launch { dragOffset.animateTo(0f, spring()) } },
         onVerticalStart = onVerticalDragStart,
@@ -832,7 +877,7 @@ private fun ExpandedCockpitCardContent(
         ) {
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.AppShortcutTile)
+                    .size(Tokens.Cockpit.AppShortcutTile)
                     .clip(CircleShape)
                     .background(accent.copy(alpha = 0.16f))
                     .border(Tokens.Hairline, accent.copy(alpha = 0.5f), CircleShape),
@@ -955,7 +1000,9 @@ private fun ExpandedCockpitCardContent(
                     if (primary.canStop) {
                         OutlinedButton(
                             onClick = onStopDesktopDrop,
+                            border = BorderStroke(Tokens.GlassBorderHero, MaterialTheme.colorScheme.error),
                             colors = ButtonDefaults.outlinedButtonColors(
+                                containerColor = GlassPalette.DestructiveGlow,
                                 contentColor = MaterialTheme.colorScheme.error,
                             ),
                             modifier = Modifier
@@ -1238,32 +1285,32 @@ private fun QuickDeckSection(
 ) {
     val wifiActive = quickControls.wifi.isEnabled
     val wifiAccent = if (quickControls.wifi.isConnected) {
-        GlassPalette.HudElectricCyan
+        MaterialTheme.colorScheme.primary
     } else if (wifiActive) {
-        MaterialTheme.colorScheme.tertiary
+        MaterialTheme.colorScheme.secondary
     } else {
         MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val dataActive = quickControls.mobileData.isEnabled
     val dataAccent = when {
-        !quickControls.mobileData.hasUsageAccess -> MaterialTheme.colorScheme.primary
-        dataActive -> GlassPalette.HudEmerald
+        !quickControls.mobileData.hasUsageAccess -> MaterialTheme.colorScheme.secondary
+        dataActive -> MaterialTheme.colorScheme.tertiary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val btActive = quickControls.bluetooth.isEnabled
     val btAccent = when {
-        !quickControls.bluetooth.hasPermission -> MaterialTheme.colorScheme.primary
-        quickControls.bluetooth.connectedCount > 0 -> GlassPalette.HudElectricCyan
-        btActive -> GlassPalette.HudVioletBlue
+        !quickControls.bluetooth.hasPermission -> MaterialTheme.colorScheme.secondary
+        quickControls.bluetooth.connectedCount > 0 -> MaterialTheme.colorScheme.primary
+        btActive -> MaterialTheme.colorScheme.secondary
         else -> MaterialTheme.colorScheme.onSurfaceVariant
     }
 
     val (ringerIcon, ringerAccent) = when (quickControls.ringer.mode) {
-        CockpitRingerMode.NORMAL -> Icons.Outlined.NotificationsActive to GlassPalette.HudEmerald
-        CockpitRingerMode.VIBRATE -> Icons.Outlined.Vibration to GlassPalette.HudElectricCyan
-        CockpitRingerMode.SILENT -> Icons.Outlined.NotificationsOff to GlassPalette.HudCoral
+        CockpitRingerMode.NORMAL -> Icons.Outlined.NotificationsActive to MaterialTheme.colorScheme.tertiary
+        CockpitRingerMode.VIBRATE -> Icons.Outlined.Vibration to MaterialTheme.colorScheme.primary
+        CockpitRingerMode.SILENT -> Icons.Outlined.NotificationsOff to MaterialTheme.colorScheme.secondary
     }
 
     Column(
@@ -1272,16 +1319,15 @@ private fun QuickDeckSection(
             .testTag("cockpit-quick-deck"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        // Row 1: Wi-Fi (marquee SSID) + Mobile Data (monthly consumption)
+        // Row 1: Wi-Fi (left-aligned SSID with end ellipsis) + Mobile Data (monthly consumption)
         if (stackRow1) {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
                     title = "Wi-Fi",
                     subtitle = quickControls.wifi.label,
                     active = wifiActive,
                     accent = wifiAccent,
-                    useMarqueeSubtitle = true,
                     onClick = onTapWifi,
                     onLongClick = onLongPressWifi,
                     clickLabel = "Open internet controls",
@@ -1290,7 +1336,7 @@ private fun QuickDeckSection(
                         .fillMaxWidth()
                         .testTag("cockpit-tile-wifi"),
                 )
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = Icons.Outlined.SignalCellularAlt,
                     title = "Mobile Data",
                     subtitle = quickControls.mobileData.label,
@@ -1311,13 +1357,12 @@ private fun QuickDeckSection(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
                     title = "Wi-Fi",
                     subtitle = quickControls.wifi.label,
                     active = wifiActive,
                     accent = wifiAccent,
-                    useMarqueeSubtitle = true,
                     onClick = onTapWifi,
                     onLongClick = onLongPressWifi,
                     clickLabel = "Open internet controls",
@@ -1326,7 +1371,7 @@ private fun QuickDeckSection(
                         .weight(1f)
                         .testTag("cockpit-tile-wifi"),
                 )
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = Icons.Outlined.SignalCellularAlt,
                     title = "Mobile Data",
                     subtitle = quickControls.mobileData.label,
@@ -1351,7 +1396,7 @@ private fun QuickDeckSection(
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                 verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = when {
                         !btActive -> Icons.Outlined.BluetoothDisabled
                         quickControls.bluetooth.connectedCount > 0 -> Icons.Outlined.BluetoothConnected
@@ -1372,7 +1417,7 @@ private fun QuickDeckSection(
                     horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    TactileGlassTile(
+                    QuickDeckTile(
                         icon = ringerIcon,
                         title = "Sound",
                         subtitle = quickControls.ringer.label,
@@ -1396,7 +1441,7 @@ private fun QuickDeckSection(
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = when {
                         !btActive -> Icons.Outlined.BluetoothDisabled
                         quickControls.bluetooth.connectedCount > 0 -> Icons.Outlined.BluetoothConnected
@@ -1412,7 +1457,7 @@ private fun QuickDeckSection(
                         .weight(1f)
                         .testTag("cockpit-tile-bluetooth"),
                 )
-                TactileGlassTile(
+                QuickDeckTile(
                     icon = ringerIcon,
                     title = "Sound",
                     subtitle = quickControls.ringer.label,
@@ -1437,8 +1482,8 @@ private fun QuickDeckSection(
         } else {
             expandVertically(
                 animationSpec = spring(
-                    dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
-                    stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                    dampingRatio = Tokens.Cockpit.MORPH_SPRING_DAMPING,
+                    stiffness = Tokens.Cockpit.MORPH_SPRING_STIFFNESS,
                 ),
             ) + fadeIn()
         }
@@ -1447,8 +1492,8 @@ private fun QuickDeckSection(
         } else {
             shrinkVertically(
                 animationSpec = spring(
-                    dampingRatio = CockpitTokens.MORPH_SPRING_DAMPING,
-                    stiffness = CockpitTokens.MORPH_SPRING_STIFFNESS,
+                    dampingRatio = Tokens.Cockpit.MORPH_SPRING_DAMPING,
+                    stiffness = Tokens.Cockpit.MORPH_SPRING_STIFFNESS,
                 ),
             ) + fadeOut()
         }
@@ -1465,7 +1510,7 @@ private fun QuickDeckSection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
-                LiquidGlassTorchScrubber(
+                TorchBrightnessScrubber(
                     torchState = torchState,
                     onBrightnessChange = onTorchBrightnessChange,
                     modifier = Modifier.weight(1f),
@@ -1502,7 +1547,7 @@ private fun QuickDeckSection(
 
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
-private fun TactileGlassTile(
+private fun QuickDeckTile(
     icon: ImageVector,
     title: String,
     subtitle: String,
@@ -1513,7 +1558,6 @@ private fun TactileGlassTile(
     modifier: Modifier = Modifier,
     onLongClick: (() -> Unit)? = null,
     longClickLabel: String? = null,
-    useMarqueeSubtitle: Boolean = false,
     isShimmerLoading: Boolean = false,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -1533,7 +1577,7 @@ private fun TactileGlassTile(
             ),
         )
     }
-    val borderColor = if (active) accent.copy(alpha = 0.52f) else GlassPalette.WellEdge
+    val borderColor = if (active) accent.copy(alpha = 0.55f) else GlassPalette.WellEdge
 
     val interactiveMod = if (onLongClick != null) {
         Modifier.combinedClickable(
@@ -1561,10 +1605,10 @@ private fun TactileGlassTile(
 
     Row(
         modifier = modifier
-            .defaultMinSize(minHeight = CockpitTokens.QuickTileMinHeight)
-            .clip(CockpitTokens.QuickDeckShape)
+            .defaultMinSize(minHeight = Tokens.Cockpit.QuickTileMinHeight)
+            .clip(Tokens.Cockpit.QuickDeckShape)
             .background(fillBrush)
-            .border(Tokens.Hairline, borderColor, CockpitTokens.QuickDeckShape)
+            .border(Tokens.Hairline, borderColor, Tokens.Cockpit.QuickDeckShape)
             .then(interactiveMod)
             .padding(horizontal = Tokens.Row, vertical = Tokens.Tiny),
         verticalAlignment = Alignment.CenterVertically,
@@ -1581,8 +1625,10 @@ private fun TactileGlassTile(
                 text = title,
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                textAlign = TextAlign.Start,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth(),
             )
             if (isShimmerLoading) {
                 ShimmerLoadingBar(reducedMotion = reducedMotion)
@@ -1591,9 +1637,10 @@ private fun TactileGlassTile(
                     text = subtitle,
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    textAlign = TextAlign.Start,
                     maxLines = 1,
-                    overflow = if (useMarqueeSubtitle) TextOverflow.Clip else TextOverflow.Ellipsis,
-                    modifier = if (useMarqueeSubtitle) Modifier.basicMarquee() else Modifier,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.fillMaxWidth(),
                 )
             }
         }
@@ -1610,7 +1657,7 @@ private fun ShimmerLoadingBar(reducedMotion: Boolean) {
             initialValue = 0.14f,
             targetValue = 0.34f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                animation = tween(durationMillis = Tokens.Cockpit.SHIMMER_DURATION_MS, easing = LinearEasing),
                 repeatMode = RepeatMode.Reverse,
             ),
             label = "shimmer_alpha",
@@ -1637,17 +1684,17 @@ private fun IconOnlyTorchTile(
     val isOn = torchState.isOn && enabled
     val bgColor = when {
         !enabled -> GlassPalette.HudTileDisabled
-        isOn -> GlassPalette.HudAmberGlow
+        isOn -> GlassPalette.PrimaryCyan.copy(alpha = 0.24f)
         else -> GlassPalette.Well
     }
     val borderColor = when {
         !enabled -> GlassPalette.HudTileDisabledBorder
-        isOn -> GlassPalette.HudAmber
+        isOn -> GlassPalette.PrimaryCyan
         else -> GlassPalette.WellEdge
     }
     val iconTint = when {
         !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-        isOn -> GlassPalette.HudAmber
+        isOn -> GlassPalette.PrimaryCyan
         else -> MaterialTheme.colorScheme.onSurface
     }
     val contentDesc = when {
@@ -1658,13 +1705,13 @@ private fun IconOnlyTorchTile(
 
     Box(
         modifier = Modifier
-            .size(CockpitTokens.QuickTileMinHeight)
-            .clip(CockpitTokens.QuickDeckShape)
+            .size(Tokens.Cockpit.QuickTileMinHeight)
+            .clip(Tokens.Cockpit.QuickDeckShape)
             .background(bgColor)
             .border(
                 width = if (isOn) Tokens.Stroke else Tokens.Hairline,
                 color = borderColor,
-                shape = CockpitTokens.QuickDeckShape,
+                shape = Tokens.Cockpit.QuickDeckShape,
             )
             .clickable(
                 enabled = enabled,
@@ -1687,7 +1734,7 @@ private fun IconOnlyTorchTile(
 }
 
 @Composable
-private fun LiquidGlassTorchScrubber(
+private fun TorchBrightnessScrubber(
     torchState: TorchUiState,
     onBrightnessChange: (Int) -> Unit,
     modifier: Modifier = Modifier,
@@ -1708,10 +1755,10 @@ private fun LiquidGlassTorchScrubber(
 
     BoxWithConstraints(
         modifier = modifier
-            .height(CockpitTokens.LiquidSliderHeight)
+            .height(Tokens.Cockpit.LiquidSliderHeight)
             .clip(Tokens.PillShape)
             .background(GlassPalette.HudTileRecessed)
-            .border(Tokens.Hairline, GlassPalette.HudAmber.copy(alpha = 0.65f), Tokens.PillShape)
+            .border(Tokens.Hairline, GlassPalette.PrimaryCyan.copy(alpha = 0.65f), Tokens.PillShape)
             .onSizeChanged { trackWidthPx = it.width.toFloat().coerceAtLeast(1f) }
             .semantics {
                 progressBarRangeInfo = ProgressBarRangeInfo(
@@ -1754,8 +1801,8 @@ private fun LiquidGlassTorchScrubber(
                 .background(
                     Brush.horizontalGradient(
                         listOf(
-                            GlassPalette.HudAmberGlow,
-                            GlassPalette.HudAmber.copy(alpha = 0.72f),
+                            GlassPalette.HudAuroraCyan,
+                            GlassPalette.PrimaryCyan.copy(alpha = 0.68f),
                         ),
                     ),
                 ),
@@ -1789,24 +1836,26 @@ private fun TorchSosPillButton(
     enabled: Boolean,
     onClick: () -> Unit,
 ) {
-    val bgColor = when {
-        !enabled -> GlassPalette.HudTileDisabled
-        sosActive -> MaterialTheme.colorScheme.errorContainer
-        else -> GlassPalette.Well
-    }
     val fgColor = when {
         !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
         sosActive -> MaterialTheme.colorScheme.error
         else -> MaterialTheme.colorScheme.onSurface
     }
-    val borderColor = if (sosActive) MaterialTheme.colorScheme.error else GlassPalette.WellEdge
+    val surfaceModifier = when {
+        !enabled -> Modifier
+            .background(GlassPalette.HudTileDisabled, Tokens.PillShape)
+            .border(Tokens.Hairline, GlassPalette.HudTileDisabledBorder, Tokens.PillShape)
+        sosActive -> Modifier.destructiveGlowBorder(Tokens.PillShape)
+        else -> Modifier
+            .background(GlassPalette.Well, Tokens.PillShape)
+            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
+    }
 
     Row(
         modifier = Modifier
-            .defaultMinSize(minWidth = CockpitTokens.SosPillMinWidth, minHeight = CockpitTokens.LiquidSliderHeight)
+            .defaultMinSize(minWidth = Tokens.Cockpit.SosPillMinWidth, minHeight = Tokens.Cockpit.LiquidSliderHeight)
             .clip(Tokens.PillShape)
-            .background(bgColor)
-            .border(Tokens.Hairline, borderColor, Tokens.PillShape)
+            .then(surfaceModifier)
             .clickable(
                 enabled = enabled,
                 role = Role.Button,
@@ -1924,7 +1973,7 @@ private fun activitySubtitle(
 ): String = when (activity) {
     is CockpitLiveActivity.CallActivity -> activity.sourceLabel
     is CockpitLiveActivity.ScreenRecordingActivity -> "Recording active"
-    is CockpitLiveActivity.TransferActivity -> "${activity.subtitle} (${activity.speedText})"
+    is CockpitLiveActivity.TransferActivity -> formatTransferActivitySubtitle(activity.subtitle, activity.speedText)
     is CockpitLiveActivity.TimerRecordingActivity ->
         if (activity.isRecording) "Recording active" else "Timer running"
     is CockpitLiveActivity.MediaActivity -> activity.artist

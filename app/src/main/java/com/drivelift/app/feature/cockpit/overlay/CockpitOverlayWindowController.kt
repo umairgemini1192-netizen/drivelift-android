@@ -4,10 +4,13 @@ import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
 import android.graphics.PixelFormat
+import android.graphics.Rect
 import android.os.Build
+import android.view.DisplayCutout
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.WindowInsets
 import android.view.WindowManager
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.interaction.MutableInteractionSource
@@ -25,7 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
-import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.IntOffset
 import androidx.lifecycle.LifecycleOwner
 import androidx.lifecycle.ViewModelStoreOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -39,12 +42,73 @@ import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.notifications.CockpitNotificationListener
 import com.drivelift.app.feature.cockpit.ui.CockpitActivityActions
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
 import com.drivelift.app.feature.cockpit.ui.DynamicIslandOverlay
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.MainActivity
+import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.launch
+
+/**
+ * Pixel anchor derived strictly from `WindowInsets.displayCutout` bounds with zero hardcoded
+ * pixel offsets:
+ * - [centerOffsetXPx]: signed horizontal delta from screen horizontal center (`Gravity.CENTER_HORIZONTAL`)
+ *   to the exact horizontal center of `boundingRectTop`.
+ * - [topPx]: vertical window origin so the pill's vertical center aligns with the cutout's vertical center.
+ */
+internal data class CutoutAnchor(
+    val centerOffsetXPx: Int = 0,
+    val topPx: Int = 0,
+)
+
+internal object CutoutAnchorCalculator {
+    fun fromWindowInsets(
+        windowInsets: WindowInsets?,
+        displayWidthPx: Int,
+        pillHeightPx: Int,
+    ): CutoutAnchor = fromDisplayCutout(
+        cutout = windowInsets?.displayCutout,
+        displayWidthPx = displayWidthPx,
+        pillHeightPx = pillHeightPx,
+    )
+
+    fun fromDisplayCutout(
+        cutout: DisplayCutout?,
+        displayWidthPx: Int,
+        pillHeightPx: Int,
+    ): CutoutAnchor {
+        val topRect = cutout?.boundingRectTop?.takeIf { !it.isEmpty }
+            ?: cutout?.boundingRects?.firstOrNull { !it.isEmpty }
+        return fromCutoutBounds(
+            cutoutTopRect = topRect,
+            displayWidthPx = displayWidthPx,
+            pillHeightPx = pillHeightPx,
+        )
+    }
+
+    fun fromCutoutBounds(
+        cutoutTopRect: Rect?,
+        displayWidthPx: Int,
+        pillHeightPx: Int,
+    ): CutoutAnchor {
+        if (cutoutTopRect == null || cutoutTopRect.isEmpty) {
+            return CutoutAnchor(centerOffsetXPx = 0, topPx = 0)
+        }
+        val cutoutCenterX = (cutoutTopRect.left + cutoutTopRect.right) / 2
+        val centerOffsetX = if (displayWidthPx > 0) {
+            cutoutCenterX - (displayWidthPx / 2)
+        } else {
+            0
+        }
+        val cutoutCenterY = (cutoutTopRect.top + cutoutTopRect.bottom) / 2
+        val safePillHeight = pillHeightPx.coerceAtLeast(0)
+        val topPx = (cutoutCenterY - (safePillHeight / 2)).coerceAtLeast(0)
+        return CutoutAnchor(
+            centerOffsetXPx = centerOffsetX,
+            topPx = topPx,
+        )
+    }
+}
 
 /**
  * Pure window bounds coordinator ensuring zero `updateViewLayout()` calls happen mid-animation:
@@ -71,6 +135,7 @@ internal class CockpitWindowBoundsCoordinator(
     fun createBaseLayoutParams(
         windowType: Int,
         cutoutTopPx: Int,
+        cutoutCenterOffsetXPx: Int = 0,
     ): WindowManager.LayoutParams = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.WRAP_CONTENT,
@@ -83,6 +148,7 @@ internal class CockpitWindowBoundsCoordinator(
     ).apply {
         gravity = Gravity.TOP or Gravity.CENTER_HORIZONTAL
         layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+        x = cutoutCenterOffsetXPx
         y = cutoutTopPx
     }
 
@@ -93,7 +159,8 @@ internal class CockpitWindowBoundsCoordinator(
         cutoutTopPx: Int,
         offsetXPx: Int,
         offsetYPx: Int,
-        blurRadiusPx: Int = CockpitTokens.OVERLAY_BLUR_RADIUS_PX,
+        blurRadiusPx: Int = Tokens.Cockpit.OVERLAY_BLUR_RADIUS_PX,
+        cutoutCenterOffsetXPx: Int = 0,
     ): Boolean {
         targetExpanded = isExpanded
         this.inlineReplyOpen = inlineReplyOpen
@@ -103,6 +170,7 @@ internal class CockpitWindowBoundsCoordinator(
         return applyParamsIfChanged(
             params = params,
             cutoutTopPx = cutoutTopPx,
+            cutoutCenterOffsetXPx = cutoutCenterOffsetXPx,
             offsetXPx = offsetXPx,
             offsetYPx = offsetYPx,
             blurRadiusPx = blurRadiusPx,
@@ -114,13 +182,15 @@ internal class CockpitWindowBoundsCoordinator(
         cutoutTopPx: Int,
         offsetXPx: Int,
         offsetYPx: Int,
-        blurRadiusPx: Int = CockpitTokens.OVERLAY_BLUR_RADIUS_PX,
+        blurRadiusPx: Int = Tokens.Cockpit.OVERLAY_BLUR_RADIUS_PX,
+        cutoutCenterOffsetXPx: Int = 0,
     ): Boolean {
         if (targetExpanded || currentSpan == WindowSpan.COLLAPSED_WRAP) return false
         currentSpan = WindowSpan.COLLAPSED_WRAP
         return applyParamsIfChanged(
             params = params,
             cutoutTopPx = cutoutTopPx,
+            cutoutCenterOffsetXPx = cutoutCenterOffsetXPx,
             offsetXPx = offsetXPx,
             offsetYPx = offsetYPx,
             blurRadiusPx = blurRadiusPx,
@@ -137,6 +207,7 @@ internal class CockpitWindowBoundsCoordinator(
     private fun applyParamsIfChanged(
         params: WindowManager.LayoutParams,
         cutoutTopPx: Int,
+        cutoutCenterOffsetXPx: Int,
         offsetXPx: Int,
         offsetYPx: Int,
         blurRadiusPx: Int,
@@ -173,7 +244,7 @@ internal class CockpitWindowBoundsCoordinator(
 
         params.flags = flags
         params.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
-        params.x = if (fullOverlay) 0 else offsetXPx
+        params.x = if (fullOverlay) 0 else cutoutCenterOffsetXPx + offsetXPx
         params.y = cutoutTopPx + if (fullOverlay) 0 else offsetYPx
 
         val blurVal = if (Build.VERSION.SDK_INT >= 31) params.blurBehindRadius else 0
@@ -209,6 +280,7 @@ internal class CockpitOverlayWindowController(
 
     val isLandscapeFullscreen = mutableStateOf(false)
     val cutoutTopPx = mutableIntStateOf(0)
+    val cutoutCenterOffsetXPx = mutableIntStateOf(0)
 
     val isAttached: Boolean
         get() = overlayView != null
@@ -217,11 +289,18 @@ internal class CockpitOverlayWindowController(
         isLandscapeFullscreen.value =
             serviceContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
         val wm = windowManager ?: return
-        val cutout = runCatching {
-            wm.currentWindowMetrics.windowInsets.displayCutout
-        }.getOrNull()
-        val rectTop = cutout?.boundingRectTop?.top ?: 0
-        cutoutTopPx.intValue = rectTop.coerceAtLeast(0)
+        val density = serviceContext.resources.displayMetrics.density
+        val pillHeightPx = (Tokens.Cockpit.PillHeight.value * density).toInt()
+        val anchor = runCatching {
+            val metrics = wm.currentWindowMetrics
+            CutoutAnchorCalculator.fromWindowInsets(
+                windowInsets = metrics.windowInsets,
+                displayWidthPx = metrics.bounds.width(),
+                pillHeightPx = pillHeightPx,
+            )
+        }.getOrDefault(CutoutAnchor())
+        cutoutTopPx.intValue = anchor.topPx
+        cutoutCenterOffsetXPx.intValue = anchor.centerOffsetXPx
         overlayView?.visibility = if (isLandscapeFullscreen.value) View.GONE else View.VISIBLE
     }
 
@@ -236,6 +315,7 @@ internal class CockpitOverlayWindowController(
         val params = boundsCoordinator.createBaseLayoutParams(
             windowType = windowType,
             cutoutTopPx = cutoutTopPx.intValue,
+            cutoutCenterOffsetXPx = cutoutCenterOffsetXPx.intValue,
         )
         layoutParams = params
 
@@ -320,6 +400,7 @@ internal class CockpitOverlayWindowController(
                     prefs.cutoutOffsetX,
                     prefs.cutoutOffsetY,
                     cutoutTopPx.intValue,
+                    cutoutCenterOffsetXPx.intValue,
                 ) {
                     val density = serviceContext.resources.displayMetrics.density
                     if (slotState.isExpanded) {
@@ -333,6 +414,7 @@ internal class CockpitOverlayWindowController(
                         cutoutTopPx = cutoutTopPx.intValue,
                         offsetXPx = (prefs.cutoutOffsetX * density).toInt(),
                         offsetYPx = (prefs.cutoutOffsetY * density).toInt(),
+                        cutoutCenterOffsetXPx = cutoutCenterOffsetXPx.intValue,
                     )
                 }
 
@@ -382,6 +464,7 @@ internal class CockpitOverlayWindowController(
                                         cutoutTopPx = cutoutTopPx.intValue,
                                         offsetXPx = (prefs.cutoutOffsetX * density).toInt(),
                                         offsetYPx = (prefs.cutoutOffsetY * density).toInt(),
+                                        cutoutCenterOffsetXPx = cutoutCenterOffsetXPx.intValue,
                                     )
                                 },
                                 onCycleNext = { cockpit.coordinator.cycleNext() },
@@ -422,10 +505,13 @@ internal class CockpitOverlayWindowController(
                                 callAudio = callAudio,
                                 activityActions = activityActions,
                                 modifier = if (fullOverlayActive) {
-                                    Modifier.offset(
-                                        x = prefs.cutoutOffsetX.dp,
-                                        y = prefs.cutoutOffsetY.dp,
-                                    )
+                                    val density = serviceContext.resources.displayMetrics.density
+                                    Modifier.offset {
+                                        IntOffset(
+                                            x = cutoutCenterOffsetXPx.intValue + (prefs.cutoutOffsetX * density).toInt(),
+                                            y = (prefs.cutoutOffsetY * density).toInt(),
+                                        )
+                                    }
                                 } else {
                                     Modifier
                                 },

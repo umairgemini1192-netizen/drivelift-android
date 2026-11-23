@@ -25,6 +25,7 @@ import com.drivelift.app.feature.applock.AppLockGateMode
 import com.drivelift.app.feature.applock.AppLockGateRequest
 import com.drivelift.app.feature.applock.PinVerifyResult
 import com.drivelift.app.ui.DriveLiftTheme
+import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.delay
 
 /**
@@ -123,7 +124,7 @@ class AppLockGateActivity : FragmentActivity() {
 
             LaunchedEffect(lockoutRemainingMs) {
                 if (lockoutRemainingMs > 0L) {
-                    delay(AppLockTokens.LOCKOUT_TICK_MS)
+                    delay(Tokens.AppLock.LOCKOUT_TICK_MS)
                     lockoutRemainingMs = appLock.engine.currentLockoutState().remainingLockoutMs(graph.clock())
                 }
             }

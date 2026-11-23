@@ -106,6 +106,7 @@ import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.repeatOnLifecycle
+import com.drivelift.app.BuildConfig
 import com.drivelift.app.Graph
 import com.drivelift.app.R
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
@@ -137,6 +138,7 @@ import com.drivelift.app.feature.desktopdrop.model.ServerStatus
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.LocalReducedMotion
+import com.drivelift.app.ui.TABULAR_DIGITS
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.delay
 
@@ -411,6 +413,7 @@ fun CockpitSetupContent(
     onTapBluetooth: () -> Unit = {},
     onCycleRingerMode: () -> Unit = {},
     onTapAlarm: () -> Unit = {},
+    showSimulatorControls: Boolean = BuildConfig.DEBUG,
 ) {
     var previewExpanded by rememberSaveable { mutableStateOf(false) }
     var previewScenario by rememberSaveable { mutableStateOf(CockpitPreviewScenario.DEFAULT) }
@@ -458,10 +461,11 @@ fun CockpitSetupContent(
 
             item(key = "pill-preview") {
                 val previewPrimary = remember(telemetry) {
+                    val speedBadge = if (telemetry.isDesktopDropRunning) "Live" else "Ready"
                     CockpitLiveActivity.TransferActivity(
                         title = telemetry.connectedPeerName ?: "Desktop Drop",
-                        subtitle = telemetry.statusHeadline,
-                        speedText = if (telemetry.isDesktopDropRunning) "Live" else "Ready",
+                        subtitle = formatTransferActivitySubtitle(telemetry.statusHeadline, ""),
+                        speedText = speedBadge,
                         progressFraction = null,
                         isDesktopDrop = true,
                         canStop = true,
@@ -514,7 +518,7 @@ fun CockpitSetupContent(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .defaultMinSize(minHeight = CockpitTokens.PreviewBackdropHeight)
+                            .defaultMinSize(minHeight = Tokens.Cockpit.PreviewBackdropHeight)
                             .animateContentSize()
                             .padding(Tokens.Small),
                         contentAlignment = Alignment.TopCenter,
@@ -579,17 +583,19 @@ fun CockpitSetupContent(
                 }
             }
 
-            item(key = "preview-scenarios") {
-                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                    Text(
-                        text = "Simulate a live activity",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    CockpitPreviewScenarioChips(
-                        selected = previewScenario,
-                        onSelect = selectPreviewScenario,
-                    )
+            if (showSimulatorControls) {
+                item(key = "preview-scenarios") {
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                        Text(
+                            text = "Simulate a live activity",
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        CockpitPreviewScenarioChips(
+                            selected = previewScenario,
+                            onSelect = selectPreviewScenario,
+                        )
+                    }
                 }
             }
 
@@ -623,7 +629,7 @@ fun CockpitSetupContent(
                     ) {
                         PermissionRow(
                             title = "Accessibility overlay (for cutout taps)",
-                            body = "Mounts the pill via TYPE_ACCESSIBILITY_OVERLAY above the status bar for reliable cutout taps. Reads zero screen content.",
+                            body = "Places the Dynamic Island above the status bar so taps near the camera cutout always respond. DriveLift never reads what is on your screen.",
                             granted = accessibilityHealth == AccessibilityHealth.CONNECTED,
                             onGrant = onGrantAccessibilityOverlay,
                             tag = "cockpit-perm-accessibility",
@@ -911,7 +917,7 @@ fun CockpitMasterWidgetCard(
             initialValue = 0.55f,
             targetValue = 1.0f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                animation = tween(durationMillis = Tokens.Cockpit.SHIMMER_DURATION_MS, easing = LinearEasing),
                 repeatMode = RepeatMode.Reverse,
             ),
             label = "charging_halo_alpha",
@@ -934,9 +940,9 @@ fun CockpitMasterWidgetCard(
         torchOn = torchOn && torchAvailable,
     )
     val statusAccent = when (statusPill.tone) {
-        WidgetStatusTone.READY -> GlassPalette.HudEmerald
-        WidgetStatusTone.DROP_LIVE -> GlassPalette.HudElectricCyan
-        WidgetStatusTone.TORCH_ON -> GlassPalette.HudAmber
+        WidgetStatusTone.READY -> GlassPalette.SuccessGreen
+        WidgetStatusTone.DROP_LIVE -> GlassPalette.PrimaryCyan
+        WidgetStatusTone.TORCH_ON -> GlassPalette.SecondaryViolet
     }
     val dropTile = CockpitWidgetModel.dropTile(
         dropLive = telemetry.isDesktopDropRunning,
@@ -981,7 +987,7 @@ fun CockpitMasterWidgetCard(
             widthPx = (104f * density).toInt(),
             heightPx = (50f * density).toInt(),
             active = telemetry.isDesktopDropRunning,
-            accentColor = GlassPalette.HudCoral,
+            accentColor = GlassPalette.DestructiveRed,
             density = density,
             enabled = dropAvailable,
         ).asImageBitmap()
@@ -991,7 +997,7 @@ fun CockpitMasterWidgetCard(
             widthPx = (104f * density).toInt(),
             heightPx = (50f * density).toInt(),
             active = torchOn && torchAvailable,
-            accentColor = GlassPalette.HudAmber,
+            accentColor = GlassPalette.PrimaryCyan,
             density = density,
             enabled = torchAvailable,
         ).asImageBitmap()
@@ -1001,7 +1007,7 @@ fun CockpitMasterWidgetCard(
             widthPx = (104f * density).toInt(),
             heightPx = (50f * density).toInt(),
             active = islandOn,
-            accentColor = GlassPalette.HudVioletBlue,
+            accentColor = GlassPalette.SecondaryViolet,
             density = density,
             enabled = true,
         ).asImageBitmap()
@@ -1017,14 +1023,14 @@ fun CockpitMasterWidgetCard(
     Box(
         modifier = modifier
             .fillMaxWidth()
-            .clip(CockpitTokens.WidgetCardShape)
+            .clip(Tokens.Cockpit.WidgetCardShape)
             .background(Brush.linearGradient(colors = wallpaperGradientColors))
             .padding(Tokens.Small),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .clip(CockpitTokens.HudOuterShape)
+                .clip(Tokens.Cockpit.HudOuterShape)
                 .testTag("cockpit-master-widget-card"),
         ) {
             Image(
@@ -1054,7 +1060,8 @@ fun CockpitMasterWidgetCard(
                         Box(
                             modifier = Modifier
                                 .wrapContentWidth()
-                                .clip(CockpitTokens.HudTileShape)
+                                .widthIn(max = Tokens.Cockpit.WidgetStatusPillMaxWidth)
+                                .clip(Tokens.Cockpit.HudTileShape)
                                 .testTag("cockpit-widget-status-badge"),
                         ) {
                             Image(
@@ -1070,7 +1077,7 @@ fun CockpitMasterWidgetCard(
                             ) {
                                 Box(
                                     modifier = Modifier
-                                        .size(CockpitTokens.StatusDot)
+                                        .size(Tokens.Cockpit.StatusDot)
                                         .clip(Tokens.PillShape)
                                         .background(statusAccent),
                                 )
@@ -1085,7 +1092,7 @@ fun CockpitMasterWidgetCard(
                         }
 
                         Row(
-                            horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
                             verticalAlignment = Alignment.Top,
                         ) {
                             if (isInitialTelemetryLoading) {
@@ -1095,7 +1102,7 @@ fun CockpitMasterWidgetCard(
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
                                 Box(
                                     modifier = Modifier
-                                        .size(CockpitTokens.HudGaugeSize)
+                                        .size(Tokens.Cockpit.HudGaugeSize)
                                         .then(
                                             if (batteryMetric.isCharging) {
                                                 Modifier
@@ -1126,7 +1133,7 @@ fun CockpitMasterWidgetCard(
                                     bitmap = ramGaugeBitmap,
                                     contentDescription = "RAM ${ramMetric.valueText}",
                                     modifier = Modifier
-                                        .size(CockpitTokens.HudGaugeSize)
+                                        .size(Tokens.Cockpit.HudGaugeSize)
                                         .testTag("cockpit-widget-ram-gauge"),
                                 )
                             }
@@ -1162,7 +1169,7 @@ fun CockpitMasterWidgetCard(
                         label = dropTile.label,
                         active = dropTile.active,
                         enabled = dropTile.enabled,
-                        accentColor = GlassPalette.HudCoral,
+                        accentColor = GlassPalette.DestructiveRed,
                         plateBitmap = dropTileBitmap,
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1181,7 +1188,7 @@ fun CockpitMasterWidgetCard(
                         },
                         active = torchOn && torchAvailable,
                         enabled = torchAvailable,
-                        accentColor = GlassPalette.HudAmber,
+                        accentColor = GlassPalette.PrimaryCyan,
                         plateBitmap = torchTileBitmap,
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1194,7 +1201,7 @@ fun CockpitMasterWidgetCard(
                         label = if (islandOn) "Island On" else "Island",
                         active = islandOn,
                         enabled = true,
-                        accentColor = GlassPalette.HudVioletBlue,
+                        accentColor = GlassPalette.SecondaryViolet,
                         plateBitmap = islandTileBitmap,
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
@@ -1209,17 +1216,17 @@ fun CockpitMasterWidgetCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("cockpit-widget-controls-row"),
-                        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
-                        verticalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
                     ) {
-                        controlsContent(Modifier.widthIn(min = CockpitTokens.PillMinWidth / 2))
+                        controlsContent(Modifier.widthIn(min = Tokens.Cockpit.PillMinWidth / 2))
                     }
                 } else {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("cockpit-widget-controls-row"),
-                        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPillSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         controlsContent(Modifier.weight(1f))
@@ -1231,7 +1238,7 @@ fun CockpitMasterWidgetCard(
                     Box(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .clip(CockpitTokens.HudInnerShape)
+                            .clip(Tokens.Cockpit.HudInnerShape)
                             .testTag("cockpit-widget-pinned-row"),
                     ) {
                         Image(
@@ -1315,7 +1322,7 @@ private fun GaugeShimmerPlaceholder(reducedMotion: Boolean) {
             initialValue = 0.12f,
             targetValue = 0.30f,
             animationSpec = infiniteRepeatable(
-                animation = tween(durationMillis = CockpitTokens.SHIMMER_DURATION_MS, easing = LinearEasing),
+                animation = tween(durationMillis = Tokens.Cockpit.SHIMMER_DURATION_MS, easing = LinearEasing),
                 repeatMode = RepeatMode.Reverse,
             ),
             label = "gauge_shimmer_alpha",
@@ -1324,7 +1331,7 @@ private fun GaugeShimmerPlaceholder(reducedMotion: Boolean) {
     }
     Box(
         modifier = Modifier
-            .size(CockpitTokens.HudGaugeSize)
+            .size(Tokens.Cockpit.HudGaugeSize)
             .clip(CircleShape)
             .background(GlassPalette.HudTrackRecessed)
             .border(
@@ -1353,8 +1360,8 @@ private fun HudControlTileButton(
     }
     Box(
         modifier = modifier
-            .defaultMinSize(minHeight = CockpitTokens.HudControlHeight)
-            .clip(CockpitTokens.HudTileShape)
+            .defaultMinSize(minHeight = Tokens.Cockpit.HudControlHeight)
+            .clip(Tokens.Cockpit.HudTileShape)
             .clickable(enabled = enabled, role = Role.Button, onClick = onClick)
             .graphicsLayer { alpha = if (enabled) 1f else 0.72f },
         contentAlignment = Alignment.Center,
@@ -1411,7 +1418,7 @@ private fun ClockHeroBlock(timeLabel: String, dateLabel: String) {
         Text(
             text = formattedClock,
             style = MaterialTheme.typography.headlineMedium.copy(
-                fontSize = CockpitTokens.WidgetClockTextSize,
+                fontSize = Tokens.Cockpit.WidgetClockTextSize,
                 fontWeight = FontWeight.ExtraBold,
                 fontFeatureSettings = "tnum",
             ),
@@ -1450,7 +1457,7 @@ private fun AlarmBadgeBlock(
                 imageVector = Icons.Outlined.Alarm,
                 contentDescription = null,
                 tint = if (alarm.hasAlarm) GlassPalette.HudElectricCyan else MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.size(CockpitTokens.WidgetBadgeIconSize),
+                modifier = Modifier.size(Tokens.Cockpit.WidgetBadgeIconSize),
             )
             Text(
                 text = if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
@@ -1476,8 +1483,8 @@ private fun BatteryCurrentLabel(
     charge: BatteryChargeReading = CockpitWidgetModel.unknownCharge(),
 ) {
     val color = when (reading.tone) {
-        BatteryCurrentTone.CHARGING -> GlassPalette.HudEmerald
-        BatteryCurrentTone.DISCHARGING -> GlassPalette.HudAmber
+        BatteryCurrentTone.CHARGING -> GlassPalette.SuccessGreen
+        BatteryCurrentTone.DISCHARGING -> GlassPalette.SecondaryViolet
         BatteryCurrentTone.UNKNOWN -> MaterialTheme.colorScheme.onSurfaceVariant
     }
     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -1485,7 +1492,7 @@ private fun BatteryCurrentLabel(
             text = reading.text,
             style = MaterialTheme.typography.labelSmall.copy(
                 fontWeight = FontWeight.Bold,
-                fontFeatureSettings = "tnum",
+                fontFeatureSettings = TABULAR_DIGITS,
             ),
             color = color,
             maxLines = 1,
@@ -1497,7 +1504,7 @@ private fun BatteryCurrentLabel(
             Text(
                 text = charge.text,
                 style = MaterialTheme.typography.labelSmall.copy(
-                    fontFeatureSettings = "tnum",
+                    fontFeatureSettings = TABULAR_DIGITS,
                 ),
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 maxLines = 1,
@@ -1513,7 +1520,7 @@ private fun BatteryCurrentLabel(
 private fun HudPagerArrow(glyph: String, label: String, tag: String, onClick: () -> Unit) {
     Box(
         modifier = Modifier
-            .size(width = CockpitTokens.HudPagerArrowWidth, height = Tokens.TouchTarget)
+            .size(width = Tokens.Cockpit.HudPagerArrowWidth, height = Tokens.TouchTarget)
             .clip(CircleShape)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .testTag(tag),
@@ -1533,13 +1540,13 @@ private fun HudPagerDots(count: Int, current: Int) {
         modifier = Modifier
             .padding(bottom = Tokens.Tiny)
             .testTag("cockpit-widget-pinned-dots"),
-        horizontalArrangement = Arrangement.spacedBy(CockpitTokens.HudPagerDotGap),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPagerDotGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         repeat(count) { page ->
             Box(
                 modifier = Modifier
-                    .size(CockpitTokens.PagerDot)
+                    .size(Tokens.Cockpit.PagerDot)
                     .clip(CircleShape)
                     .background(
                         if (page == current) GlassPalette.HudElectricCyan else MaterialTheme.colorScheme.onSurfaceVariant,
@@ -1570,7 +1577,7 @@ private fun HudPinnedAppDockItem(
         verticalArrangement = Arrangement.spacedBy(Tokens.Stroke),
     ) {
         Box(
-            modifier = Modifier.size(CockpitTokens.HudDockIconHaloSize),
+            modifier = Modifier.size(Tokens.Cockpit.HudDockIconHaloSize),
             contentAlignment = Alignment.Center,
         ) {
             Image(
@@ -1583,7 +1590,7 @@ private fun HudPinnedAppDockItem(
                     imageVector = Icons.Outlined.Apps,
                     contentDescription = null,
                     tint = GlassPalette.HudElectricCyan,
-                    modifier = Modifier.size(CockpitTokens.WidgetBadgeIconSize),
+                    modifier = Modifier.size(Tokens.Cockpit.WidgetBadgeIconSize),
                 )
             }
         }

@@ -59,7 +59,6 @@ import com.drivelift.app.feature.cleaner.cache.GuidedPillState
 import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
 import com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter
 import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
-import com.drivelift.app.feature.cleaner.ui.CleanerTokens
 import com.drivelift.app.feature.cleaner.ui.GuidedDynamicIslandPill
 import com.drivelift.app.feature.hibernation.engine.AppDrainCandidate
 import com.drivelift.app.feature.hibernation.engine.HibernationMode
@@ -257,7 +256,7 @@ fun SleepModeContent(
             if (state.isLoading || state.isSleepingBatch) {
                 item(key = "loading") {
                     GlassPanel(
-                        shape = CleanerTokens.CardShape,
+                        shape = Tokens.Cleaner.CardShape,
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("sleep-loading-panel"),
@@ -316,7 +315,7 @@ fun SleepModeContent(
                 if (state.candidates.isEmpty()) {
                     item(key = "empty-drainers") {
                         GlassPanel(
-                            shape = CleanerTokens.CardShape,
+                            shape = Tokens.Cleaner.CardShape,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .testTag("sleep-empty-panel"),
@@ -414,7 +413,7 @@ private fun SleepModeStatusCard(
     }
 
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("sleep-mode-status-card"),
@@ -486,7 +485,7 @@ private fun SleepPermissionErrorPanel(
     onRetry: () -> Unit,
 ) {
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("sleep-error-panel"),
@@ -538,7 +537,7 @@ private fun SleepReportPanel(
     onDismiss: () -> Unit,
 ) {
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("sleep-report-panel"),
@@ -591,7 +590,7 @@ private fun DrainerCandidateRow(
     onProtect: () -> Unit,
 ) {
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
     val scoreColor = when {
         candidate.drainScore >= 70 -> GlassPalette.HudCoral
         candidate.drainScore >= 40 -> GlassPalette.HudAmber
@@ -599,7 +598,7 @@ private fun DrainerCandidateRow(
     }
 
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("sleep-drainer-${candidate.packageName}"),
@@ -647,10 +646,10 @@ private fun DrainerCandidateRow(
                 }
                 Box(
                     modifier = Modifier
-                        .widthIn(min = CleanerTokens.ScoreBadgeMinWidth)
-                        .clip(CleanerTokens.BadgeShape)
+                        .widthIn(min = Tokens.Cleaner.ScoreBadgeMinWidth)
+                        .clip(Tokens.Cleaner.BadgeShape)
                         .background(GlassPalette.Well)
-                        .border(Tokens.Hairline, scoreColor.copy(alpha = 0.6f), CleanerTokens.BadgeShape)
+                        .border(Tokens.Hairline, scoreColor.copy(alpha = 0.6f), Tokens.Cleaner.BadgeShape)
                         .padding(horizontal = Tokens.Row, vertical = Tokens.Tiny),
                     contentAlignment = Alignment.Center,
                 ) {
@@ -706,10 +705,10 @@ private fun ProtectedWhitelistRow(
     onRemove: () -> Unit,
 ) {
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
-        LocalConfiguration.current.screenWidthDp < CleanerTokens.CompactStackWidthDp
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
 
     GlassPanel(
-        shape = CleanerTokens.CardShape,
+        shape = Tokens.Cleaner.CardShape,
         modifier = Modifier
             .fillMaxWidth()
             .testTag("sleep-protected-${rule.packageName}"),

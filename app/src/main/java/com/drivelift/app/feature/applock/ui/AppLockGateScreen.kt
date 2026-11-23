@@ -1,8 +1,5 @@
 package com.drivelift.app.feature.applock.ui
 
-import android.graphics.RenderEffect
-import android.graphics.Shader
-import android.os.Build
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
@@ -48,7 +45,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.asComposeRenderEffect
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalConfiguration
@@ -62,8 +58,9 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import com.drivelift.app.feature.applock.AppLockGateMode
 import com.drivelift.app.ui.GlassBackdrop
+import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
-import com.drivelift.app.ui.GlassPanel
+import com.drivelift.app.ui.GlassSurface
 import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
 
@@ -114,13 +111,13 @@ fun AppLockGateScreen(
         density.fontScale >= Tokens.STACK_AT_FONT_SCALE
 
     val shakeOffsetPx = remember { Animatable(0f) }
-    val shakeDistancePx = with(density) { AppLockTokens.ShakeDistance.toPx() }
+    val shakeDistancePx = with(density) { Tokens.AppLock.ShakeDistance.toPx() }
 
     LaunchedEffect(state.errorShakeTrigger) {
         if (state.errorShakeTrigger > 0) {
             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
             if (!reducedMotion) {
-                val spec = tween<Float>(durationMillis = AppLockTokens.SHAKE_STEP_MS)
+                val spec = tween<Float>(durationMillis = Tokens.AppLock.SHAKE_STEP_MS)
                 shakeOffsetPx.animateTo(-shakeDistancePx, spec)
                 shakeOffsetPx.animateTo(shakeDistancePx, spec)
                 shakeOffsetPx.animateTo(-shakeDistancePx * 0.6f, spec)
@@ -130,34 +127,10 @@ fun AppLockGateScreen(
         }
     }
 
-    val blurModifier = remember {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            val effect = runCatching {
-                RenderEffect.createBlurEffect(
-                    AppLockTokens.BackdropBlurRadiusPx,
-                    AppLockTokens.BackdropBlurRadiusPx,
-                    Shader.TileMode.CLAMP,
-                ).asComposeRenderEffect()
-            }.getOrNull()
-            if (effect != null) {
-                Modifier.graphicsLayer { renderEffect = effect }
-            } else {
-                Modifier
-            }
-        } else {
-            Modifier
-        }
-    }
-
-    Box(modifier = modifier.fillMaxSize().testTag("applock-gate-root")) {
-        // Frosted-glass RenderEffect backdrop (API 31+) with dark scrim fallback on API 30.
-        GlassBackdrop(modifier = Modifier.fillMaxSize().then(blurModifier)) {}
-        Box(
-            modifier = Modifier
-                .fillMaxSize()
-                .background(GlassPalette.ThumbScrim),
-        )
-
+    GlassBackdrop(
+        modifier = modifier.fillMaxSize().testTag("applock-gate-root"),
+        blurred = true,
+    ) {
         CompositionLocalProvider(LocalContentColor provides MaterialTheme.colorScheme.onSurface) {
         Column(
             modifier = Modifier
@@ -168,12 +141,13 @@ fun AppLockGateScreen(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.Center,
         ) {
-            GlassPanel(
+            GlassSurface(
+                level = GlassLevel.Hero,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .widthIn(max = AppLockTokens.GateMaxWidth)
+                    .widthIn(max = Tokens.AppLock.GateMaxWidth)
                     .testTag("applock-gate-card"),
-                shape = AppLockTokens.GateCardShape,
+                shape = Tokens.AppLock.GateCardShape,
             ) {
                 Column(
                     modifier = Modifier
@@ -183,7 +157,7 @@ fun AppLockGateScreen(
                 ) {
                     Box(
                         modifier = Modifier
-                            .size(AppLockTokens.GateShieldSize)
+                            .size(Tokens.AppLock.GateShieldSize)
                             .clip(CircleShape)
                             .background(
                                 if (state.isLockedOut) MaterialTheme.colorScheme.errorContainer
@@ -206,7 +180,7 @@ fun AppLockGateScreen(
                             contentDescription = null,
                             tint = if (state.isLockedOut) MaterialTheme.colorScheme.error
                             else MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(AppLockTokens.GateShieldIconSize),
+                            modifier = Modifier.size(Tokens.AppLock.GateShieldIconSize),
                         )
                     }
 
@@ -393,7 +367,7 @@ private fun PinDotsRow(
         modifier = modifier.semantics {
             contentDescription = "$enteredCount of $totalDots PIN digits entered"
         },
-        horizontalArrangement = Arrangement.spacedBy(AppLockTokens.PinDotGap),
+        horizontalArrangement = Arrangement.spacedBy(Tokens.AppLock.PinDotGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         for (i in 0 until totalDots) {
@@ -410,7 +384,7 @@ private fun PinDotsRow(
             }
             Box(
                 modifier = Modifier
-                    .size(AppLockTokens.PinDotSize)
+                    .size(Tokens.AppLock.PinDotSize)
                     .clip(CircleShape)
                     .background(fillColor)
                     .border(Tokens.Hairline, borderColor, CircleShape),
@@ -429,9 +403,9 @@ private fun SpringPinKeypad(
     onBackspace: () -> Unit,
     onBiometric: () -> Unit,
 ) {
-    val buttonSize = if (compact) AppLockTokens.KeypadButtonCompactSize else AppLockTokens.KeypadButtonSize
-    val rowGap = if (compact) AppLockTokens.KeypadCompactGap else AppLockTokens.KeypadVerticalGap
-    val colGap = if (compact) AppLockTokens.KeypadCompactGap else AppLockTokens.KeypadHorizontalGap
+    val buttonSize = if (compact) Tokens.AppLock.KeypadButtonCompactSize else Tokens.AppLock.KeypadButtonSize
+    val rowGap = if (compact) Tokens.AppLock.KeypadCompactGap else Tokens.AppLock.KeypadVerticalGap
+    val colGap = if (compact) Tokens.AppLock.KeypadCompactGap else Tokens.AppLock.KeypadHorizontalGap
 
     Column(
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -498,10 +472,10 @@ private fun SpringKeypadKey(
     val pressed by interactionSource.collectIsPressedAsState()
     val reducedMotion = LocalReducedMotion.current
     val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled && !reducedMotion) AppLockTokens.KEY_PRESS_SCALE else 1f,
+        targetValue = if (pressed && enabled && !reducedMotion) Tokens.AppLock.KEY_PRESS_SCALE else 1f,
         animationSpec = spring(
-            dampingRatio = AppLockTokens.KEY_SPRING_DAMPING,
-            stiffness = AppLockTokens.KEY_SPRING_STIFFNESS,
+            dampingRatio = Tokens.AppLock.KEY_SPRING_DAMPING,
+            stiffness = Tokens.AppLock.KEY_SPRING_STIFFNESS,
         ),
         label = "key-scale",
     )
@@ -513,12 +487,12 @@ private fun SpringKeypadKey(
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(AppLockTokens.KeyShape)
+            .clip(Tokens.AppLock.KeyShape)
             .background(if (enabled) GlassPalette.Well else GlassPalette.HudTileDisabled)
             .border(
                 width = Tokens.Hairline,
                 color = if (enabled) GlassPalette.WellEdge else GlassPalette.HudTileDisabledBorder,
-                shape = AppLockTokens.KeyShape,
+                shape = Tokens.AppLock.KeyShape,
             )
             .clickable(
                 enabled = enabled,
@@ -555,10 +529,10 @@ private fun SpringKeypadActionKey(
     val pressed by interactionSource.collectIsPressedAsState()
     val reducedMotion = LocalReducedMotion.current
     val scale by animateFloatAsState(
-        targetValue = if (pressed && enabled && !reducedMotion) AppLockTokens.KEY_PRESS_SCALE else 1f,
+        targetValue = if (pressed && enabled && !reducedMotion) Tokens.AppLock.KEY_PRESS_SCALE else 1f,
         animationSpec = spring(
-            dampingRatio = AppLockTokens.KEY_SPRING_DAMPING,
-            stiffness = AppLockTokens.KEY_SPRING_STIFFNESS,
+            dampingRatio = Tokens.AppLock.KEY_SPRING_DAMPING,
+            stiffness = Tokens.AppLock.KEY_SPRING_STIFFNESS,
         ),
         label = "action-key-scale",
     )
@@ -570,12 +544,12 @@ private fun SpringKeypadActionKey(
                 scaleX = scale
                 scaleY = scale
             }
-            .clip(AppLockTokens.KeyShape)
+            .clip(Tokens.AppLock.KeyShape)
             .background(if (enabled) GlassPalette.Well else GlassPalette.HudTileDisabled)
             .border(
                 width = Tokens.Hairline,
                 color = if (enabled) GlassPalette.WellEdge else GlassPalette.HudTileDisabledBorder,
-                shape = AppLockTokens.KeyShape,
+                shape = Tokens.AppLock.KeyShape,
             )
             .clickable(
                 enabled = enabled,

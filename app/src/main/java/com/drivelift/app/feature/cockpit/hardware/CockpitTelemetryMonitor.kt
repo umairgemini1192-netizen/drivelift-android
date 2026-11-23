@@ -13,7 +13,7 @@ import android.os.PowerManager
 import android.os.SystemClock
 import android.telephony.TelephonyManager
 import androidx.core.content.ContextCompat
-import com.drivelift.app.feature.cockpit.ui.CockpitTokens
+import com.drivelift.app.ui.Tokens
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitWidgetModel
 import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
@@ -172,7 +172,7 @@ class CockpitTelemetryMonitor(
             val nowMs = elapsedClock()
             val urgent = isUrgentWidgetChange(previous, current)
             val withinDebounce = lastWidgetPushElapsedMs != Long.MIN_VALUE &&
-                (nowMs - lastWidgetPushElapsedMs) in 0L until CockpitTokens.WIDGET_PUSH_DEBOUNCE_MS
+                (nowMs - lastWidgetPushElapsedMs) in 0L until Tokens.Cockpit.WIDGET_PUSH_DEBOUNCE_MS
             if (!urgent && withinDebounce) {
                 return false
             }
@@ -296,7 +296,7 @@ class CockpitTelemetryMonitor(
         if (tickerJob?.isActive == true) return
         tickerJob = scope.launch {
             while (isActive) {
-                delay(CockpitTokens.TELEMETRY_TICK_INTERVAL_MS)
+                delay(Tokens.Cockpit.TELEMETRY_TICK_INTERVAL_MS)
                 if (!isScreenInteractive()) {
                     stopScreenOnTicker()
                     break
@@ -360,7 +360,7 @@ class CockpitTelemetryMonitor(
             ) {
                 return true
             }
-            if (abs(previous.ram.usedGb - current.ram.usedGb) >= CockpitTokens.RAM_DELTA_THRESHOLD_GB) return true
+            if (abs(previous.ram.usedGb - current.ram.usedGb) >= Tokens.Cockpit.RAM_DELTA_THRESHOLD_GB) return true
             return false
         }
 
@@ -371,7 +371,7 @@ class CockpitTelemetryMonitor(
             if (previous == null) return true
             if (previous.battery.percent != current.battery.percent) return true
             if (previous.battery.isCharging != current.battery.isCharging) return true
-            if (abs(previous.ram.usedGb - current.ram.usedGb) >= CockpitTokens.RAM_DELTA_THRESHOLD_GB) return true
+            if (abs(previous.ram.usedGb - current.ram.usedGb) >= Tokens.Cockpit.RAM_DELTA_THRESHOLD_GB) return true
             return false
         }
 
