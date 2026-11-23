@@ -42,7 +42,12 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onOpenCockpit: (() -> Unit)? = null) {
+fun SettingsScreen(
+    vm: AppViewModel,
+    onBack: () -> Unit,
+    onOpenCockpit: (() -> Unit)? = null,
+    onOpenAppLock: (() -> Unit)? = null,
+) {
     val context = LocalContext.current
     val wifiOnly by vm.prefs.wifiOnly.collectAsStateWithLifecycle()
     val autoRemove by vm.prefs.autoRemove.collectAsStateWithLifecycle()
@@ -99,6 +104,33 @@ fun SettingsScreen(vm: AppViewModel, onBack: () -> Unit, onOpenCockpit: (() -> U
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.padding(top = Tokens.Tiny),
                     )
+                }
+            }
+            if (onOpenAppLock != null) {
+                SectionHeading("Security")
+                GlassPanel(
+                    modifier = Modifier.fillMaxWidth().testTag("applock-settings-entry"),
+                    onClick = onOpenAppLock,
+                    onClickLabel = "Open App Lock manager",
+                ) {
+                    Row(
+                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("App Lock", style = MaterialTheme.typography.bodyLarge)
+                            Text(
+                                "Lock installed apps with Class 3 biometric, backup PIN, grace periods, and Settings tamper protection",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Icon(
+                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
                 }
             }
             if (onOpenCockpit != null) {

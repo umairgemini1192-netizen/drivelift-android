@@ -141,6 +141,28 @@
             </intent-filter>
         </service>
 
+        <activity
+            android:name=".feature.applock.ui.AppLockGateActivity"
+            android:exported="false"
+            android:excludeFromRecents="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/Theme.DriveLift" />
+
+        <service
+            android:name=".feature.applock.tile.AppLockPauseTileService"
+            android:exported="true"
+            android:icon="@drawable/ic_applock_tile"
+            android:label="Pause App Lock"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE">
+            <intent-filter>
+                <action android:name="android.service.quicksettings.action.QS_TILE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.service.quicksettings.ACTIVE_TILE"
+                android:value="false" />
+        </service>
+
         <service
             android:name=".feature.cockpit.tile.CockpitQuickSettingsTile"
             android:exported="true"

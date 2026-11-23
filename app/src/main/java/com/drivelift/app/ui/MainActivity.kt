@@ -148,6 +148,11 @@ class MainActivity : FragmentActivity() {
             ) == true ->
                 vm.tab.value = TAB_DESKTOP_DROP
             intent?.getBooleanExtra(
+                com.drivelift.app.feature.applock.AppLockModule.EXTRA_OPEN_APP_LOCK,
+                false,
+            ) == true ->
+                Graph.get(this).appLock.requestOpenManager()
+            intent?.getBooleanExtra(
                 com.drivelift.app.feature.cockpit.overlay.CockpitOverlayService.EXTRA_OPEN_COCKPIT,
                 false,
             ) == true || intent?.action == android.service.quicksettings.TileService.ACTION_QS_TILE_PREFERENCES ->
@@ -196,6 +201,7 @@ fun AppRoot(vm: AppViewModel) {
     var viewingDriveFile by remember { mutableStateOf(false) }
     var showSettings by rememberSaveable { mutableStateOf(false) }
     var showCockpit by rememberSaveable { mutableStateOf(false) }
+    var showAppLock by rememberSaveable { mutableStateOf(false) }
     // Favorites opens over the Phone or Drive tab; Back returns there (issues #36 and #42).
     var showFavorites by rememberSaveable { mutableStateOf(false) }
     var showStorage by rememberSaveable { mutableStateOf(false) }
@@ -213,9 +219,17 @@ fun AppRoot(vm: AppViewModel) {
             Graph.get(context).cockpit.consumeOpenHubRequest()
         }
     }
+    val openAppLockPending by remember(context) { Graph.get(context).appLock.openManagerPending }.collectAsStateWithLifecycle()
+    LaunchedEffect(openAppLockPending) {
+        if (openAppLockPending) {
+            showAppLock = true
+            Graph.get(context).appLock.consumeOpenManagerRequest()
+        }
+    }
     val inFolder = tab == AppViewModel.TAB_PHONE && openBucket != NO_BUCKET
     val inCockpit = showCockpit
-    val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings && !inCockpit
+    val inAppLock = showAppLock && !inCockpit
+    val inSettings = tab == AppViewModel.TAB_TRANSFERS && showSettings && !inCockpit && !inAppLock
     val inFavorites = showFavorites && (tab == AppViewModel.TAB_PHONE || tab == AppViewModel.TAB_DRIVE)
     // Storage insights (issue #42) opens over the Phone tab; Back returns to the folder list.
     val inStorage = tab == AppViewModel.TAB_PHONE && showStorage && openBucket == NO_BUCKET && hasPermission
@@ -249,10 +263,11 @@ fun AppRoot(vm: AppViewModel) {
     // A step up one level: Settings back to Transfers, Storage or a folder back to the folder
     // list. The predictive back gesture previews it (BackPreview.kt).
     val upBack = rememberUpBack(
-        enabled = !pickingDestination && (inCockpit || inSettings || inStorage || inStorageIntelligence || inCleaner || inSleepMode || inIntelligence || inWhatsAppQuickSender || (inFolder && selection.isEmpty())),
+        enabled = !pickingDestination && (inCockpit || inAppLock || inSettings || inStorage || inStorageIntelligence || inCleaner || inSleepMode || inIntelligence || inWhatsAppQuickSender || (inFolder && selection.isEmpty())),
     ) {
         when {
             inCockpit -> showCockpit = false
+            inAppLock -> showAppLock = false
             inSettings -> showSettings = false
             inSleepMode -> showSleepMode = false
             inCleaner -> showCleaner = false
@@ -268,8 +283,8 @@ fun AppRoot(vm: AppViewModel) {
 
     // The level shown now and how it arrived: a step down into a folder or a screen opened over
     // a tab, a step back up, or a move across to another tab (Motion.kt).
-    val level = listOf(tab, openBucket, inCockpit, inSettings, inStorage, inStorageIntelligence, inCleaner, inSleepMode, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination, hasPermission)
-    val depth = listOf(inFolder, inCockpit, inSettings, inStorage, inStorageIntelligence, inCleaner, inSleepMode, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination).count { it }
+    val level = listOf(tab, openBucket, inCockpit, inAppLock, inSettings, inStorage, inStorageIntelligence, inCleaner, inSleepMode, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination, hasPermission)
+    val depth = listOf(inFolder, inCockpit, inAppLock, inSettings, inStorage, inStorageIntelligence, inCleaner, inSleepMode, inIntelligence, inWhatsAppQuickSender, inFavorites, pickingDestination).count { it }
     var lastLevel by remember { mutableStateOf(Pair(tab, depth)) }
     val levelStep = when {
         tab != lastLevel.first -> NavStep.ACROSS
@@ -294,7 +309,7 @@ fun AppRoot(vm: AppViewModel) {
                 // While a viewer fills the screen, messages show above it instead (below).
                 snackbarHost = { if (overlay.content == null) SnackbarHost(snackbar) },
                 bottomBar = {
-                    if (!inFolder && !inCockpit && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !inCleaner && !inSleepMode && !inIntelligence && !inWhatsAppQuickSender && !pickingDestination && !viewingDriveFile) {
+                    if (!inFolder && !inCockpit && !inAppLock && !inSettings && !inFavorites && !inStorage && !inStorageIntelligence && !inCleaner && !inSleepMode && !inIntelligence && !inWhatsAppQuickSender && !pickingDestination && !viewingDriveFile) {
                         NavigationBar(modifier = Modifier.glassBar(), containerColor = Color.Transparent) {
                             NavigationBarItem(
                                 selected = tab == AppViewModel.TAB_PHONE,
@@ -451,10 +466,14 @@ fun AppRoot(vm: AppViewModel) {
                         inCockpit -> com.drivelift.app.feature.cockpit.ui.CockpitSetupScreen(
                             onBack = { showCockpit = false },
                         )
+                        inAppLock -> com.drivelift.app.feature.applock.ui.AppLockManagerScreen(
+                            onBack = { showAppLock = false },
+                        )
                         inSettings -> SettingsScreen(
                             vm = vm,
                             onBack = { showSettings = false },
                             onOpenCockpit = { showCockpit = true },
+                            onOpenAppLock = { showAppLock = true },
                         )
                         tab == AppViewModel.TAB_DRIVE -> DriveBrowser(
                             vm = vm,

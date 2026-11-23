@@ -82,6 +82,7 @@ class CockpitAccessibilityService :
         cockpit.quickControlsController.start()
         cockpit.telemetryMonitor.acquire()
         cockpit.syncOverlayService()
+        Graph.get(applicationContext).appLock.syncMonitoringMode()
         serviceScope.launch {
             cockpit.prefsRepo.state.collect { prefs ->
                 applyEnabledState(prefs.masterEnabled)
@@ -90,7 +91,13 @@ class CockpitAccessibilityService :
     }
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
-        // Intentionally a no-op: accessibilityEventTypes is empty and canRetrieveWindowContent is false.
+        // Observes foreground package transitions only (canRetrieveWindowContent is false).
+        if (event?.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) {
+            Graph.get(applicationContext).appLock.onForegroundWindowChanged(
+                packageName = event.packageName?.toString(),
+                className = event.className?.toString(),
+            )
+        }
     }
 
     override fun onInterrupt() {
@@ -139,6 +146,7 @@ class CockpitAccessibilityService :
                 cockpit.syncOverlayService(true)
             }
         }
+        Graph.get(applicationContext).appLock.syncMonitoringMode()
     }
 
     companion object {
