@@ -59,7 +59,7 @@ class CockpitModule(
     }
 
     val coordinator: CockpitStateCoordinator by lazy {
-        CockpitStateCoordinator().also { coord ->
+        CockpitStateCoordinator(scope = scope).also { coord ->
             scope.launch {
                 prefsRepo.state.collect { prefs ->
                     coord.applyPrefs(prefs)

@@ -77,7 +77,8 @@ object CockpitTokens {
     const val OVERLAY_BLUR_RADIUS_PX = 32
     const val MORPH_SPRING_DAMPING = 0.80f
     const val MORPH_SPRING_STIFFNESS = 420f
-    const val TELEMETRY_TICK_INTERVAL_MS = 20_000L
+    const val TELEMETRY_TICK_INTERVAL_MS = 8_000L
+    const val WIDGET_PUSH_DEBOUNCE_MS = 5_000L
     const val RAM_DELTA_THRESHOLD_GB = 0.1
     const val SHIMMER_DURATION_MS = 1_100
     const val WAVEFORM_PERIOD_MS = 1_800

@@ -111,6 +111,16 @@ class Graph(app: Application) {
         com.drivelift.app.feature.cockpit.CockpitModule(app, this)
     }
 
+    /** Self-contained Storage Cleaner, Shizuku adapter, and Sleep Mode module. */
+    val cleanerAndSleep: com.drivelift.app.feature.cleaner.CleanerSleepModule by lazy {
+        com.drivelift.app.feature.cleaner.CleanerSleepModule(app, this)
+    }
+
+    /** Self-contained App Lock policy, biometric/PIN gate, and monitor wiring module. */
+    val appLock: com.drivelift.app.feature.applock.AppLockModule by lazy {
+        com.drivelift.app.feature.applock.AppLockModule(app, this)
+    }
+
     companion object {
         fun get(context: Context): Graph = (context.applicationContext as DriveLiftApp).graph
     }
@@ -130,7 +140,10 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
         ContextCompat.registerReceiver(
             this,
             object : BroadcastReceiver() {
-                override fun onReceive(context: Context, intent: Intent) = graph.lock.lock()
+                override fun onReceive(context: Context, intent: Intent) {
+                    graph.lock.lock()
+                    graph.appLock.onScreenOff()
+                }
             },
             IntentFilter(Intent.ACTION_SCREEN_OFF),
             ContextCompat.RECEIVER_NOT_EXPORTED,
