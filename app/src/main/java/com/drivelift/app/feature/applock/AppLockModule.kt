@@ -163,13 +163,13 @@ class AppLockModule(
         onForegroundEvent = { pkg, cls -> onForegroundWindowChanged(pkg, cls) },
     )
 
+    private var cachedRawApps: List<Pair<String, String>> = emptyList()
+
     private val _openManagerPending = MutableStateFlow(false)
     val openManagerPending: StateFlow<Boolean> = _openManagerPending.asStateFlow()
 
     private val _uiState = MutableStateFlow(buildUiState())
     val uiState: StateFlow<AppLockManagerUiState> = _uiState.asStateFlow()
-
-    private var cachedRawApps: List<Pair<String, String>> = emptyList()
 
     fun requestOpenManager() {
         _openManagerPending.value = true
