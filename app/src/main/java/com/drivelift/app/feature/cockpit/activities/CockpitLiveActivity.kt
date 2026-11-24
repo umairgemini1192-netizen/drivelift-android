@@ -125,6 +125,8 @@ sealed interface CockpitLiveActivity {
         val remainingTripKm: Double? = null,
         /** Distance already driven on this trip, in kilometres. Filled in by the coordinator. */
         val droveTripKm: Double? = null,
+        /** Live driving speed in km/h from passive GPS or notification telemetry, when available. */
+        val speedKmh: Int? = null,
         /** True when the source app shows miles, so the footer uses the same unit. */
         val tripUsesMiles: Boolean = false,
         /** The trip distance exactly as the source app wrote it, for example "20 km". Empty when it names none. */

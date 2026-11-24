@@ -53,7 +53,11 @@ class CockpitNotificationListener : NotificationListenerService() {
 
     override fun onListenerDisconnected() {
         cachedActions.clear()
-        runCatching { Graph.get(applicationContext).cockpit.callActionsController.clearAll() }
+        runCatching {
+            val cockpit = Graph.get(applicationContext).cockpit
+            cockpit.callActionsController.clearAll()
+            cockpit.coordinator.clearNotificationBackedActivities()
+        }
         if (activeInstance === this) activeInstance = null
         super.onListenerDisconnected()
     }

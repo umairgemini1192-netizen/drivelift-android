@@ -5,7 +5,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.glance.appwidget.updateAll
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
@@ -80,6 +79,9 @@ class CockpitModule(
         CockpitQuickControlsController(
             context = app,
             clock = graph.clock,
+            onDefaultNetworkChanged = { caps ->
+                telemetryMonitor.onDefaultNetworkCapabilitiesChanged(caps)
+            },
         )
     }
 
@@ -210,13 +212,13 @@ class CockpitModule(
             prefsRepo.setMasterEnabled(false)
             coordinator.setExpanded(false)
             syncOverlayService(false)
-            runCatching { CockpitGlanceWidget().updateAll(app) }
+            runCatching { CockpitGlanceWidget.updateAllWidgets(app) }
             return false
         }
         prefsRepo.setMasterEnabled(enabled)
         if (!enabled) coordinator.setExpanded(false)
         syncOverlayService(enabled)
-        runCatching { CockpitGlanceWidget().updateAll(app) }
+        runCatching { CockpitGlanceWidget.updateAllWidgets(app) }
         return true
     }
 
@@ -245,7 +247,7 @@ class CockpitModule(
 
     private fun refreshWidgetsAsync() {
         scope.launch(Dispatchers.Default) {
-            runCatching { CockpitGlanceWidget().updateAll(app) }
+            runCatching { CockpitGlanceWidget.updateAllWidgets(app) }
         }
     }
 

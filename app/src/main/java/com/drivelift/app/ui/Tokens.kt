@@ -197,8 +197,9 @@ object Tokens {
         val RecordingDot = 8.dp
         val RecordingStopBox = 14.dp
         val StopRingWidth = 2.dp
-        val NavManeuverBox = 56.dp
-        val NavLaneArrow = 22.dp
+        val HeaderActionWell = 36.dp
+        val NavTurnBadgeSize = 48.dp
+        val NavHudCellRadius = 12.dp
         val PagerDot = 5.dp
         val SpecularRimWidth = GlassBorderIsland
         val IslandBadgeShape = RoundedCornerShape(18.dp)
@@ -211,6 +212,7 @@ object Tokens {
 
         const val RIM_PULSE_MS = 3_600
         const val EXPAND_SWIPE_COLLAPSE_PX = -44f
+        const val COLLAPSED_SWIPE_DISMISS_PX = -24f
         const val CYCLE_SWIPE_THRESHOLD_PX = 48f
         const val OVERLAY_BLUR_RADIUS_PX = 32
         const val MORPH_SPRING_DAMPING = 0.80f

@@ -35,7 +35,9 @@ data class WidgetDropTile(val label: String, val active: Boolean, val enabled: B
  */
 object CockpitWidgetModel {
     const val PINNED_PER_PAGE = 4
+    const val CURRENT_AVERAGE_WINDOW = 5
     private const val UNSUPPORTED_CURRENT = Long.MIN_VALUE
+    private const val UNSUPPORTED_CURRENT_INT = Int.MIN_VALUE.toLong()
 
     /** `• DROP LIVE` beats `• TORCH ON` beats `• READY`. The dot is drawn beside the text, not part of it. */
     fun statusPill(dropLive: Boolean, torchOn: Boolean): WidgetStatusPill = when {
@@ -51,19 +53,49 @@ object CockpitWidgetModel {
         else -> WidgetDropTile(label = "Drop", active = false, enabled = true)
     }
 
+    /** True when a `BatteryManager` current property value represents a valid hardware reading. */
+    fun isValidCurrentSample(microAmps: Long): Boolean =
+        microAmps != UNSUPPORTED_CURRENT && microAmps != UNSUPPORTED_CURRENT_INT
+
     /**
-     * Battery current from `BATTERY_PROPERTY_CURRENT_NOW` (microamps). The sign is taken from the
-     * charging state rather than the raw value, because phones disagree about which way is
-     * positive: charging reads `+2,450 mA`, discharging reads `-510 mA`.
+     * Converts a raw `BatteryManager` microamp reading to a non-negative milliamp magnitude using
+     * half-up rounding to match Ampere's mA readout.
      */
-    fun formatBatteryCurrent(microAmps: Long, isCharging: Boolean): BatteryCurrentReading {
-        if (microAmps == UNSUPPORTED_CURRENT) return unknownCurrent()
-        val magnitudeMa = abs(microAmps) / 1000L
-        val signed = if (isCharging) magnitudeMa else -magnitudeMa
+    fun normalizeMicroAmpsToMilliAmps(microAmps: Long): Long? {
+        if (!isValidCurrentSample(microAmps)) return null
+        val absUa = abs(microAmps)
+        if (absUa == 0L) return 0L
+        return (absUa + 500L) / 1000L
+    }
+
+    /**
+     * Selects the best available raw current sample in microamps: prefers `CURRENT_NOW` when valid
+     * and non-zero (or when `CURRENT_AVERAGE` is also zero/invalid), and falls back to
+     * `BATTERY_PROPERTY_CURRENT_AVERAGE` whenever `CURRENT_NOW` is unsupported or transiently zero.
+     */
+    fun selectPreferredCurrentMicroAmps(currentNowMicroAmps: Long, currentAverageMicroAmps: Long): Long {
+        val nowValid = isValidCurrentSample(currentNowMicroAmps)
+        val avgValid = isValidCurrentSample(currentAverageMicroAmps)
+        return when {
+            nowValid && currentNowMicroAmps != 0L -> currentNowMicroAmps
+            avgValid && currentAverageMicroAmps != 0L -> currentAverageMicroAmps
+            nowValid -> currentNowMicroAmps
+            avgValid -> currentAverageMicroAmps
+            else -> UNSUPPORTED_CURRENT
+        }
+    }
+
+    /**
+     * Formats an already-normalized milliamp magnitude with sign driven by charging state so
+     * charging reads `+2,450 mA` and discharging reads `-510 mA`.
+     */
+    fun formatBatteryCurrentMilliAmps(magnitudeMa: Long, isCharging: Boolean): BatteryCurrentReading {
+        val safeMagnitude = magnitudeMa.coerceAtLeast(0L)
+        val signed = if (isCharging) safeMagnitude else -safeMagnitude
         val asInt = signed.coerceIn(Int.MIN_VALUE.toLong(), Int.MAX_VALUE.toLong()).toInt()
-        val digits = String.format(Locale.US, "%,d", magnitudeMa)
+        val digits = String.format(Locale.US, "%,d", safeMagnitude)
         val text = when {
-            magnitudeMa == 0L -> "0 mA"
+            safeMagnitude == 0L -> "0 mA"
             isCharging -> "+$digits mA"
             else -> "-$digits mA"
         }
@@ -72,6 +104,16 @@ object CockpitWidgetModel {
             text = text,
             tone = if (isCharging) BatteryCurrentTone.CHARGING else BatteryCurrentTone.DISCHARGING,
         )
+    }
+
+    /**
+     * Battery current from `BATTERY_PROPERTY_CURRENT_NOW` (microamps). The sign is taken from the
+     * charging state rather than the raw value, because phones disagree about which way is
+     * positive: charging reads `+2,450 mA`, discharging reads `-510 mA`.
+     */
+    fun formatBatteryCurrent(microAmps: Long, isCharging: Boolean): BatteryCurrentReading {
+        val magnitudeMa = normalizeMicroAmpsToMilliAmps(microAmps) ?: return unknownCurrent()
+        return formatBatteryCurrentMilliAmps(magnitudeMa, isCharging)
     }
 
     fun unknownCurrent(): BatteryCurrentReading =
@@ -125,5 +167,59 @@ object CockpitWidgetModel {
         if (apps.isEmpty()) return emptyList()
         val safePage = wrapPage(page, pageCount(apps.size, perPage))
         return apps.drop(safePage * perPage).take(perPage)
+    }
+}
+
+/**
+ * Rolling N-sample (default 5) battery current averager matching Ampere's smoothed mA output.
+ * Normalizes microamps to milliamps, falls back to `BATTERY_PROPERTY_CURRENT_AVERAGE` when
+ * `BATTERY_PROPERTY_CURRENT_NOW` is missing or transiently zero, and immediately clears the window
+ * whenever the charging state flips so plug/unplug transitions respond without lag.
+ */
+class BatteryCurrentRollingAverage(
+    private val windowSize: Int = CockpitWidgetModel.CURRENT_AVERAGE_WINDOW,
+) {
+    private val lock = Any()
+    private val samples = ArrayDeque<Long>()
+    private var lastCharging: Boolean? = null
+
+    val sampleCount: Int
+        get() = synchronized(lock) { samples.size }
+
+    fun reset() {
+        synchronized(lock) {
+            samples.clear()
+            lastCharging = null
+        }
+    }
+
+    fun record(
+        currentNowMicroAmps: Long,
+        currentAverageMicroAmps: Long = Long.MIN_VALUE,
+        isCharging: Boolean,
+    ): BatteryCurrentReading = synchronized(lock) {
+        if (lastCharging != null && lastCharging != isCharging) {
+            samples.clear()
+        }
+        lastCharging = isCharging
+
+        val chosenMicroAmps = CockpitWidgetModel.selectPreferredCurrentMicroAmps(
+            currentNowMicroAmps = currentNowMicroAmps,
+            currentAverageMicroAmps = currentAverageMicroAmps,
+        )
+        val normalizedMa = CockpitWidgetModel.normalizeMicroAmpsToMilliAmps(chosenMicroAmps)
+        if (normalizedMa != null) {
+            if (samples.size >= windowSize.coerceAtLeast(1)) {
+                samples.removeFirst()
+            }
+            samples.addLast(normalizedMa)
+        }
+        if (samples.isEmpty()) {
+            return@synchronized CockpitWidgetModel.unknownCurrent()
+        }
+        val sum = samples.sum()
+        val count = samples.size.toLong()
+        val meanMa = (sum + count / 2L) / count
+        CockpitWidgetModel.formatBatteryCurrentMilliAmps(meanMa, isCharging)
     }
 }

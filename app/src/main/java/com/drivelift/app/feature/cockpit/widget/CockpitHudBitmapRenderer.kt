@@ -56,6 +56,8 @@ object CockpitHudBitmapRenderer {
                 fraction = 0f,
                 valueText = "--",
                 label = "RAM",
+                usedPercentText = "--%",
+                freeText = "-- free",
             )
         }
         val safeAvail = availBytes.coerceIn(0L, totalBytes)
@@ -63,16 +65,19 @@ object CockpitHudBitmapRenderer {
         val freeGb = safeAvail / BYTES_PER_GB
         val usedGb = (totalGb - freeGb).coerceAtLeast(0.0)
         val fraction = (usedGb / totalGb).toFloat().coerceIn(0.05f, 1f)
+        val usedPercent = (usedGb / totalGb * 100.0).roundToInt().coerceIn(0, 100)
         val totalRounded = totalGb.roundToInt().coerceAtLeast(1)
         val valueText = "%.1f/%dG".format(Locale.US, usedGb, totalRounded)
-        val subLabel = "%.1fG FREE".format(Locale.US, freeGb)
+        val freeText = "%.1fG free".format(Locale.US, freeGb)
         return RamHudMetric(
             freeGb = freeGb,
             usedGb = usedGb,
             totalGb = totalGb,
             fraction = fraction,
             valueText = valueText,
-            label = subLabel,
+            label = "RAM",
+            usedPercentText = "$usedPercent%",
+            freeText = freeText,
         )
     }
 
@@ -194,49 +199,50 @@ object CockpitHudBitmapRenderer {
 
         // Crisp lightning bolt icon inside the upper-center when charging.
         if (isCharging) {
-            drawChargingBolt(canvas = canvas, cx = cx, cy = cy - size * 0.18f, boltHeight = size * 0.17f)
+            drawChargingBolt(canvas = canvas, cx = cx, cy = cy - size * 0.20f, boltHeight = size * 0.15f)
         }
 
-        // Centered metric value (tabular figures) scaled cleanly for longer strings like "10.5/12G".
-        val maxTextWidth = oval.width() * 0.72f
+        // Centered metric value (tabular figures) strictly bounded inside the inner diameter of
+        // the arc stroke so text never touches or clips against the ring.
+        val innerDiameter = (oval.width() - strokePx).coerceAtLeast(size * 0.45f)
+        val maxTextWidth = innerDiameter * 0.72f
         val valuePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = GlassPalette.HudGaugeTextPrimary.toArgb()
             textAlign = Paint.Align.CENTER
-            textSize = if (isCharging) size * 0.20f else size * 0.225f
+            textSize = if (isCharging) size * 0.195f else size * 0.22f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             fontFeatureSettings = "tnum"
         }
         val measuredVal = valuePaint.measureText(valueText)
         if (measuredVal > maxTextWidth && measuredVal > 0f) {
             valuePaint.textSize = (valuePaint.textSize * (maxTextWidth / measuredVal))
-                .coerceAtLeast(size * 0.135f)
+                .coerceAtLeast(size * 0.12f)
         }
         val valueFm = valuePaint.fontMetrics
         val valueBaseline = if (isCharging) {
-            cy - (valueFm.ascent + valueFm.descent) * 0.45f + size * 0.04f
+            cy - (valueFm.ascent + valueFm.descent) * 0.45f + size * 0.03f
         } else {
-            cy - (valueFm.ascent + valueFm.descent) * 0.45f - size * 0.04f
+            cy - (valueFm.ascent + valueFm.descent) * 0.45f - size * 0.03f
         }
         canvas.drawText(valueText, cx, valueBaseline, valuePaint)
 
-        // Sub-label ("CHRG", "LOW", "BATT", or "1.5G FREE") inside bottom arc gap.
-        // Kept narrower and higher than the arc's end caps (which sit near 0.27 to 0.33 of the size
-        // below centre) so a long label such as "1.8G FREE" never touches the bottom of the ring.
-        val labelMaxWidth = size * 0.36f
+        // Compact sub-label ("CHRG", "LOW", "BATT", or "RAM") centred inside the 90-degree bottom
+        // opening of the 270-degree arc so it never touches the arc caps or clips at the bottom.
+        val labelMaxWidth = innerDiameter * 0.56f
         val labelPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             color = accentColor.toArgb()
             textAlign = Paint.Align.CENTER
             textSize = size * 0.125f
             typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
             fontFeatureSettings = "tnum"
-            letterSpacing = 0.02f
+            letterSpacing = 0.03f
         }
         val measuredLabel = labelPaint.measureText(subLabel)
         if (measuredLabel > labelMaxWidth && measuredLabel > 0f) {
             labelPaint.textSize = (labelPaint.textSize * (labelMaxWidth / measuredLabel))
-                .coerceAtLeast(size * 0.082f)
+                .coerceAtLeast(size * 0.085f)
         }
-        canvas.drawText(subLabel, cx, cy + size * 0.285f, labelPaint)
+        canvas.drawText(subLabel, cx, cy + oval.height() * 0.36f, labelPaint)
         return bitmap
     }
 
