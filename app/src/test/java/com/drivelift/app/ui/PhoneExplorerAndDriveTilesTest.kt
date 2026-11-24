@@ -498,12 +498,13 @@ class PhoneExplorerAndDriveTilesTest {
                 waitForText("Quarterly_Report.pdf")
                 pump(4)
 
-                // Verify 2-column folder tile grid: f1 and f2 sit side-by-side on the same row.
+                // Verify 2-column folder tile grid: "Tax Archive" (f2) sorts alphabetically before
+                // "Work Projects" (f1), sitting side-by-side on the same row.
                 val f1Bounds = compose.onNodeWithTag("drive-folder-tile-f1").fetchSemanticsNode().boundsInRoot
                 val f2Bounds = compose.onNodeWithTag("drive-folder-tile-f2").fetchSemanticsNode().boundsInRoot
                 assertTrue(
-                    "Folder tiles f1 ($f1Bounds) and f2 ($f2Bounds) must sit side-by-side in a 2-column grid",
-                    kotlin.math.abs(f1Bounds.top - f2Bounds.top) < 8f && f2Bounds.left > f1Bounds.left,
+                    "Folder tiles f2 ($f2Bounds) and f1 ($f1Bounds) must sit side-by-side in a 2-column grid",
+                    kotlin.math.abs(f1Bounds.top - f2Bounds.top) < 8f && f1Bounds.left >= f2Bounds.right,
                 )
 
                 if (record) {
