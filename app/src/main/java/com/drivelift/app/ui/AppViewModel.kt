@@ -64,6 +64,9 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     val tab = MutableStateFlow(0)
 
+    /** Persists lazy list and grid scroll offsets per route and folder path across tab switches and Back. */
+    val scrollPositions = ScrollPositionStore()
+
     // Phone media
     val media = graph.media.items
     val mediaLoaded = graph.media.loaded

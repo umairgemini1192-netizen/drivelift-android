@@ -314,28 +314,35 @@ fun LocalFileExplorerScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(Tokens.Edge),
                 )
-                else -> LazyColumn(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .testTag("explorer-list"),
-                    contentPadding = PaddingValues(bottom = Tokens.Edge),
-                ) {
-                    items(list, key = { it.path }) { entry ->
-                        LocalFileEntryRow(
-                            entry = entry,
-                            showParentPath = selectedCategory != LocalFileCategory.ALL,
-                            onClick = {
-                                if (entry.isDirectory) {
-                                    categoryName = LocalFileCategory.ALL.name
-                                    currentPath = entry.path
-                                    query = ""
-                                } else {
-                                    LocalFileOpener.openEntry(context, entry)?.let { msg ->
-                                        vm.messages.tryEmit(msg)
+                else -> {
+                    val listState = rememberPersistentLazyListState(
+                        store = vm.scrollPositions,
+                        key = "tab:phone:explorer:${selectedCategory.name}:$currentPath",
+                    )
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .testTag("explorer-list"),
+                        contentPadding = PaddingValues(bottom = Tokens.Edge),
+                    ) {
+                        items(list, key = { it.path }) { entry ->
+                            LocalFileEntryRow(
+                                entry = entry,
+                                showParentPath = selectedCategory != LocalFileCategory.ALL,
+                                onClick = {
+                                    if (entry.isDirectory) {
+                                        categoryName = LocalFileCategory.ALL.name
+                                        currentPath = entry.path
+                                        query = ""
+                                    } else {
+                                        LocalFileOpener.openEntry(context, entry)?.let { msg ->
+                                            vm.messages.tryEmit(msg)
+                                        }
                                     }
-                                }
-                            },
-                        )
+                                },
+                            )
+                        }
                     }
                 }
             }

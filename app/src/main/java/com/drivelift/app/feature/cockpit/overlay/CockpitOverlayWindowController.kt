@@ -361,6 +361,7 @@ internal class CockpitOverlayWindowController(
                 val torchState by cockpit.torchController.state.collectAsStateWithLifecycle()
                 val quickControls by cockpit.quickControlsController.state.collectAsStateWithLifecycle()
                 val callAudio by cockpit.callActionsController.audioState.collectAsStateWithLifecycle()
+                val screenOn by cockpit.telemetryMonitor.isScreenOn.collectAsStateWithLifecycle()
                 val activityActions = remember(cockpit) {
                     CockpitActivityActions(
                         onAnswerCall = { call ->
@@ -472,7 +473,7 @@ internal class CockpitOverlayWindowController(
                     )
                 }
 
-                if (!isLandscapeFullscreen.value && prefs.masterEnabled) {
+                if (screenOn && !isLandscapeFullscreen.value && prefs.masterEnabled) {
                     DriveLiftTheme {
                         val boxModifier = if (fullOverlayActive) {
                             Modifier

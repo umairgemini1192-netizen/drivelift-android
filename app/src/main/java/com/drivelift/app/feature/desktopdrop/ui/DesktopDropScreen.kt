@@ -122,6 +122,7 @@ import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.Tokens
 import com.drivelift.app.ui.formatBytes
 import com.drivelift.app.ui.formatEta
+import com.drivelift.app.ui.rememberPersistentLazyListState
 
 /**
  * Uses the caller's Application directly instead of AndroidViewModelFactory.sInstance so Robolectric
@@ -150,7 +151,7 @@ private fun defaultDesktopDropViewModel(): DesktopDropViewModel {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DesktopDropScreen(
-    @Suppress("UNUSED_PARAMETER") appViewModel: AppViewModel,
+    appViewModel: AppViewModel,
     vm: DesktopDropViewModel = defaultDesktopDropViewModel(),
 ) {
     val context = LocalContext.current
@@ -247,7 +248,9 @@ fun DesktopDropScreen(
             )
         },
     ) { innerPadding ->
+        val listState = rememberPersistentLazyListState(appViewModel.scrollPositions, "tab:drop:root")
         LazyColumn(
+            state = listState,
             modifier = Modifier
                 .fillMaxSize()
                 .padding(innerPadding)

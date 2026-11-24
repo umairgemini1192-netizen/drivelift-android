@@ -80,11 +80,18 @@ class CockpitTelemetryMonitor(
     /** Connection and live throughput for the idle pill. Moves only while [acquireIdleNetwork] is held. */
     val network: StateFlow<IdleNetworkSnapshot> = _network.asStateFlow()
 
+    private val _isScreenOn = MutableStateFlow(runCatching { isScreenInteractive() }.getOrDefault(true))
+
+    /** Live interactive screen state driven by ACTION_SCREEN_OFF / ACTION_SCREEN_ON broadcasts. */
+    val isScreenOn: StateFlow<Boolean> = _isScreenOn.asStateFlow()
+
     private var activeClients = 0
     private var idleConsumers = 0
+    private var screenPaused = false
     private var receiver: BroadcastReceiver? = null
     private var tickerJob: Job? = null
     private var speedJob: Job? = null
+    private var widgetPushJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastPushedSnapshot: TelemetryHudSnapshot? = null
     private var lastWidgetPushElapsedMs: Long = Long.MIN_VALUE
@@ -93,13 +100,23 @@ class CockpitTelemetryMonitor(
     private var lastRxBytes = -1L
     private var lastSampleMs = 0L
 
+    /** True while the widget battery/RAM telemetry polling loop is actively running. */
+    val isTelemetryTickerActive: Boolean
+        get() = tickerJob?.isActive == true
+
+    /** True while the 1 Hz network speed polling loop is actively running. */
+    val isSpeedTickerActive: Boolean
+        get() = speedJob?.isActive == true
+
     @Synchronized
     fun acquire() {
         activeClients++
         if (activeClients > 1) return
         registerReceivers()
-        evaluateNow(batteryIntent = null, pushWidget = true)
-        if (isScreenInteractive()) {
+        val interactive = !screenPaused && isScreenInteractive()
+        _isScreenOn.value = interactive
+        evaluateNow(batteryIntent = null, pushWidget = interactive)
+        if (interactive) {
             startScreenOnTicker()
         }
     }
@@ -121,7 +138,9 @@ class CockpitTelemetryMonitor(
         registerReceivers()
         registerNetworkCallback()
         refreshNetworkKind()
-        if (isScreenInteractive()) startSpeedTicker()
+        val interactive = !screenPaused && isScreenInteractive()
+        _isScreenOn.value = interactive
+        if (interactive) startSpeedTicker()
     }
 
     @Synchronized
@@ -143,20 +162,37 @@ class CockpitTelemetryMonitor(
         receiver = null
     }
 
+    @Synchronized
     fun onBatteryOrScreenEvent(intent: Intent?) {
         when (intent?.action) {
             Intent.ACTION_SCREEN_OFF -> {
+                screenPaused = true
+                _isScreenOn.value = false
                 stopScreenOnTicker()
                 stopSpeedTicker()
+                widgetPushJob?.cancel()
+                widgetPushJob = null
+                _network.update { it.copy(uploadBytesPerSec = 0L, downloadBytesPerSec = 0L) }
             }
             Intent.ACTION_SCREEN_ON,
             Intent.ACTION_USER_PRESENT,
             -> {
-                evaluateNow(batteryIntent = null, pushWidget = true)
-                startScreenOnTicker()
-                startSpeedTicker()
+                screenPaused = false
+                _isScreenOn.value = true
+                if (activeClients > 0) {
+                    evaluateNow(batteryIntent = null, pushWidget = true)
+                    startScreenOnTicker()
+                }
+                if (idleConsumers > 0) {
+                    refreshNetworkKind()
+                    startSpeedTicker()
+                }
             }
-            Intent.ACTION_BATTERY_CHANGED,
+            Intent.ACTION_BATTERY_CHANGED -> {
+                // Suppress background widget RemoteViews/bitmap pushes while screen is off.
+                val interactive = !screenPaused && isScreenInteractive()
+                evaluateNow(batteryIntent = intent, pushWidget = interactive)
+            }
             Intent.ACTION_POWER_CONNECTED,
             Intent.ACTION_POWER_DISCONNECTED,
             -> evaluateNow(batteryIntent = intent, pushWidget = true)
@@ -178,18 +214,19 @@ class CockpitTelemetryMonitor(
             }
             lastPushedSnapshot = current
             lastWidgetPushElapsedMs = nowMs
-            scope.launch { widgetPusher() }
+            widgetPushJob?.cancel()
+            widgetPushJob = scope.launch { widgetPusher() }
         }
         return changed
     }
 
     private fun startSpeedTicker() {
-        if (idleConsumers <= 0 || speedJob?.isActive == true) return
+        if (idleConsumers <= 0 || screenPaused || !isScreenInteractive() || speedJob?.isActive == true) return
         resetSpeedBaseline()
         speedJob = scope.launch {
             while (isActive) {
                 delay(SPEED_TICK_INTERVAL_MS)
-                if (!isScreenInteractive()) {
+                if (screenPaused || !isScreenInteractive()) {
                     stopSpeedTicker()
                     break
                 }
@@ -321,11 +358,11 @@ class CockpitTelemetryMonitor(
     }
 
     private fun startScreenOnTicker() {
-        if (tickerJob?.isActive == true) return
+        if (activeClients <= 0 || screenPaused || !isScreenInteractive() || tickerJob?.isActive == true) return
         tickerJob = scope.launch {
             while (isActive) {
                 delay(Tokens.Cockpit.TELEMETRY_TICK_INTERVAL_MS)
-                if (!isScreenInteractive()) {
+                if (screenPaused || !isScreenInteractive()) {
                     stopScreenOnTicker()
                     break
                 }

@@ -2,17 +2,21 @@ package com.drivelift.app.ui
 
 import androidx.annotation.OptIn
 import android.view.TextureView
+import android.view.WindowManager
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.requiredSize
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.zIndex
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlin.math.abs
 import android.graphics.Bitmap
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.runtime.mutableFloatStateOf
@@ -190,7 +194,10 @@ internal fun VideoPreviewContent(
         }
     }
 
-    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+    Box(
+        Modifier.fillMaxSize().background(GlassPalette.OledBlack),
+        contentAlignment = Alignment.Center,
+    ) {
         val current = stream
         if (current != null && problem == null) {
             val source = remember(current) {
@@ -298,12 +305,19 @@ internal fun VideoPlayer(
     var capturing by remember(player) { mutableStateOf(false) }
     var controlsVisible by remember(player) { mutableStateOf(true) }
     var interaction by remember(player) { mutableIntStateOf(0) }
-    // While a finger is on the scrubber the controls never hide, so the seek is not lost.
-    var scrubbing by remember(player) { mutableStateOf(false) }
+    // While a finger is dragging/tapping the scrubber the poller never overwrites position and
+    // controls stay open so the seek is never fought or lost.
+    var isSeeking by remember(player) { mutableStateOf(false) }
+    // Pending seek target held briefly until ExoPlayer reports the settled position, preventing
+    // the 250ms position poller from snapping the scrubber back on scrub release or +/-10s skips.
+    var pendingSeekTarget by remember(player) { mutableStateOf<Long?>(null) }
+    var pendingSeekAtMs by remember(player) { mutableLongStateOf(0L) }
     // The last position this player was told to seek to. While the video is still there, the
     // frame on screen is the one at or after it; after playback it is the one at or before.
     // Restoring after rotation or recreation is itself a seek to the saved position.
     var lastSeekTarget by remember(player) { mutableStateOf<Long?>(savedPosition) }
+    // Fit (contain) vs Fill (edge-to-edge center crop) aspect-ratio toggle.
+    var fillMode by rememberSaveable(source.key) { mutableStateOf(false) }
     // Step seeks run one at a time; see StepController. [stepGeneration] starts the give-up
     // timer for the step seek that is running now, and only that one.
     var stepGeneration by remember(player) { mutableIntStateOf(0) }
@@ -329,8 +343,18 @@ internal fun VideoPlayer(
     fun seekTo(target: Long) {
         steps.clear()
         stepRunning.set(false)
+        pendingSeekTarget = target
+        pendingSeekAtMs = android.os.SystemClock.elapsedRealtime()
+        position = target
+        savedPosition = target
         player.seekTo(target)
         lastSeekTarget = target
+    }
+    fun skipBy(deltaMs: Long) {
+        val effectiveDuration = duration.takeIf { it > 0L } ?: player.duration.coerceAtLeast(0L)
+        val base = pendingSeekTarget ?: position.takeIf { it > 0L } ?: player.currentPosition.coerceAtLeast(0L)
+        val target = skipTarget(base, effectiveDuration, deltaMs)
+        seekTo(target)
     }
     var textureView by remember(player) { mutableStateOf<TextureView?>(null) }
     var videoAspect by remember(player) { mutableFloatStateOf(DEFAULT_ASPECT) }
@@ -410,11 +434,20 @@ internal fun VideoPlayer(
             player.release()
         }
     }
-    // Position for the scrubber: state feedback only, refreshed while the viewer is open.
+    // Position for the scrubber: state feedback only, paused while user is seeking so the
+    // slider never fights finger drags or snaps back right after a seek or +/-10s tap.
     LaunchedEffect(player) {
         while (true) {
-            position = player.currentPosition
-            savedPosition = position
+            if (!isSeeking) {
+                val reported = player.currentPosition.coerceAtLeast(0L)
+                val pending = pendingSeekTarget
+                val elapsed = android.os.SystemClock.elapsedRealtime() - pendingSeekAtMs
+                if (pending == null || abs(reported - pending) < SEEK_SETTLE_TOLERANCE_MS || elapsed > SEEK_SETTLE_TIMEOUT_MS) {
+                    pendingSeekTarget = null
+                    position = reported
+                    savedPosition = reported
+                }
+            }
             if (player.duration > 0) duration = player.duration
             delay(Tokens.Motion.VIDEO_POSITION_REFRESH.toLong())
         }
@@ -429,17 +462,18 @@ internal fun VideoPlayer(
         stepRunning.set(steps.inFlightGeneration != null)
     }
     // Controls step aside after a few seconds of playback without a touch.
-    LaunchedEffect(controlsVisible, playing, interaction, scrubbing) {
-        if (controlsVisible && playing && !scrubbing) {
+    LaunchedEffect(controlsVisible, playing, interaction, isSeeking) {
+        if (controlsVisible && playing && !isSeeking) {
             delay(Tokens.Motion.VIDEO_CONTROLS_HIDE.toLong())
             controlsVisible = false
         }
     }
     // A rotation or resize changes the fitted picture and the screen, so a restored pan offset is
     // limited again at once; the zoom level itself is kept.
-    LaunchedEffect(viewport, shownAspect, aspectKnown) {
+    LaunchedEffect(viewport, shownAspect, aspectKnown, fillMode) {
         if (aspectKnown && viewport.width > 0 && viewport.height > 0) {
-            zoom.applyVideoGesture(Offset.Zero, 1f, fittedVideoSize(viewport, shownAspect), viewport)
+            val baseSize = if (fillMode) filledVideoSize(viewport, shownAspect) else fittedVideoSize(viewport, shownAspect)
+            zoom.applyVideoGesture(Offset.Zero, 1f, baseSize, viewport)
             rememberZoom()
         }
     }
@@ -451,21 +485,37 @@ internal fun VideoPlayer(
     // Rotate asks for one orientation while the video is open. Leaving the player hands the
     // orientation back to the phone; the recreation that a rotation itself causes does not.
     DisposableEffect(activity) {
+        val window = activity?.window
+        val previousCutoutMode = window?.attributes?.layoutInDisplayCutoutMode
+        if (window != null) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            window.attributes = window.attributes.apply {
+                layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_ALWAYS
+            }
+        }
         onDispose {
+            if (window != null && previousCutoutMode != null) {
+                window.attributes = window.attributes.apply {
+                    layoutInDisplayCutoutMode = previousCutoutMode
+                }
+            }
             if (activity?.isChangingConfigurations != true) {
                 activity?.requestedOrientation = android.content.pm.ActivityInfo.SCREEN_ORIENTATION_UNSPECIFIED
             }
         }
     }
-    // Hidden controls give a clear, full-screen picture: the viewer's top bar and Android's
-    // status and navigation bars step aside too. A swipe from the edge shows the bars briefly.
-    DisposableEffect(controlsVisible) {
+    // True edge-to-edge immersive mode: hide system bars during playback or when chrome hides,
+    // restoring them cleanly when leaving the video player.
+    DisposableEffect(controlsVisible, playing) {
         currentOnChrome(controlsVisible)
         val window = activity?.window
         val insets = window?.let { WindowCompat.getInsetsController(it, it.decorView) }
         insets?.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
-        if (controlsVisible) insets?.show(WindowInsetsCompat.Type.systemBars())
-        else insets?.hide(WindowInsetsCompat.Type.systemBars())
+        if (playing || !controlsVisible) {
+            insets?.hide(WindowInsetsCompat.Type.systemBars())
+        } else {
+            insets?.show(WindowInsetsCompat.Type.systemBars())
+        }
         onDispose {
             insets?.show(WindowInsetsCompat.Type.systemBars())
             currentOnChrome(true)
@@ -498,18 +548,19 @@ internal fun VideoPlayer(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(GlassPalette.OledBlack)) {
+        val basePictureSize = if (fillMode) filledVideoSize(viewport, shownAspect) else fittedVideoSize(viewport, shownAspect)
         Box(
-            Modifier.fillMaxSize().onSizeChanged { viewport = it },
+            Modifier.fillMaxSize().clipToBounds().onSizeChanged { viewport = it },
             contentAlignment = Alignment.Center,
         ) {
-            // Full screen, fitted to the video's shape; the top bar overlays it while the
+            // Full screen, fitted or filled to the video's shape; the top bar overlays it while the
             // controls are shown. A TextureView, unlike a SurfaceView, can be scaled for zoom.
             // The texture is laid out in the video's own shape and then turned as a whole, so the
-            // picture is never stretched. Its box is the fitted size with the sides swapped after a
-            // quarter turn, which turns back to exactly the fitted size on screen.
+            // picture is never stretched. Its box is the target size with the sides swapped after a
+            // quarter turn, which turns back to exactly the target size on screen.
             val density = LocalDensity.current
-            val box = unturnedSize(fittedVideoSize(viewport, shownAspect), quarterTurns)
+            val box = unturnedSize(basePictureSize, quarterTurns)
             AndroidView(
                 factory = { viewContext ->
                     TextureView(viewContext).also { view ->
@@ -536,9 +587,10 @@ internal fun VideoPlayer(
             Modifier
                 .fillMaxSize()
                 .testTag("video-touch")
-                .pointerInput(player) {
+                .pointerInput(player, fillMode) {
                     detectTransformGestures { _, pan, gestureZoom, _ ->
-                        zoom.applyVideoGesture(pan, gestureZoom, fittedVideoSize(viewport, shownAspect), viewport)
+                        val pic = if (fillMode) filledVideoSize(viewport, shownAspect) else fittedVideoSize(viewport, shownAspect)
+                        zoom.applyVideoGesture(pan, gestureZoom, pic, viewport)
                         rememberZoom()
                     }
                 }
@@ -549,7 +601,7 @@ internal fun VideoPlayer(
                         },
                         onDoubleTap = { offset ->
                             val delta = if (offset.x < size.width / 2f) -SKIP_MS else SKIP_MS
-                            seekTo(skipTarget(player.currentPosition, duration, delta))
+                            skipBy(delta)
                             touched()
                         },
                     )
@@ -567,6 +619,7 @@ internal fun VideoPlayer(
                     quality = quality,
                     capturing = capturing,
                     zoomed = zoom.scale > ZOOMED_THRESHOLD,
+                    fillMode = fillMode,
                 ),
                 onPlayPause = {
                     // Decided by intent, not by isPlaying: a buffering stream can still be paused.
@@ -586,9 +639,12 @@ internal fun VideoPlayer(
                     }
                     touched()
                 },
-                onSeek = {
-                    seekTo(it)
-                    position = it
+                onSeek = { target ->
+                    seekTo(target)
+                    touched()
+                },
+                onSkip = { deltaMs ->
+                    skipBy(deltaMs)
                     touched()
                 },
                 onSpeed = { picked ->
@@ -620,21 +676,32 @@ internal fun VideoPlayer(
                         afterSeek = queued != null || lastSeekTarget == now,
                     )
                     steps.tap(target)
+                    pendingSeekTarget = target
+                    pendingSeekAtMs = android.os.SystemClock.elapsedRealtime()
                     position = target
+                    savedPosition = target
                     touched()
                 },
                 onScrubbingChange = { active ->
-                    scrubbing = active
+                    isSeeking = active
                     touched()
                 },
                 onFit = {
+                    fillMode = false
                     zoom.reset()
                     rememberZoom()
                     touched()
                 },
-                // Clear of the navigation bar while it shows; the picture itself fills the screen.
+                onToggleFillMode = {
+                    fillMode = !fillMode
+                    zoom.reset()
+                    rememberZoom()
+                    touched()
+                },
+                // Isolated above the tap-to-hide layer; clear of the navigation bar while shown.
                 modifier = Modifier
                     .align(Alignment.BottomCenter)
+                    .zIndex(2f)
                     .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Bottom + WindowInsetsSides.Horizontal))
                     .padding(Tokens.Edge),
             )
@@ -674,6 +741,17 @@ internal fun fittedVideoSize(viewport: IntSize, aspect: Float): androidx.compose
     }
 }
 
+/** The size the video occupies when scaled to fill [viewport] edge-to-edge while preserving aspect. */
+internal fun filledVideoSize(viewport: IntSize, aspect: Float): androidx.compose.ui.geometry.Size {
+    if (viewport.width <= 0 || viewport.height <= 0 || aspect <= 0f) return androidx.compose.ui.geometry.Size.Zero
+    val viewportAspect = viewport.width.toFloat() / viewport.height
+    return if (viewportAspect > aspect) {
+        androidx.compose.ui.geometry.Size(viewport.width.toFloat(), viewport.width / aspect)
+    } else {
+        androidx.compose.ui.geometry.Size(viewport.height * aspect, viewport.height.toFloat())
+    }
+}
+
 /**
  * Pinch and drag for the video picture. Panning is limited by the zoomed picture itself, so its
  * edges stop at the screen edges and it can never be dragged out of view; along an axis where the
@@ -699,6 +777,8 @@ internal fun ImageTransformState.applyVideoGesture(
 private const val MAX_VIDEO_ZOOM = 4f
 private const val DEFAULT_ASPECT = 16f / 9f
 private const val ZOOMED_THRESHOLD = 1.05f
+private const val SEEK_SETTLE_TOLERANCE_MS = 1_500L
+private const val SEEK_SETTLE_TIMEOUT_MS = 1_000L
 
 private tailrec fun android.content.Context.findActivity(): android.app.Activity? = when (this) {
     is android.app.Activity -> this
