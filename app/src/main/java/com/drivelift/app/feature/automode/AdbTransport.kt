@@ -186,9 +186,11 @@ class LibAdbTransport(
         }
     }
 
-    override suspend fun disconnect() = withContext(Dispatchers.IO) {
-        synchronized(lock) {
-            runCatching { manager?.disconnect() }
+    override suspend fun disconnect() {
+        withContext(Dispatchers.IO) {
+            synchronized(lock) {
+                runCatching { manager?.disconnect() }
+            }
         }
     }
 
