@@ -17,6 +17,12 @@
     <!-- Granted by the owner in Settings; lets DriveLift show a text-only removal confirmation
          instead of Android's picture preview. Media only, not broad storage access. -->
     <uses-permission android:name="android.permission.MANAGE_MEDIA" />
+    <!-- Owner-authorized (PR #94) for the All-Files Local Explorer (/storage/emulated/0) so the
+         user can browse PDFs, Office docs, Downloads, APKs, ZIPs, and media. MediaStore transfer
+         and removal invariants remain unchanged. -->
+    <uses-permission
+        android:name="android.permission.MANAGE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage" />
 
     <!-- Long uploads and local Desktop Drop server run as foreground data-sync work. -->
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

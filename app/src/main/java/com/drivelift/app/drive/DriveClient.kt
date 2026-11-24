@@ -94,6 +94,8 @@ suspend fun <T> collectAllPages(fetch: suspend (pageToken: String?) -> Pair<List
     return out
 }
 
+private const val MAX_FALLBACK_DOWNLOAD_BYTES = 128L * 1024L * 1024L
+
 /**
  * Drive calls used by the browser, folder picker, and in-app media gallery. An interface so UI and
  * screenshot tests can run against synthetic entries with no network. [DriveClient] is the only
@@ -108,6 +110,21 @@ interface DriveFolders {
         maxBytes: Long,
         onProgress: (Long, Long) -> Unit = { _, _ -> },
     ): ByteArray = throw IOException("Preview not available")
+
+    /**
+     * Downloads [file] (exporting Google Docs, Sheets, and Slides to PDF) into [destination] so
+     * it can be opened natively via FileProvider.
+     */
+    suspend fun downloadToFile(
+        file: DriveFile,
+        destination: File,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): File {
+        val bytes = loadPreviewBytes(file, MAX_FALLBACK_DOWNLOAD_BYTES, onProgress)
+        destination.parentFile?.mkdirs()
+        destination.writeBytes(bytes)
+        return destination
+    }
 
     /** A stream for the in-app video player, authorised for the connected account. */
     suspend fun openVideoStream(file: DriveFile): DriveVideoStream =
@@ -505,6 +522,58 @@ class DriveClient internal constructor(
         }
         if (bytes.isNotEmpty()) previewCache.putBytes(email, file.id, variant, bytes)
         return bytes
+    }
+
+    override suspend fun downloadToFile(
+        file: DriveFile,
+        destination: File,
+        onProgress: (Long, Long) -> Unit,
+    ): File {
+        val kind = classifyDriveFile(file.mimeType)
+        val url = if (kind == DrivePreviewKind.WORKSPACE_PDF_EXPORT) {
+            "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addPathSegment("export")
+                .addQueryParameter("mimeType", "application/pdf")
+                .build()
+        } else {
+            "$API/files".toHttpUrl().newBuilder()
+                .addPathSegment(file.id)
+                .addQueryParameter("alt", "media")
+                .build()
+        }
+        destination.parentFile?.mkdirs()
+        val temp = File(destination.parentFile, "${destination.name}.part")
+        try {
+            executeTrustedMedia(url) { r ->
+                if (!r.isSuccessful) fail(r)
+                val body = r.body ?: throw IOException("Empty media response")
+                val contentLength = body.contentLength()
+                val buffer = ByteArray(16 * 1024)
+                var total = 0L
+                body.byteStream().use { input ->
+                    temp.outputStream().use { output ->
+                        while (true) {
+                            currentCoroutineContext().ensureActive()
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            output.write(buffer, 0, read)
+                            onProgress(total, contentLength)
+                        }
+                    }
+                }
+            }
+            if (destination.exists()) destination.delete()
+            if (!temp.renameTo(destination)) {
+                temp.copyTo(destination, overwrite = true)
+                temp.delete()
+            }
+            return destination
+        } catch (e: Exception) {
+            temp.delete()
+            throw e
+        }
     }
 
     override suspend fun openVideoStream(file: DriveFile): DriveVideoStream {

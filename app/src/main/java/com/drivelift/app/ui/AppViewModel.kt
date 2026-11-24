@@ -59,6 +59,7 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** What the Drive browser lists and creates folders through. Replaced only in screenshot tests. */
     var driveFolders: DriveFolders = graph.drive
+    val localExplorer get() = graph.localExplorer
     val prefs get() = graph.prefs
 
     val tab = MutableStateFlow(0)
@@ -326,6 +327,19 @@ class AppViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The player could not use the stream for [file]; see [com.drivelift.app.drive.DriveFolders.forgetVideoStream]. */
     fun forgetVideoStream(file: com.drivelift.app.drive.DriveFile) = driveFolders.forgetVideoStream(file)
+
+    /**
+     * Downloads a Drive file (or exports Google Docs/Sheets/Slides to PDF) into app-private cache
+     * so it can be opened natively via FileProvider.
+     */
+    suspend fun downloadDriveFileToCache(
+        file: com.drivelift.app.drive.DriveFile,
+        onProgress: (Long, Long) -> Unit = { _, _ -> },
+    ): java.io.File {
+        val dir = java.io.File(getApplication<Application>().cacheDir, "drive_downloads")
+        val target = java.io.File(dir, com.drivelift.app.drive.driveDownloadFileName(file))
+        return driveFolders.downloadToFile(file, target, onProgress)
+    }
 
     /** Saves a frame captured from a video into Pictures/DriveLift and says how it went. */
     suspend fun saveVideoFrame(bitmap: android.graphics.Bitmap, videoName: String, positionMs: Long) {

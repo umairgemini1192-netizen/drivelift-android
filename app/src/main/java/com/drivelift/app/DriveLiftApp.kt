@@ -32,6 +32,9 @@ class Graph(app: Application) {
     val prefs = Prefs(app)
     val media = MediaRepository(app)
     val drive = DriveClient(app, prefs)
+    /** Replaced in tests; production browses `/storage/emulated/0` with All-Files Access. */
+    var localExplorer: com.drivelift.app.data.LocalFileExplorerSource =
+        com.drivelift.app.data.FileSystemLocalExplorerSource()
     /** The last Drive folder count, kept for the next launch (issue #14). No backup: private to this phone. */
     val driveFolderStore = com.drivelift.app.data.DriveFolderStore(java.io.File(app.noBackupFilesDir, "drive-folder-counts.txt"))
     /** Keeps a user-directed Drive trash apart from verification and phone removal (issue #36). */

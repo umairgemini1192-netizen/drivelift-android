@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -37,6 +38,7 @@ import androidx.compose.material.icons.outlined.CenterFocusWeak
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.Description
+import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Videocam
@@ -58,6 +60,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -77,14 +80,18 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.drivelift.app.data.LocalFileOpener
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveFile
 import com.drivelift.app.drive.DrivePreviewKind
 import com.drivelift.app.drive.classifyDriveFile
+import com.drivelift.app.drive.classifyDriveVisualKind
+import com.drivelift.app.drive.driveDownloadMimeType
 import com.drivelift.app.drive.drivePreviewTypeLabel
 import com.drivelift.app.transfer.describeError
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
 import kotlin.math.max
@@ -254,6 +261,7 @@ fun DriveFileViewer(
             )
 
             else -> FileDetailsPreview(
+                vm = vm,
                 file = file,
                 kind = kind,
                 cachedThumb = cachedThumb,
@@ -529,28 +537,28 @@ private fun ImagePreviewContent(
 
 @Composable
 private fun FileDetailsPreview(
+    vm: AppViewModel,
     file: DriveFile,
     kind: DrivePreviewKind,
     cachedThumb: ImageBitmap?,
     onOpenExternally: () -> Unit,
 ) {
     val context = LocalContext.current
-    val icon = when (kind) {
-        DrivePreviewKind.VIDEO -> Icons.Outlined.Videocam
-        DrivePreviewKind.PDF -> Icons.Outlined.PictureAsPdf
-        DrivePreviewKind.WORKSPACE_PDF_EXPORT -> Icons.Outlined.Description
-        DrivePreviewKind.IMAGE -> Icons.Outlined.Image
-        DrivePreviewKind.UNSUPPORTED -> Icons.AutoMirrored.Outlined.InsertDriveFile
-    }
+    val scope = rememberCoroutineScope()
+    var downloading by remember(file.id) { mutableStateOf(false) }
+    var downloadError by remember(file.id) { mutableStateOf<String?>(null) }
+    val visualKind = remember(file.id, file.mimeType, file.name) { classifyDriveVisualKind(file) }
+    val icon = driveVisualIcon(visualKind)
+    val iconTint = driveVisualIconTint(visualKind)
     val summary = when (kind) {
         DrivePreviewKind.WORKSPACE_PDF_EXPORT ->
-            "Google Docs, Sheets, and Slides require export or opening in Google Drive."
+            "Download a PDF copy to open on this phone, or open directly in Google Drive."
         DrivePreviewKind.VIDEO ->
-            "In-app video playback is not enabled in this build yet. You can open this video in Google Drive."
+            "Download this video to open on this phone, or open in Google Drive."
         DrivePreviewKind.PDF ->
-            "In-app PDF rendering is not enabled in this build yet. You can open this PDF in Google Drive."
+            "Download this PDF to open in your phone's PDF viewer, or open in Google Drive."
         else ->
-            "This file format cannot be previewed inside DriveLift. Use the button below to open it externally."
+            "Download a local copy to open with an app on this phone, or open in Google Drive."
     }
 
     Box(
@@ -587,15 +595,15 @@ private fun FileDetailsPreview(
                     Icon(
                         icon,
                         contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
+                        tint = iconTint,
                         modifier = Modifier.padding(bottom = Tokens.Medium).size(Tokens.EmptyState),
                     )
                 }
                 Text(file.name, style = MaterialTheme.typography.titleLarge)
                 val details = buildString {
                     append(drivePreviewTypeLabel(file))
-                    if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
-                    if (file.durationMillis > 0) append("  ·  ${formatDuration(file.durationMillis)}")
+                    if (file.size > 0) append("  \u00B7  ${formatBytes(context, file.size)}")
+                    if (file.durationMillis > 0) append("  \u00B7  ${formatDuration(file.durationMillis)}")
                 }
                 Text(
                     details,
@@ -609,7 +617,71 @@ private fun FileDetailsPreview(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.padding(top = Tokens.Medium, bottom = Tokens.Gutter),
                 )
-                Button(onClick = onOpenExternally, modifier = Modifier.fillMaxWidth()) {
+                if (downloadError != null) {
+                    Text(
+                        downloadError.orEmpty(),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.padding(bottom = Tokens.Small),
+                    )
+                }
+                OutlinedButton(
+                    enabled = !downloading,
+                    onClick = {
+                        downloading = true
+                        downloadError = null
+                        scope.launch {
+                            try {
+                                val cached = withContext(Dispatchers.IO) {
+                                    vm.downloadDriveFileToCache(file)
+                                }
+                                val openErr = LocalFileOpener.openFile(
+                                    context,
+                                    cached,
+                                    driveDownloadMimeType(file),
+                                )
+                                if (openErr != null) {
+                                    downloadError = openErr
+                                    vm.messages.tryEmit(openErr)
+                                }
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: AuthRequiredException) {
+                                downloadError = "Google Drive authorization expired. Reconnect and try again."
+                            } catch (e: Exception) {
+                                downloadError = describeError(e)
+                            } finally {
+                                downloading = false
+                            }
+                        }
+                    },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = Tokens.TouchTarget)
+                        .testTag("viewer-download-open"),
+                ) {
+                    if (downloading) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(Tokens.IconSmall),
+                            strokeWidth = Tokens.Stroke,
+                        )
+                    } else {
+                        Icon(
+                            Icons.Outlined.Download,
+                            contentDescription = null,
+                            modifier = Modifier.size(Tokens.IconSmall),
+                        )
+                    }
+                    Spacer(Modifier.width(Tokens.Small))
+                    Text(if (downloading) "Downloading..." else "Download and open")
+                }
+                Spacer(Modifier.height(Tokens.Small))
+                Button(
+                    onClick = onOpenExternally,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .defaultMinSize(minHeight = Tokens.TouchTarget),
+                ) {
                     Icon(
                         Icons.AutoMirrored.Outlined.OpenInNew,
                         contentDescription = null,

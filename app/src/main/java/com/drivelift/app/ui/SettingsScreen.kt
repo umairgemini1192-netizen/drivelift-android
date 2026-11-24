@@ -1,17 +1,23 @@
 package com.drivelift.app.ui
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
-import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
+import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
@@ -22,31 +28,29 @@ import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.lifecycle.compose.LifecycleEventEffect
-import androidx.lifecycle.Lifecycle
-import androidx.compose.ui.platform.testTag
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
-import androidx.compose.foundation.clickable
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 /**
- * App preferences, opened from the gear on Transfers. The switches write the same preferences,
- * with the same defaults, as they did when they sat on Transfers; only their place changed.
+ * App preferences, opened from the gear on Transfers. Strictly focused on Transfer and Removal
+ * rules plus a clean About/Version chip (App Lock and Cockpit live on the Phone tab Command Center).
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SettingsScreen(
     vm: AppViewModel,
     onBack: () -> Unit,
-    onOpenCockpit: (() -> Unit)? = null,
-    onOpenAppLock: (() -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val wifiOnly by vm.prefs.wifiOnly.collectAsStateWithLifecycle()
@@ -97,67 +101,30 @@ fun SettingsScreen(
             SectionHeading("About")
             GlassPanel(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)) {
-                    Text(appVersionLabel(context), style = MaterialTheme.typography.bodyLarge)
+                    Row(
+                        modifier = Modifier
+                            .clip(Tokens.PillShape)
+                            .background(GlassPalette.Well, Tokens.PillShape)
+                            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
+                            .padding(horizontal = Tokens.Medium, vertical = Tokens.Small)
+                            .testTag("settings-version-chip"),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Icon(
+                            Icons.Outlined.Info,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(Tokens.IconSmall),
+                        )
+                        Spacer(Modifier.width(Tokens.Small))
+                        Text(appVersionLabel(context), style = MaterialTheme.typography.labelLarge)
+                    }
                     Text(
                         REMOVAL_ABOUT,
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(top = Tokens.Tiny),
+                        modifier = Modifier.padding(top = Tokens.Medium),
                     )
-                }
-            }
-            if (onOpenAppLock != null) {
-                SectionHeading("Security")
-                GlassPanel(
-                    modifier = Modifier.fillMaxWidth().testTag("applock-settings-entry"),
-                    onClick = onOpenAppLock,
-                    onClickLabel = "Open App Lock manager",
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("App Lock", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Lock installed apps with Class 3 biometric, backup PIN, grace periods, and Settings tamper protection",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Icon(
-                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
-                }
-            }
-            if (onOpenCockpit != null) {
-                SectionHeading("Cockpit")
-                GlassPanel(
-                    modifier = Modifier.fillMaxWidth().testTag("cockpit-settings-entry"),
-                    onClick = onOpenCockpit,
-                    onClickLabel = "Open Cockpit Dynamic Island setup",
-                ) {
-                    Row(
-                        Modifier.fillMaxWidth().padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
-                        verticalAlignment = Alignment.CenterVertically,
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text("Dynamic Island and widget", style = MaterialTheme.typography.bodyLarge)
-                            Text(
-                                "Configure system overlay, live activities, pinned apps, and cutout fit",
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        Icon(
-                            Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        )
-                    }
                 }
             }
         }

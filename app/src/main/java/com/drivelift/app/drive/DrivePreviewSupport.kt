@@ -181,17 +181,107 @@ fun classifyDriveFile(mimeType: String): DrivePreviewKind = when (mimeType.lower
     else -> DrivePreviewKind.UNSUPPORTED
 }
 
-fun drivePreviewTypeLabel(file: DriveFile): String = when (file.mimeType.lowercase().trim()) {
-    "application/vnd.google-apps.document" -> "Google Doc"
-    "application/vnd.google-apps.spreadsheet" -> "Google Sheet"
-    "application/vnd.google-apps.presentation" -> "Google Slides"
-    "application/pdf" -> "PDF"
-    else -> when {
-        file.mimeType.startsWith("image/") -> file.mimeType.substringAfter('/').uppercase()
-        file.mimeType.startsWith("video/") -> file.mimeType.substringAfter('/').uppercase()
-        file.mimeType.isNotBlank() -> file.mimeType
-        else -> "File"
+/** Visual icon/badge classification for all non-trashed Google Drive file types. */
+enum class DriveFileVisualKind {
+    FOLDER,
+    IMAGE,
+    VIDEO,
+    PDF,
+    GOOGLE_DOC,
+    GOOGLE_SHEET,
+    GOOGLE_SLIDES,
+    WORD,
+    EXCEL,
+    POWERPOINT,
+    ARCHIVE,
+    APK,
+    AUDIO,
+    TEXT,
+    OTHER,
+}
+
+fun classifyDriveVisualKind(file: DriveFile): DriveFileVisualKind {
+    if (file.isFolder) return DriveFileVisualKind.FOLDER
+    val mime = file.mimeType.lowercase().trim()
+    val ext = file.name.substringAfterLast('.', "").lowercase().trim()
+    return when {
+        mime == "application/vnd.google-apps.document" -> DriveFileVisualKind.GOOGLE_DOC
+        mime == "application/vnd.google-apps.spreadsheet" -> DriveFileVisualKind.GOOGLE_SHEET
+        mime == "application/vnd.google-apps.presentation" -> DriveFileVisualKind.GOOGLE_SLIDES
+        mime == "application/pdf" || ext == "pdf" -> DriveFileVisualKind.PDF
+        mime == "application/msword" ||
+            mime == "application/vnd.openxmlformats-officedocument.wordprocessingml.document" ||
+            mime == "application/vnd.oasis.opendocument.text" ||
+            ext in setOf("doc", "docx", "odt", "rtf") -> DriveFileVisualKind.WORD
+        mime == "application/vnd.ms-excel" ||
+            mime == "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" ||
+            mime == "application/vnd.oasis.opendocument.spreadsheet" ||
+            mime == "text/csv" ||
+            ext in setOf("xls", "xlsx", "csv", "ods") -> DriveFileVisualKind.EXCEL
+        mime == "application/vnd.ms-powerpoint" ||
+            mime == "application/vnd.openxmlformats-officedocument.presentationml.presentation" ||
+            mime == "application/vnd.oasis.opendocument.presentation" ||
+            ext in setOf("ppt", "pptx", "odp") -> DriveFileVisualKind.POWERPOINT
+        mime == "application/vnd.android.package-archive" || ext in setOf("apk", "apks", "xapk") -> DriveFileVisualKind.APK
+        mime in setOf(
+            "application/zip",
+            "application/x-zip-compressed",
+            "application/vnd.rar",
+            "application/x-rar-compressed",
+            "application/x-7z-compressed",
+            "application/x-tar",
+            "application/gzip",
+        ) || ext in setOf("zip", "rar", "7z", "tar", "gz") -> DriveFileVisualKind.ARCHIVE
+        mime.startsWith("image/") -> DriveFileVisualKind.IMAGE
+        mime.startsWith("video/") || mime == GOOGLE_VIDS_MIME -> DriveFileVisualKind.VIDEO
+        mime.startsWith("audio/") -> DriveFileVisualKind.AUDIO
+        mime.startsWith("text/") || ext in setOf("txt", "md", "json", "xml") -> DriveFileVisualKind.TEXT
+        else -> DriveFileVisualKind.OTHER
     }
+}
+
+fun drivePreviewTypeLabel(file: DriveFile): String = when (classifyDriveVisualKind(file)) {
+    DriveFileVisualKind.FOLDER -> "Folder"
+    DriveFileVisualKind.GOOGLE_DOC -> "Google Doc"
+    DriveFileVisualKind.GOOGLE_SHEET -> "Google Sheet"
+    DriveFileVisualKind.GOOGLE_SLIDES -> "Google Slides"
+    DriveFileVisualKind.PDF -> "PDF"
+    DriveFileVisualKind.WORD -> "Word"
+    DriveFileVisualKind.EXCEL -> "Excel"
+    DriveFileVisualKind.POWERPOINT -> "PowerPoint"
+    DriveFileVisualKind.ARCHIVE -> {
+        val ext = file.name.substringAfterLast('.', "").uppercase()
+        if (ext in setOf("ZIP", "RAR", "7Z", "TAR", "GZ")) ext else "ZIP"
+    }
+    DriveFileVisualKind.APK -> "APK"
+    DriveFileVisualKind.IMAGE -> file.mimeType.substringAfter('/', "Photo").uppercase()
+    DriveFileVisualKind.VIDEO -> if (file.mimeType.equals(GOOGLE_VIDS_MIME, ignoreCase = true)) {
+        "Google Vids"
+    } else {
+        file.mimeType.substringAfter('/', "Video").uppercase()
+    }
+    DriveFileVisualKind.AUDIO -> "Audio"
+    DriveFileVisualKind.TEXT -> "Text"
+    DriveFileVisualKind.OTHER -> {
+        val ext = file.name.substringAfterLast('.', "").takeIf { it.isNotBlank() && it != file.name }
+        ext?.uppercase() ?: file.mimeType.ifBlank { "File" }
+    }
+}
+
+/** Local cache filename for a downloaded Drive file (Workspace docs export to PDF). */
+fun driveDownloadFileName(file: DriveFile): String {
+    val clean = file.name.replace(Regex("[/\\\\:*?\"<>|\\u0000]"), "_").trim().ifBlank { "drive_file_${file.id}" }
+    return if (classifyDriveFile(file.mimeType) == DrivePreviewKind.WORKSPACE_PDF_EXPORT) {
+        if (clean.endsWith(".pdf", ignoreCase = true)) clean else "$clean.pdf"
+    } else {
+        clean
+    }
+}
+
+/** MIME type to use when opening a downloaded Drive file via FileProvider. */
+fun driveDownloadMimeType(file: DriveFile): String = when (classifyDriveFile(file.mimeType)) {
+    DrivePreviewKind.WORKSPACE_PDF_EXPORT -> "application/pdf"
+    else -> file.mimeType.ifBlank { com.drivelift.app.data.resolveLocalMimeType(file.name) }
 }
 
 fun driveContentVersion(file: DriveFile): String =
