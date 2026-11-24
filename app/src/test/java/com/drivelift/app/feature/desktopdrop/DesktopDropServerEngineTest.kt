@@ -704,4 +704,85 @@ class DesktopDropServerEngineTest {
             assertTrue(boundPort > 0)
         }
     }
+
+    @Test
+    fun apiFilesSortsNewestFirstIncludesTimestampsAndThumbEndpointRequiresAuthAndServesImageBytes() {
+        val samplePng = byteArrayOf(
+            0x89.toByte(), 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+            0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
+        )
+        val photoFile = File(shareDir, "SYNTH_LATEST.png").apply { writeBytes(samplePng) }
+        val pdfFile = File(shareDir, "SYNTH_OLD.pdf").apply { writeText("%PDF-1.4 synthetic") }
+        val midFile = File(shareDir, "SYNTH_MID.apk").apply { writeBytes(ByteArray(256) { 0x5A }) }
+
+        engine.setSharedItems(
+            listOf(
+                SharedDropItem(
+                    id = "old-pdf",
+                    name = "SYNTH_OLD.pdf",
+                    relativePath = "Docs",
+                    sizeBytes = pdfFile.length(),
+                    mimeType = "application/pdf",
+                    localFilePath = pdfFile.absolutePath,
+                    addedAtMs = 1_700_000_001_000L,
+                ),
+                SharedDropItem(
+                    id = "latest-photo",
+                    name = "SYNTH_LATEST.png",
+                    relativePath = "Camera",
+                    sizeBytes = photoFile.length(),
+                    mimeType = "image/png",
+                    localFilePath = photoFile.absolutePath,
+                    addedAtMs = 1_700_000_009_000L,
+                ),
+                SharedDropItem(
+                    id = "mid-apk",
+                    name = "SYNTH_MID.apk",
+                    relativePath = "",
+                    sizeBytes = midFile.length(),
+                    mimeType = "application/vnd.android.package-archive",
+                    localFilePath = midFile.absolutePath,
+                    addedAtMs = 1_700_000_005_000L,
+                ),
+            ),
+        )
+        startLoopbackServer()
+        val (client, _) = clientWithJar()
+
+        // Unauthenticated peer cannot read thumbnails.
+        client.newCall(Request.Builder().url("$baseUrl/thumb/latest-photo").build()).execute().use { resp ->
+            assertEquals(401, resp.code)
+        }
+
+        knockAndApprove(client)
+
+        // /api/files returns items sorted newest-first with addedAtMs and hasThumbnail metadata.
+        client.newCall(Request.Builder().url("$baseUrl/api/files").build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            val parsed = DropJson.parseObject(resp.body!!.string())
+            @Suppress("UNCHECKED_CAST")
+            val files = parsed["files"] as List<Map<String, Any?>>
+            assertEquals(listOf("latest-photo", "mid-apk", "old-pdf"), files.map { it["id"] })
+            assertEquals(1_700_000_009_000L, (files[0]["addedAtMs"] as Number).toLong())
+            assertEquals(true, files[0]["hasThumbnail"])
+            assertEquals(false, files[1]["hasThumbnail"])
+            assertEquals(false, files[2]["hasThumbnail"])
+        }
+
+        // /thumb/{id} serves lightweight image bytes with private cache header.
+        client.newCall(Request.Builder().url("$baseUrl/thumb/latest-photo").build()).execute().use { resp ->
+            assertEquals(200, resp.code)
+            assertEquals("private, max-age=300", resp.header("Cache-Control"))
+            assertTrue(resp.header("Content-Type").orEmpty().startsWith("image/png"))
+            assertArrayEquals(samplePng, resp.body!!.bytes())
+        }
+
+        // Non-visual items and unknown IDs return 404 cleanly.
+        client.newCall(Request.Builder().url("$baseUrl/thumb/old-pdf").build()).execute().use { resp ->
+            assertEquals(404, resp.code)
+        }
+        client.newCall(Request.Builder().url("$baseUrl/thumb/does-not-exist").build()).execute().use { resp ->
+            assertEquals(404, resp.code)
+        }
+    }
 }

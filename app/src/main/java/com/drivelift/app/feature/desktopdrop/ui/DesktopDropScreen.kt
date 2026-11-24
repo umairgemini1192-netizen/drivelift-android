@@ -4,6 +4,7 @@ import android.app.Application
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.graphics.Bitmap
+import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
@@ -29,20 +30,32 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.CreateNewFolder
+import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.ExpandLess
 import androidx.compose.material.icons.outlined.ExpandMore
 import androidx.compose.material.icons.outlined.Fingerprint
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.FolderZip
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.LaptopMac
+import androidx.compose.material.icons.outlined.MusicNote
+import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.QrCode2
 import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material.icons.outlined.Slideshow
+import androidx.compose.material.icons.outlined.TableChart
+import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material.icons.outlined.Wifi
 import androidx.compose.material.icons.outlined.WifiTethering
 import androidx.compose.material3.Button
@@ -71,8 +84,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
@@ -84,7 +99,12 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
+import com.drivelift.app.data.LocalFileType
 import com.drivelift.app.feature.desktopdrop.data.DropFileOpener
+import com.drivelift.app.feature.desktopdrop.data.DropThumbnailSupport
+import java.io.File
 import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
@@ -196,6 +216,13 @@ fun DesktopDropScreen(
         clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
         vm.notifyMessage("Copied $label")
     }
+
+    val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val fontScale = LocalDensity.current.fontScale
+    val shareGridColumns = if (
+        screenWidthDp >= Tokens.DROP_GRID_THREE_COL_WIDTH_DP &&
+        fontScale < Tokens.STACK_AT_FONT_SCALE
+    ) 3 else 2
 
     Scaffold(
         modifier = Modifier.fillMaxSize().testTag("dd-screen"),
@@ -336,11 +363,28 @@ fun DesktopDropScreen(
                     }
                 }
             } else {
-                items(snapshot.sharedItems, key = { "share-${it.id}" }) { item ->
-                    SharedFileRow(
-                        item = item,
-                        onRemove = { vm.removeSharedItem(item.id) },
-                    )
+                val shareRows = snapshot.sharedItems.chunked(shareGridColumns)
+                items(
+                    items = shareRows,
+                    key = { row -> "share-row-${row.first().id}" },
+                ) { rowItems ->
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    ) {
+                        for (item in rowItems) {
+                            SharedFileGridTile(
+                                item = item,
+                                onRemove = { vm.removeSharedItem(item.id) },
+                                modifier = Modifier.weight(1f),
+                            )
+                        }
+                        repeat(shareGridColumns - rowItems.size) {
+                            Spacer(Modifier.weight(1f))
+                        }
+                    }
                 }
             }
 
@@ -1067,39 +1111,208 @@ private fun ShareQueueHeader(
 }
 
 @Composable
-private fun SharedFileRow(
+private fun SharedFileGridTile(
     item: SharedDropItem,
     onRemove: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
-    GlassPanel(
-        Modifier
-            .fillMaxWidth()
-            .padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
-    ) {
-        Row(
-            Modifier.fillMaxWidth().padding(start = Tokens.Gutter, end = Tokens.Tiny, top = Tokens.Small, bottom = Tokens.Small),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(item.name, style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                val meta = buildString {
-                    append(formatBytes(context, item.sizeBytes))
-                    if (item.relativePath.isNotBlank()) append(" · ${item.relativePath}")
-                }
-                Text(
-                    meta,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            IconButton(onClick = onRemove) {
-                Icon(Icons.Outlined.Close, contentDescription = "Remove ${item.name} from share queue")
-            }
+    val fileType = remember(item.name, item.mimeType) { DropThumbnailSupport.classifyItem(item) }
+    val typeLabel = remember(item.name, item.mimeType) { DropThumbnailSupport.typeBadgeLabel(item) }
+    val supportsThumb = fileType == LocalFileType.IMAGE || fileType == LocalFileType.VIDEO
+    val previewModel: Any? = remember(item.localFilePath, item.sourceUri, supportsThumb) {
+        if (!supportsThumb) {
+            null
+        } else {
+            val localFile = item.localFilePath?.takeIf { it.isNotBlank() }?.let(::File)?.takeIf { it.isFile }
+            localFile ?: item.sourceUri?.takeIf { it.isNotBlank() }?.let { Uri.parse(it) }
         }
     }
+    var imageLoaded by remember(item.id, previewModel) { mutableStateOf(false) }
+    var imageFailed by remember(item.id, previewModel) { mutableStateOf(false) }
+    val previewShape = Tokens.concentricShape(Tokens.PanelRadius, Tokens.Small)
+    val iconWellShape = Tokens.concentricShape(Tokens.PanelRadius, Tokens.Medium)
+
+    GlassPanel(
+        modifier = modifier.testTag("dd-share-tile-${item.id}"),
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Tokens.Small),
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .aspectRatio(1f)
+                    .clip(previewShape)
+                    .background(GlassPalette.Thumb)
+                    .border(Tokens.Hairline, GlassPalette.WellEdge, previewShape),
+            ) {
+                if (!imageLoaded || imageFailed || previewModel == null) {
+                    Box(
+                        modifier = Modifier.fillMaxSize(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(Tokens.DropGridIconWell)
+                                .clip(iconWellShape)
+                                .background(GlassPalette.Well)
+                                .border(Tokens.Hairline, GlassPalette.WellEdge, iconWellShape),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Icon(
+                                imageVector = dropFileTypeIcon(fileType),
+                                contentDescription = null,
+                                tint = dropFileTypeTint(fileType),
+                                modifier = Modifier.size(Tokens.Icon),
+                            )
+                        }
+                    }
+                }
+
+                if (previewModel != null && !imageFailed) {
+                    AsyncImage(
+                        model = ImageRequest.Builder(context)
+                            .data(previewModel)
+                            .size(DropThumbnailSupport.DEFAULT_MAX_EDGE_PX)
+                            .build(),
+                        contentDescription = item.name,
+                        contentScale = ContentScale.Crop,
+                        onSuccess = { imageLoaded = true },
+                        onError = { imageFailed = true },
+                        modifier = Modifier.fillMaxSize(),
+                    )
+                }
+
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .align(Alignment.BottomCenter)
+                        .height(Tokens.TouchTarget)
+                        .background(
+                            Brush.verticalGradient(
+                                listOf(Color.Transparent, GlassPalette.ThumbScrim),
+                            ),
+                        ),
+                )
+
+                if (fileType == LocalFileType.VIDEO) {
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .padding(Tokens.Snug)
+                            .clip(Tokens.TagShape)
+                            .background(GlassPalette.ThumbScrim)
+                            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.TagShape)
+                            .padding(horizontal = Tokens.TagPaddingHorizontal, vertical = Tokens.GridGap),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.PlayArrow,
+                            contentDescription = "Video",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(Tokens.IconSmall),
+                        )
+                    }
+                }
+
+                Text(
+                    text = formatBytes(context, item.sizeBytes),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .align(Alignment.BottomStart)
+                        .padding(Tokens.Snug)
+                        .clip(Tokens.TagShape)
+                        .background(GlassPalette.ThumbScrim)
+                        .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.TagShape)
+                        .padding(horizontal = Tokens.TagPaddingHorizontal, vertical = Tokens.GridGap)
+                        .testTag("dd-share-size-${item.id}"),
+                )
+
+                Box(
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .size(Tokens.TouchTarget)
+                        .clickable(
+                            role = Role.Button,
+                            onClickLabel = "Remove ${item.name} from share queue",
+                            onClick = onRemove,
+                        )
+                        .testTag("dd-share-remove-${item.id}"),
+                    contentAlignment = Alignment.TopEnd,
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .padding(Tokens.Snug)
+                            .size(Tokens.DropRemoveBadge)
+                            .clip(CircleShape)
+                            .background(GlassPalette.ThumbScrim)
+                            .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Close,
+                            contentDescription = "Remove ${item.name} from share queue",
+                            tint = MaterialTheme.colorScheme.onSurface,
+                            modifier = Modifier.size(Tokens.IconSmall),
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(Tokens.Small))
+            Text(
+                text = item.name,
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.onSurface,
+                maxLines = 2,
+                minLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(horizontal = Tokens.Tiny),
+            )
+            val subtitle = if (item.relativePath.isNotBlank()) {
+                "$typeLabel \u00B7 ${item.relativePath}"
+            } else {
+                typeLabel
+            }
+            Text(
+                text = subtitle,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(start = Tokens.Tiny, end = Tokens.Tiny, top = Tokens.GridGap),
+            )
+        }
+    }
+}
+
+private fun dropFileTypeIcon(type: LocalFileType): ImageVector = when (type) {
+    LocalFileType.FOLDER -> Icons.Outlined.FolderOpen
+    LocalFileType.PDF -> Icons.Outlined.PictureAsPdf
+    LocalFileType.SPREADSHEET -> Icons.Outlined.TableChart
+    LocalFileType.PRESENTATION -> Icons.Outlined.Slideshow
+    LocalFileType.DOCUMENT -> Icons.Outlined.Description
+    LocalFileType.ARCHIVE -> Icons.Outlined.FolderZip
+    LocalFileType.APK -> Icons.Outlined.Android
+    LocalFileType.IMAGE -> Icons.Outlined.Image
+    LocalFileType.VIDEO -> Icons.Outlined.Videocam
+    LocalFileType.AUDIO -> Icons.Outlined.MusicNote
+    LocalFileType.OTHER -> Icons.AutoMirrored.Outlined.InsertDriveFile
+}
+
+@Composable
+private fun dropFileTypeTint(type: LocalFileType): Color = when (type) {
+    LocalFileType.FOLDER, LocalFileType.DOCUMENT, LocalFileType.IMAGE -> MaterialTheme.colorScheme.primary
+    LocalFileType.SPREADSHEET, LocalFileType.APK, LocalFileType.AUDIO -> MaterialTheme.colorScheme.tertiary
+    LocalFileType.PRESENTATION -> GlassPalette.HudAmber
+    LocalFileType.PDF, LocalFileType.ARCHIVE, LocalFileType.VIDEO -> MaterialTheme.colorScheme.secondary
+    LocalFileType.OTHER -> MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 @Composable
