@@ -42,7 +42,6 @@ import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Close
@@ -181,11 +180,10 @@ fun PhoneScreen(
                     favoriteCounts.hidden > 0 -> "Another account"
                     else -> "Starred items"
                 },
+                autoModeOn = autoModeOn,
                 onOpenAppLock = onOpenAppLock,
                 onOpenCockpit = onOpenCockpit,
                 onOpenCleaner = onOpenCleaner,
-                onOpenAutoMode = onOpenAutoMode,
-                autoModeOn = autoModeOn,
                 onOpenStorage = onOpenStorage,
                 onOpenFavorites = onOpenFavorites,
                 onOpenAllFiles = { onOpenExplorer(LocalFileCategory.ALL) },
@@ -200,6 +198,14 @@ fun PhoneScreen(
                 contentPadding = PaddingValues(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
+                item(key = "auto_mode") {
+                    ExplorerCategoryChip(
+                        label = if (autoModeOn) "Auto Mode: On" else "Auto Mode",
+                        selected = autoModeOn,
+                        onClick = onOpenAutoMode,
+                        modifier = Modifier.testTag("bento-automode-tile"),
+                    )
+                }
                 val quickCategories = listOf(
                     LocalFileCategory.DOCUMENTS,
                     LocalFileCategory.DOWNLOADS,
@@ -430,11 +436,10 @@ fun DriveStatusPill(
 @Composable
 private fun PhoneCommandBentoGrid(
     favoriteSubtitle: String,
+    autoModeOn: Boolean,
     onOpenAppLock: () -> Unit,
     onOpenCockpit: () -> Unit,
     onOpenCleaner: () -> Unit,
-    onOpenAutoMode: () -> Unit,
-    autoModeOn: Boolean,
     onOpenStorage: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenAllFiles: () -> Unit,
@@ -473,7 +478,7 @@ private fun PhoneCommandBentoGrid(
         ) {
             CommandBentoTile(
                 title = "Cleaner & Sleep",
-                subtitle = "Junk & Sleep Mode",
+                subtitle = if (autoModeOn) "Auto Mode on" else "Junk & Sleep Mode",
                 icon = Icons.Outlined.CleaningServices,
                 iconTint = MaterialTheme.colorScheme.tertiary,
                 onClick = onOpenCleaner,
@@ -507,23 +512,6 @@ private fun PhoneCommandBentoGrid(
                 iconTint = MaterialTheme.colorScheme.tertiary,
                 onClick = onOpenAllFiles,
                 modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-explorer-tile"),
-            )
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-        ) {
-            CommandBentoTile(
-                title = if (autoModeOn) "Auto Mode is on" else "Turn on Auto Mode",
-                subtitle = if (autoModeOn) {
-                    "Hands-free Clean & Sleep on Wi-Fi"
-                } else {
-                    "One-time setup for silent Clean & Sleep"
-                },
-                icon = Icons.Outlined.Bolt,
-                iconTint = if (autoModeOn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
-                onClick = onOpenAutoMode,
-                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-automode-tile"),
             )
         }
     }

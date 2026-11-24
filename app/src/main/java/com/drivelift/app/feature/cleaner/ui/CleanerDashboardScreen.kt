@@ -518,17 +518,17 @@ fun AutoModeStatusBanner(
         AutoModeAvailability.SETUP_REQUIRED -> "Turn on Auto Mode"
     }
     val subtitle = when (status.availability) {
-        AutoModeAvailability.READY -> "Clean and Sleep run silently on Wi-Fi with zero prompts."
+        AutoModeAvailability.READY -> "Clean and Sleep run silently on Wi-Fi."
         AutoModeAvailability.NEEDS_WIFI -> "Auto Mode needs Wi-Fi - using guided steps this time."
-        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Complete the final one-time permission step inside DriveLift."
-        AutoModeAvailability.SETUP_REQUIRED -> "One-time built-in setup for hands-free Clean and Sleep, no extra app."
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish one-time permission setup in DriveLift."
+        AutoModeAvailability.SETUP_REQUIRED -> "One-time setup for silent Clean and Sleep."
     }
     val actionLabel = when (status.availability) {
         AutoModeAvailability.READY,
         AutoModeAvailability.NEEDS_WIFI,
         -> "Manage"
-        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish setup"
-        AutoModeAvailability.SETUP_REQUIRED -> "Turn on Auto Mode"
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish"
+        AutoModeAvailability.SETUP_REQUIRED -> "Turn on"
     }
 
     GlassPanel(
