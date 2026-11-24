@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -38,9 +39,9 @@ import com.drivelift.app.ui.GlassSurface
 import com.drivelift.app.ui.Tokens
 
 /**
- * Floating OLED Dynamic Island progress pill used as the Android 16/17 fallback for both
+ * Floating OLED Dynamic Island progress pill used as the guided fallback for both
  * Guided Clean (clear cache in App Info) and Guided Sleep (Force stop in App Info) when
- * Shizuku is absent or unavailable.
+ * Built-in Auto Mode is not configured, Wi-Fi is unavailable, or localhost connect fails.
  */
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -117,6 +118,14 @@ fun GuidedDynamicIslandPill(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                if (!state.fallbackReason.isNullOrBlank()) {
+                    Text(
+                        text = state.fallbackReason,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = GlassPalette.HudAmber,
+                        modifier = Modifier.testTag("guided-pill-fallback-reason"),
+                    )
+                }
             }
 
             LinearProgressIndicator(
@@ -183,6 +192,44 @@ fun GuidedDynamicIslandPill(
                     Text("Cancel")
                 }
             }
+        }
+    }
+}
+
+/**
+ * Compact live progress pill shown while Built-in Auto Mode runs a Clean or Sleep queue silently.
+ */
+@Composable
+fun AutoModeProgressPill(
+    message: String,
+    modifier: Modifier = Modifier,
+) {
+    GlassSurface(
+        level = GlassLevel.Island,
+        shape = Tokens.Cleaner.PillShape,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("automode-progress-pill"),
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(Tokens.Gutter),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+        ) {
+            CircularProgressIndicator(
+                color = GlassPalette.HudEmerald,
+                strokeWidth = Tokens.Stroke,
+                modifier = Modifier.size(Tokens.IconSmall),
+            )
+            Text(
+                text = message,
+                style = MaterialTheme.typography.bodyMedium,
+                color = CockpitLivePalette.White,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
         }
     }
 }

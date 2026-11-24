@@ -115,7 +115,7 @@ class Graph(app: Application) {
     }
     val cockpit: com.drivelift.app.feature.cockpit.CockpitModule by cockpitLazy
 
-    /** Self-contained Storage Cleaner, Shizuku adapter, and Sleep Mode module. */
+    /** Self-contained Storage Cleaner, Built-in Auto Mode, and Sleep Mode module. */
     val cleanerAndSleep: com.drivelift.app.feature.cleaner.CleanerSleepModule by lazy {
         com.drivelift.app.feature.cleaner.CleanerSleepModule(app, this)
     }
@@ -150,6 +150,7 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
         super.onCreate()
         graph = Graph(this)
         Notifications.ensureChannels(this)
+        com.drivelift.app.feature.automode.AdbPairingNotifier.ensureChannel(this)
         // Pick up anything a reboot, crash or force-stop left unfinished.
         graph.transfers.recover()
         // Turning the screen off ends the unlocked session (owner decision on issue 19) and

@@ -134,6 +134,8 @@ fun PhoneScreen(
     onOpenAppLock: () -> Unit = {},
     onOpenCockpit: () -> Unit = {},
     onOpenCleaner: () -> Unit = {},
+    onOpenAutoMode: () -> Unit = {},
+    autoModeOn: Boolean = false,
     onOpenExplorer: (LocalFileCategory) -> Unit = {},
     onOpenDrive: () -> Unit = {},
     onOpenWhatsAppQuickSender: () -> Unit = {},
@@ -178,6 +180,7 @@ fun PhoneScreen(
                     favoriteCounts.hidden > 0 -> "Another account"
                     else -> "Starred items"
                 },
+                autoModeOn = autoModeOn,
                 onOpenAppLock = onOpenAppLock,
                 onOpenCockpit = onOpenCockpit,
                 onOpenCleaner = onOpenCleaner,
@@ -195,6 +198,14 @@ fun PhoneScreen(
                 contentPadding = PaddingValues(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
+                item(key = "auto_mode") {
+                    ExplorerCategoryChip(
+                        label = if (autoModeOn) "Auto Mode: On" else "Auto Mode",
+                        selected = autoModeOn,
+                        onClick = onOpenAutoMode,
+                        modifier = Modifier.testTag("bento-automode-tile"),
+                    )
+                }
                 val quickCategories = listOf(
                     LocalFileCategory.DOCUMENTS,
                     LocalFileCategory.DOWNLOADS,
@@ -425,6 +436,7 @@ fun DriveStatusPill(
 @Composable
 private fun PhoneCommandBentoGrid(
     favoriteSubtitle: String,
+    autoModeOn: Boolean,
     onOpenAppLock: () -> Unit,
     onOpenCockpit: () -> Unit,
     onOpenCleaner: () -> Unit,
@@ -466,7 +478,7 @@ private fun PhoneCommandBentoGrid(
         ) {
             CommandBentoTile(
                 title = "Cleaner & Sleep",
-                subtitle = "Junk & Sleep Mode",
+                subtitle = if (autoModeOn) "Auto Mode on" else "Junk & Sleep Mode",
                 icon = Icons.Outlined.CleaningServices,
                 iconTint = MaterialTheme.colorScheme.tertiary,
                 onClick = onOpenCleaner,

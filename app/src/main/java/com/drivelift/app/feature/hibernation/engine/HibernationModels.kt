@@ -4,11 +4,24 @@ package com.drivelift.app.feature.hibernation.engine
  * Execution mode for a sleep/hibernation session.
  */
 enum class HibernationMode {
-    /** Executes stop/restrict sequences silently via Shizuku binder/shell access. */
-    SHIZUKU_SILENT,
+    /** Executes stop/cache sequences silently via DriveLift's built-in localhost Wireless Debugging ADB client. */
+    AUTO_SILENT,
 
     /** Guides the user step-by-step through Android App Info / force-stop actions. */
     GUIDED_PILL,
+    ;
+
+    companion object {
+        /**
+         * Parses a persisted [HibernationMode] name, migrating any legacy `"SHIZUKU_SILENT"` value
+         * transparently to [AUTO_SILENT].
+         */
+        fun fromStored(raw: String?): HibernationMode = when (raw?.trim()) {
+            "AUTO_SILENT", "SHIZUKU_SILENT" -> AUTO_SILENT
+            "GUIDED_PILL" -> GUIDED_PILL
+            else -> GUIDED_PILL
+        }
+    }
 }
 
 /**

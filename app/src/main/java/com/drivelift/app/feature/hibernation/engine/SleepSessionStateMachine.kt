@@ -1,7 +1,7 @@
 package com.drivelift.app.feature.hibernation.engine
 
 /**
- * Abstraction for executing hibernation commands for a single candidate during [HibernationMode.SHIZUKU_SILENT].
+ * Abstraction for executing hibernation commands for a single candidate during [HibernationMode.AUTO_SILENT].
  */
 fun interface SleepCommandExecutor {
     suspend fun sleepApp(candidate: AppDrainCandidate): Result<List<String>>
@@ -181,7 +181,7 @@ class SleepSessionStateMachine {
     }
 
     /**
-     * Executes a [HibernationMode.SHIZUKU_SILENT] queue deterministically using [executor].
+     * Executes an [HibernationMode.AUTO_SILENT] queue deterministically using [executor].
      *
      * Cooperative interruption is supported via [shouldInterrupt]; per-app failures are recorded
      * as [SleepItemOutcome.FAILED] so remaining candidates still run.
@@ -193,8 +193,8 @@ class SleepSessionStateMachine {
         shouldInterrupt: () -> Boolean = { false },
         onStateChange: (SleepSessionState) -> Unit = {},
     ): SleepSessionState {
-        require(initialState.mode == HibernationMode.SHIZUKU_SILENT) {
-            "runSilentBatch requires SHIZUKU_SILENT mode."
+        require(initialState.mode == HibernationMode.AUTO_SILENT) {
+            "runSilentBatch requires AUTO_SILENT mode."
         }
         var state = initialState
         onStateChange(state)
@@ -211,7 +211,7 @@ class SleepSessionStateMachine {
                 recordOutcomeAndAdvance(
                     state = state,
                     outcome = SleepItemOutcome.SLEPT,
-                    detail = "Hibernated via Shizuku",
+                    detail = "Hibernated via Auto Mode",
                     commandsExecuted = executionResult.getOrDefault(emptyList()),
                     nowMs = clockMs(),
                 )

@@ -139,6 +139,10 @@ dependencies {
     implementation("androidx.glance:glance-appwidget:1.2.0")
     implementation("androidx.glance:glance-material3:1.2.0")
 
+    // Embedded Wireless Debugging ADB client (Apache-2.0 option) and Conscrypt TLSv1.3 provider.
+    implementation(libs.libadb.android)
+    implementation(libs.conscrypt.android)
+
     testImplementation("junit:junit:4.13.2")
     testImplementation(composeBom)
     testImplementation("androidx.compose.ui:ui-test-junit4")
@@ -148,4 +152,10 @@ dependencies {
     testImplementation("androidx.work:work-testing:2.10.0")
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
+}
+
+configurations.matching { it.name.contains("UnitTest", ignoreCase = true) }.configureEach {
+    // Android APKs bundle conscrypt-android for on-device TLSv1.3 ADB pairing, while JVM
+    // Robolectric unit tests must keep Robolectric's conscrypt-openjdk-uber native binaries.
+    exclude(group = "org.conscrypt", module = "conscrypt-android")
 }

@@ -74,11 +74,14 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.automode.AdbSilentExecutor
+import com.drivelift.app.feature.automode.AutoModeAvailability
+import com.drivelift.app.feature.automode.AutoModeStatusSnapshot
 import com.drivelift.app.feature.cleaner.cache.GuidedPillState
-import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
-import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
 import com.drivelift.app.feature.cleaner.engine.CleanerCategory
 import com.drivelift.app.feature.cleaner.engine.CleanerCategoryGroup
 import com.drivelift.app.feature.cleaner.engine.CleanerItem
@@ -131,11 +134,13 @@ data class CleanerDashboardUiState(
         hiddenCacheBytes = 0L,
         filesToReviewBytes = 0L,
     ),
-    val shizukuStatus: ShizukuStatusSnapshot = ShizukuStatusSnapshot(
-        availability = ShizukuAvailability.NOT_INSTALLED,
+    val autoModeStatus: AutoModeStatusSnapshot = AutoModeStatusSnapshot(
+        availability = AutoModeAvailability.SETUP_REQUIRED,
         effectiveMode = HibernationMode.GUIDED_PILL,
-        detail = "Shizuku not installed. Guided Pill fallback is ready.",
+        detail = "Turn on built-in Auto Mode once to clean and sleep apps without prompts.",
+        isConfigured = false,
     ),
+    val autoProgressMessage: String? = null,
     val deepCleanCards: List<DeepCleanCardSummary> = defaultDeepCleanCards(),
     val guidedPill: GuidedPillState? = null,
     val celebrationReclaimedBytes: Long? = null,
@@ -164,6 +169,7 @@ data class CleanerDashboardUiState(
 fun CleanerDashboardScreen(
     onBack: () -> Unit,
     onOpenSleepMode: () -> Unit,
+    onOpenAutoMode: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -172,6 +178,9 @@ fun CleanerDashboardScreen(
 
     LaunchedEffect(module) {
         module.ensureInitialScan()
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        module.refreshAutoModeStatus()
     }
 
     CleanerDashboardContent(
@@ -197,7 +206,7 @@ fun CleanerDashboardScreen(
         },
         onOpenGuidedAppInfo = { pkg ->
             runCatching {
-                context.startActivity(com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter.createAppInfoIntent(pkg))
+                context.startActivity(AdbSilentExecutor.createAppInfoIntent(pkg))
             }
         },
         onConfirmGuidedStep = { module.confirmGuidedCleanStep() },
@@ -205,17 +214,13 @@ fun CleanerDashboardScreen(
             val nextPkg = module.advanceGuidedCleanToNextApp()
             if (nextPkg != null) {
                 runCatching {
-                    context.startActivity(com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter.createAppInfoIntent(nextPkg))
+                    context.startActivity(AdbSilentExecutor.createAppInfoIntent(nextPkg))
                 }
             }
         },
         onSkipGuidedStep = { module.skipGuidedCleanStep() },
         onCancelGuidedSession = { module.cancelGuidedCleanSession() },
-        onShizukuAction = {
-            module.handleShizukuBannerAction { intent ->
-                runCatching { context.startActivity(intent) }
-            }
-        },
+        onAutoModeAction = onOpenAutoMode,
         modifier = modifier,
     )
 }
@@ -241,7 +246,7 @@ fun CleanerDashboardContent(
     onSkipGuidedStep: () -> Unit,
     onCancelGuidedSession: () -> Unit,
     modifier: Modifier = Modifier,
-    onShizukuAction: () -> Unit = {},
+    onAutoModeAction: () -> Unit = {},
     onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
 ) {
     val context = LocalContext.current
@@ -286,6 +291,16 @@ fun CleanerDashboardContent(
                     }
                 },
             )
+
+            if (state.autoProgressMessage != null) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = Tokens.Edge, vertical = Tokens.Small),
+                ) {
+                    AutoModeProgressPill(message = state.autoProgressMessage)
+                }
+            }
 
             if (state.guidedPill != null && state.guidedPill.isActive) {
                 Box(
@@ -334,10 +349,10 @@ fun CleanerDashboardContent(
                     }
 
                     if (!state.isCelebration) {
-                        item(key = "shizuku-status-banner") {
-                            ShizukuSilentModeBanner(
-                                status = state.shizukuStatus,
-                                onAction = onShizukuAction,
+                        item(key = "automode-status-banner") {
+                            AutoModeStatusBanner(
+                                status = state.autoModeStatus,
+                                onAction = onAutoModeAction,
                             )
                         }
                     }
@@ -368,7 +383,7 @@ fun CleanerDashboardContent(
                             subtitle = heroSubtitle,
                             isCelebration = state.isCelebration || state.breakdown.totalReclaimableBytes == 0L,
                             badgeContent = {
-                                ExecutionModeBadge(status = state.shizukuStatus)
+                                ExecutionModeBadge(status = state.autoModeStatus)
                             },
                         )
                     }
@@ -478,53 +493,49 @@ fun CleanerDashboardContent(
 }
 
 /**
- * Clear top status banner for enabling or binding Shizuku Silent Mode in 1 tap across Cleaner
- * and Sleep Mode so users skip manual App Info screens whenever Shizuku is active.
+ * Clear top status banner for enabling or managing DriveLift's Built-in Auto Mode across Cleaner
+ * and Sleep Mode so Clean and Sleep run silently without external apps or App Info screens.
  */
 @Composable
-fun ShizukuSilentModeBanner(
-    status: ShizukuStatusSnapshot,
+fun AutoModeStatusBanner(
+    status: AutoModeStatusSnapshot,
     onAction: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val compact = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
-    val isSilent = status.effectiveMode == HibernationMode.SHIZUKU_SILENT
+    val isSilent = status.effectiveMode == HibernationMode.AUTO_SILENT
     val accent = when (status.availability) {
-        ShizukuAvailability.READY -> GlassPalette.HudEmerald
-        ShizukuAvailability.PERMISSION_REQUIRED -> MaterialTheme.colorScheme.primary
-        ShizukuAvailability.NOT_RUNNING -> GlassPalette.HudAmber
-        ShizukuAvailability.NOT_INSTALLED,
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
-        -> GlassPalette.HudElectricCyan
+        AutoModeAvailability.READY -> GlassPalette.HudEmerald
+        AutoModeAvailability.NEEDS_WIFI -> GlassPalette.HudAmber
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> MaterialTheme.colorScheme.primary
+        AutoModeAvailability.SETUP_REQUIRED -> GlassPalette.HudElectricCyan
     }
     val headline = when (status.availability) {
-        ShizukuAvailability.READY -> "Shizuku Silent Mode active"
-        ShizukuAvailability.PERMISSION_REQUIRED -> "Enable Shizuku Silent Mode"
-        ShizukuAvailability.NOT_RUNNING -> "Start Shizuku for Silent Mode"
-        ShizukuAvailability.NOT_INSTALLED -> "Silent Mode via Shizuku"
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> "Guided Pill Mode active"
+        AutoModeAvailability.READY -> "Auto Mode is on"
+        AutoModeAvailability.NEEDS_WIFI -> "Auto Mode needs Wi-Fi"
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish Auto Mode setup"
+        AutoModeAvailability.SETUP_REQUIRED -> "Turn on Auto Mode"
     }
     val subtitle = when (status.availability) {
-        ShizukuAvailability.READY -> "Apps clean and sleep silently without App Info screens."
-        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku in 1 tap to skip manual App Info screens."
-        ShizukuAvailability.NOT_RUNNING -> "Shizuku is installed but stopped. Start it to avoid App Info screens."
-        ShizukuAvailability.NOT_INSTALLED -> "Install Shizuku for 1-tap silent clean and sleep, or use Guided Pill."
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> status.detail
+        AutoModeAvailability.READY -> "Clean and Sleep run silently on Wi-Fi."
+        AutoModeAvailability.NEEDS_WIFI -> "Auto Mode needs Wi-Fi - using guided steps this time."
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish one-time permission setup in DriveLift."
+        AutoModeAvailability.SETUP_REQUIRED -> "One-time setup for silent Clean and Sleep."
     }
     val actionLabel = when (status.availability) {
-        ShizukuAvailability.READY -> "Refresh"
-        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku"
-        ShizukuAvailability.NOT_RUNNING -> "Open Shizuku"
-        ShizukuAvailability.NOT_INSTALLED -> "Enable Shizuku"
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> null
+        AutoModeAvailability.READY,
+        AutoModeAvailability.NEEDS_WIFI,
+        -> "Manage"
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish"
+        AutoModeAvailability.SETUP_REQUIRED -> "Turn on"
     }
 
     GlassPanel(
         shape = Tokens.Cleaner.CardShape,
         modifier = modifier
             .fillMaxWidth()
-            .testTag("shizuku-status-banner"),
+            .testTag("automode-status-banner"),
     ) {
         if (compact) {
             Column(
@@ -554,27 +565,25 @@ fun ShizukuSilentModeBanner(
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
-                if (actionLabel != null) {
-                    if (isSilent) {
-                        OutlinedButton(
-                            onClick = onAction,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = Tokens.TouchTarget)
-                                .testTag("shizuku-banner-action"),
-                        ) {
-                            Text(actionLabel)
-                        }
-                    } else {
-                        Button(
-                            onClick = onAction,
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .heightIn(min = Tokens.TouchTarget)
-                                .testTag("shizuku-banner-action"),
-                        ) {
-                            Text(actionLabel)
-                        }
+                if (isSilent) {
+                    OutlinedButton(
+                        onClick = onAction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("automode-banner-action"),
+                    ) {
+                        Text(actionLabel)
+                    }
+                } else {
+                    Button(
+                        onClick = onAction,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("automode-banner-action"),
+                    ) {
+                        Text(actionLabel)
                     }
                 }
             }
@@ -607,25 +616,23 @@ fun ShizukuSilentModeBanner(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (actionLabel != null) {
-                    if (isSilent) {
-                        OutlinedButton(
-                            onClick = onAction,
-                            modifier = Modifier
-                                .heightIn(min = Tokens.TouchTarget)
-                                .testTag("shizuku-banner-action"),
-                        ) {
-                            Text(actionLabel)
-                        }
-                    } else {
-                        Button(
-                            onClick = onAction,
-                            modifier = Modifier
-                                .heightIn(min = Tokens.TouchTarget)
-                                .testTag("shizuku-banner-action"),
-                        ) {
-                            Text(actionLabel)
-                        }
+                if (isSilent) {
+                    OutlinedButton(
+                        onClick = onAction,
+                        modifier = Modifier
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("automode-banner-action"),
+                    ) {
+                        Text(actionLabel)
+                    }
+                } else {
+                    Button(
+                        onClick = onAction,
+                        modifier = Modifier
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("automode-banner-action"),
+                    ) {
+                        Text(actionLabel)
                     }
                 }
             }
@@ -634,10 +641,10 @@ fun ShizukuSilentModeBanner(
 }
 
 @Composable
-private fun ExecutionModeBadge(status: ShizukuStatusSnapshot) {
-    val isSilent = status.effectiveMode == HibernationMode.SHIZUKU_SILENT
+private fun ExecutionModeBadge(status: AutoModeStatusSnapshot) {
+    val isSilent = status.effectiveMode == HibernationMode.AUTO_SILENT
     val accent = if (isSilent) GlassPalette.HudEmerald else GlassPalette.HudElectricCyan
-    val label = if (isSilent) "Shizuku silent" else "Guided Pill"
+    val label = if (isSilent) "Auto Mode" else "Guided Pill"
 
     Row(
         modifier = Modifier
