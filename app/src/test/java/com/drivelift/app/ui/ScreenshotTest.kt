@@ -234,7 +234,7 @@ class ScreenshotTest {
     @Test
     fun phoneFoldersDriveNotConnected() {
         grantMedia()
-        eachVariant("phone-not-connected", expect = "Google Drive is not connected") { vm -> AppRoot(vm) }
+        eachVariant("phone-not-connected", expect = "Connect Drive") { vm -> AppRoot(vm) }
     }
 
     @Test

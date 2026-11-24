@@ -39,6 +39,9 @@ object Tokens {
     val Badge = 20.dp
     val BadgePadding = 3.dp
     val FolderThumb = 60.dp
+    val BentoIconWell = 38.dp
+    val DriveFolderIconWell = 40.dp
+    val StatusDot = 8.dp
     val GridCell = 104.dp
     val DriveGridCell = 132.dp
     val GridGap = 2.dp
