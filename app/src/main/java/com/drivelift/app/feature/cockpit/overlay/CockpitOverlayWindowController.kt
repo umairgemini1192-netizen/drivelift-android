@@ -47,6 +47,7 @@ import androidx.savedstate.SavedStateRegistry
 import androidx.savedstate.SavedStateRegistryOwner
 import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.cockpit.CockpitModule
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.TripDistanceFormat
 import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
@@ -57,7 +58,10 @@ import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.MainActivity
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
 /**
  * Pixel anchor derived strictly from `WindowInsets.displayCutout` bounds with zero hardcoded
@@ -65,10 +69,14 @@ import kotlinx.coroutines.launch
  * - [centerOffsetXPx]: signed horizontal delta from screen horizontal center (`Gravity.CENTER_HORIZONTAL`)
  *   to the exact horizontal center of `boundingRectTop`.
  * - [topPx]: vertical window origin so the pill's vertical center aligns with the cutout's vertical center.
+ * - [cutoutWidthPx]: measured pixel width of `boundingRectTop` so the idle pill keeps a clear gap.
+ * - [hasCutout]: true when derived from a non-empty cutout bounding rect (used for lock-screen fallback).
  */
 internal data class CutoutAnchor(
     val centerOffsetXPx: Int = 0,
     val topPx: Int = 0,
+    val cutoutWidthPx: Int = 0,
+    val hasCutout: Boolean = false,
 )
 
 internal object CutoutAnchorCalculator {
@@ -102,7 +110,7 @@ internal object CutoutAnchorCalculator {
         pillHeightPx: Int,
     ): CutoutAnchor {
         if (cutoutTopRect == null || cutoutTopRect.isEmpty) {
-            return CutoutAnchor(centerOffsetXPx = 0, topPx = 0)
+            return CutoutAnchor(centerOffsetXPx = 0, topPx = 0, cutoutWidthPx = 0, hasCutout = false)
         }
         val cutoutCenterX = (cutoutTopRect.left + cutoutTopRect.right) / 2
         val centerOffsetX = if (displayWidthPx > 0) {
@@ -116,7 +124,22 @@ internal object CutoutAnchorCalculator {
         return CutoutAnchor(
             centerOffsetXPx = centerOffsetX,
             topPx = topPx,
+            cutoutWidthPx = cutoutTopRect.width().coerceAtLeast(0),
+            hasCutout = true,
         )
+    }
+
+    /**
+     * Keyguard / lock-screen windows can temporarily report empty cutout insets. Preserves the
+     * last known non-empty cutout anchor until Android reports a non-empty cutout again.
+     */
+    fun resolveWithFallback(
+        current: CutoutAnchor,
+        lastKnownNonEmpty: CutoutAnchor?,
+    ): CutoutAnchor = when {
+        current.hasCutout -> current
+        lastKnownNonEmpty != null && lastKnownNonEmpty.hasCutout -> lastKnownNonEmpty
+        else -> current
     }
 }
 
@@ -207,6 +230,46 @@ internal class CockpitWindowBoundsCoordinator(
         )
     }
 
+    /** Clears the deduplication signature so the next layout pass always calls updateViewLayout(). */
+    fun invalidateLayoutSignature() {
+        lastAppliedSignature = null
+    }
+
+    /** Marks the cached window signature stale when the display turns off. */
+    fun onScreenOff() {
+        lastAppliedSignature = null
+    }
+
+    /**
+     * Forces a fresh WindowManager.updateViewLayout() on ACTION_SCREEN_ON / ACTION_USER_PRESENT so
+     * the WRAP_CONTENT pill window is always re-measured and re-centered on the display cutout.
+     */
+    fun onScreenOn(
+        params: WindowManager.LayoutParams,
+        isExpanded: Boolean,
+        inlineReplyOpen: Boolean,
+        cutoutTopPx: Int,
+        offsetXPx: Int,
+        offsetYPx: Int,
+        blurRadiusPx: Int = Tokens.Cockpit.OVERLAY_BLUR_RADIUS_PX,
+        cutoutCenterOffsetXPx: Int = 0,
+    ): Boolean {
+        targetExpanded = isExpanded
+        this.inlineReplyOpen = inlineReplyOpen
+        if (isExpanded) {
+            currentSpan = WindowSpan.FULL_SCREEN_OVERLAY
+        }
+        lastAppliedSignature = null
+        return applyParamsIfChanged(
+            params = params,
+            cutoutTopPx = cutoutTopPx,
+            cutoutCenterOffsetXPx = cutoutCenterOffsetXPx,
+            offsetXPx = offsetXPx,
+            offsetYPx = offsetYPx,
+            blurRadiusPx = blurRadiusPx,
+        )
+    }
+
     fun reset() {
         currentSpan = WindowSpan.COLLAPSED_WRAP
         targetExpanded = false
@@ -282,6 +345,7 @@ internal class CockpitOverlayWindowController(
     private val windowManager: WindowManager? = serviceContext.getSystemService(WindowManager::class.java)
     private var overlayView: ComposeView? = null
     private var layoutParams: WindowManager.LayoutParams? = null
+    private var screenObserverJob: Job? = null
     private val boundsCoordinator = CockpitWindowBoundsCoordinator { params ->
         val wm = windowManager ?: return@CockpitWindowBoundsCoordinator
         val view = overlayView ?: return@CockpitWindowBoundsCoordinator
@@ -291,9 +355,73 @@ internal class CockpitOverlayWindowController(
     val isLandscapeFullscreen = mutableStateOf(false)
     val cutoutTopPx = mutableIntStateOf(0)
     val cutoutCenterOffsetXPx = mutableIntStateOf(0)
+    val cutoutWidthPx = mutableIntStateOf(0)
+
+    private var lastKnownCutoutAnchor: CutoutAnchor? = null
+    private var isScreenInteractive: Boolean = true
+    private var isMasterEnabled: Boolean = true
 
     val isAttached: Boolean
         get() = overlayView != null
+
+    private fun syncOverlayVisibility() {
+        overlayView?.visibility = if (isScreenInteractive && !isLandscapeFullscreen.value && isMasterEnabled) {
+            View.VISIBLE
+        } else {
+            View.GONE
+        }
+    }
+
+    private fun handleScreenStateChanged(screenOn: Boolean, cockpit: CockpitModule) {
+        isScreenInteractive = screenOn
+        isMasterEnabled = cockpit.prefsRepo.isMasterEnabledMirrored()
+        syncOverlayVisibility()
+        val params = layoutParams ?: return
+        if (!screenOn) {
+            boundsCoordinator.onScreenOff()
+        } else {
+            updateMetrics()
+            val prefs = cockpit.prefsRepo.state.value
+            val slot = cockpit.coordinator.slotState.value
+            val density = serviceContext.resources.displayMetrics.density
+            boundsCoordinator.onScreenOn(
+                params = params,
+                isExpanded = slot.isExpanded,
+                inlineReplyOpen = slot.inlineReplyOpen,
+                cutoutTopPx = cutoutTopPx.intValue,
+                offsetXPx = (prefs.cutoutOffsetX * density).toInt(),
+                offsetYPx = (prefs.cutoutOffsetY * density).toInt(),
+                cutoutCenterOffsetXPx = cutoutCenterOffsetXPx.intValue,
+            )
+            overlayView?.requestLayout()
+        }
+    }
+
+    private fun applyCutoutAnchor(anchor: CutoutAnchor) {
+        if (anchor.hasCutout) {
+            lastKnownCutoutAnchor = anchor
+        }
+        val resolved = CutoutAnchorCalculator.resolveWithFallback(
+            current = anchor,
+            lastKnownNonEmpty = lastKnownCutoutAnchor,
+        )
+        cutoutTopPx.intValue = resolved.topPx
+        cutoutCenterOffsetXPx.intValue = resolved.centerOffsetXPx
+        cutoutWidthPx.intValue = resolved.cutoutWidthPx
+    }
+
+    private fun readCutoutAnchorFromInsets(insets: WindowInsets?): CutoutAnchor {
+        val wm = windowManager ?: return CutoutAnchor()
+        val density = serviceContext.resources.displayMetrics.density
+        val pillHeightPx = (Tokens.Cockpit.PillHeight.value * density).toInt()
+        val displayWidthPx = runCatching { wm.currentWindowMetrics.bounds.width() }
+            .getOrDefault(serviceContext.resources.displayMetrics.widthPixels)
+        return CutoutAnchorCalculator.fromWindowInsets(
+            windowInsets = insets,
+            displayWidthPx = displayWidthPx,
+            pillHeightPx = pillHeightPx,
+        )
+    }
 
     fun updateMetrics() {
         isLandscapeFullscreen.value =
@@ -301,7 +429,7 @@ internal class CockpitOverlayWindowController(
         val wm = windowManager ?: return
         val density = serviceContext.resources.displayMetrics.density
         val pillHeightPx = (Tokens.Cockpit.PillHeight.value * density).toInt()
-        val anchor = runCatching {
+        val metricsAnchor = runCatching {
             val metrics = wm.currentWindowMetrics
             CutoutAnchorCalculator.fromWindowInsets(
                 windowInsets = metrics.windowInsets,
@@ -309,9 +437,16 @@ internal class CockpitOverlayWindowController(
                 pillHeightPx = pillHeightPx,
             )
         }.getOrDefault(CutoutAnchor())
-        cutoutTopPx.intValue = anchor.topPx
-        cutoutCenterOffsetXPx.intValue = anchor.centerOffsetXPx
-        overlayView?.visibility = if (isLandscapeFullscreen.value) View.GONE else View.VISIBLE
+        val anchor = if (metricsAnchor.hasCutout) {
+            metricsAnchor
+        } else {
+            val viewInsetsAnchor = runCatching {
+                readCutoutAnchorFromInsets(overlayView?.rootWindowInsets)
+            }.getOrDefault(CutoutAnchor())
+            if (viewInsetsAnchor.hasCutout) viewInsetsAnchor else metricsAnchor
+        }
+        applyCutoutAnchor(anchor)
+        syncOverlayVisibility()
     }
 
     fun attachIfNeeded(scope: CoroutineScope) {
@@ -320,6 +455,8 @@ internal class CockpitOverlayWindowController(
         val cockpit = Graph.get(serviceContext).cockpit
         if (!cockpit.prefsRepo.isMasterEnabledMirrored()) return
 
+        isScreenInteractive = cockpit.telemetryMonitor.isScreenOn.value
+        isMasterEnabled = cockpit.prefsRepo.isMasterEnabledMirrored()
         updateMetrics()
         boundsCoordinator.reset()
         val params = boundsCoordinator.createBaseLayoutParams(
@@ -334,6 +471,12 @@ internal class CockpitOverlayWindowController(
             setViewTreeLifecycleOwner(lifecycleOwner)
             setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
             setViewTreeViewModelStoreOwner(viewModelStoreOwner)
+            setOnApplyWindowInsetsListener { v, insets ->
+                val insetAnchor = runCatching { readCutoutAnchorFromInsets(insets) }
+                    .getOrDefault(CutoutAnchor())
+                applyCutoutAnchor(insetAnchor)
+                v.onApplyWindowInsets(insets)
+            }
             setOnTouchListener { _, event ->
                 when (event.actionMasked) {
                     MotionEvent.ACTION_OUTSIDE -> {
@@ -353,7 +496,11 @@ internal class CockpitOverlayWindowController(
                     else -> false
                 }
             }
-            visibility = if (isLandscapeFullscreen.value) View.GONE else View.VISIBLE
+            visibility = if (isScreenInteractive && !isLandscapeFullscreen.value && isMasterEnabled) {
+                View.VISIBLE
+            } else {
+                View.GONE
+            }
             setContent {
                 val prefs by cockpit.prefsRepo.state.collectAsStateWithLifecycle()
                 val slotState by cockpit.coordinator.slotState.collectAsStateWithLifecycle()
@@ -361,7 +508,6 @@ internal class CockpitOverlayWindowController(
                 val torchState by cockpit.torchController.state.collectAsStateWithLifecycle()
                 val quickControls by cockpit.quickControlsController.state.collectAsStateWithLifecycle()
                 val callAudio by cockpit.callActionsController.audioState.collectAsStateWithLifecycle()
-                val screenOn by cockpit.telemetryMonitor.isScreenOn.collectAsStateWithLifecycle()
                 val activityActions = remember(cockpit) {
                     CockpitActivityActions(
                         onAnswerCall = { call ->
@@ -449,6 +595,11 @@ internal class CockpitOverlayWindowController(
                 }
                 var fullOverlayActive by remember { mutableStateOf(slotState.isExpanded) }
 
+                LaunchedEffect(prefs.masterEnabled, isLandscapeFullscreen.value) {
+                    isMasterEnabled = prefs.masterEnabled
+                    syncOverlayVisibility()
+                }
+
                 LaunchedEffect(
                     slotState.isExpanded,
                     slotState.inlineReplyOpen,
@@ -473,7 +624,11 @@ internal class CockpitOverlayWindowController(
                     )
                 }
 
-                if (screenOn && !isLandscapeFullscreen.value && prefs.masterEnabled) {
+                // Keep the pill composed while screen is off and hide via overlayView.visibility =
+                // View.GONE so the WRAP_CONTENT window never collapses to 0 width across screen-off.
+                if (!isLandscapeFullscreen.value && prefs.masterEnabled) {
+                    val displayDensity = serviceContext.resources.displayMetrics.density.coerceAtLeast(1f)
+                    val measuredCutoutWidthDp = (cutoutWidthPx.intValue / displayDensity).roundToInt()
                     DriveLiftTheme {
                         val boxModifier = if (fullOverlayActive) {
                             Modifier
@@ -498,6 +653,7 @@ internal class CockpitOverlayWindowController(
                                 quickControls = quickControls,
                                 pinnedApps = pinnedApps,
                                 widthDeltaDp = prefs.cutoutWidthDelta,
+                                cutoutWidthDp = measuredCutoutWidthDp,
                                 onTapPrimary = { activity ->
                                     launchActivityTarget(activity)
                                     cockpit.coordinator.setExpanded(false)
@@ -586,11 +742,32 @@ internal class CockpitOverlayWindowController(
             val added = runCatching { wm.addView(view, params) }.isSuccess
             if (!added && overlayView === view) {
                 overlayView = null
+            } else if (added && overlayView === view) {
+                screenObserverJob?.cancel()
+                screenObserverJob = scope.launch {
+                    var initialized = false
+                    combine(
+                        cockpit.telemetryMonitor.isScreenOn,
+                        cockpit.telemetryMonitor.screenWakeCount,
+                    ) { screenOn, wakeCount -> screenOn to wakeCount }
+                        .collect { (screenOn, _) ->
+                            if (!initialized) {
+                                initialized = true
+                                isScreenInteractive = screenOn
+                                isMasterEnabled = cockpit.prefsRepo.isMasterEnabledMirrored()
+                                syncOverlayVisibility()
+                            } else {
+                                handleScreenStateChanged(screenOn = screenOn, cockpit = cockpit)
+                            }
+                        }
+                }
             }
         }
     }
 
     fun detach() {
+        screenObserverJob?.cancel()
+        screenObserverJob = null
         val view = overlayView ?: return
         overlayView = null
         layoutParams = null

@@ -35,7 +35,9 @@ data class WidgetDropTile(val label: String, val active: Boolean, val enabled: B
  */
 object CockpitWidgetModel {
     const val PINNED_PER_PAGE = 4
-    const val CURRENT_AVERAGE_WINDOW = 5
+    const val CURRENT_AVERAGE_WINDOW = 3
+    const val CURRENT_DELTA_THRESHOLD_MA = 10
+    const val CHARGE_DELTA_THRESHOLD_MAH = 1
     private const val UNSUPPORTED_CURRENT = Long.MIN_VALUE
     private const val UNSUPPORTED_CURRENT_INT = Int.MIN_VALUE.toLong()
 
@@ -140,14 +142,22 @@ object CockpitWidgetModel {
         BatteryChargeReading(milliAmpHours = null, text = "-- mAh")
 
     /** True when a change in charge counter (mAh) is big enough to redraw the widget. */
-    fun chargeChangedEnough(previous: Int?, current: Int?, thresholdMah: Int = 5): Boolean {
+    fun chargeChangedEnough(
+        previous: Int?,
+        current: Int?,
+        thresholdMah: Int = CHARGE_DELTA_THRESHOLD_MAH,
+    ): Boolean {
         if (previous == null && current == null) return false
         if (previous == null || current == null) return true
         return abs(previous - current) >= thresholdMah
     }
 
     /** True when a change in current is big enough to redraw the widget. */
-    fun currentChangedEnough(previous: Int?, current: Int?, thresholdMa: Int = 50): Boolean {
+    fun currentChangedEnough(
+        previous: Int?,
+        current: Int?,
+        thresholdMa: Int = CURRENT_DELTA_THRESHOLD_MA,
+    ): Boolean {
         if (previous == null && current == null) return false
         if (previous == null || current == null) return true
         if ((previous >= 0) != (current >= 0)) return true
@@ -171,10 +181,11 @@ object CockpitWidgetModel {
 }
 
 /**
- * Rolling N-sample (default 5) battery current averager matching Ampere's smoothed mA output.
- * Normalizes microamps to milliamps, falls back to `BATTERY_PROPERTY_CURRENT_AVERAGE` when
- * `BATTERY_PROPERTY_CURRENT_NOW` is missing or transiently zero, and immediately clears the window
- * whenever the charging state flips so plug/unplug transitions respond without lag.
+ * Rolling N-sample (default 3, ~6 s at 2 s sampling) battery current averager matching Ampere's
+ * responsive mA output. Normalizes microamps to milliamps, prefers `BATTERY_PROPERTY_CURRENT_NOW`
+ * with fallback to `BATTERY_PROPERTY_CURRENT_AVERAGE` when missing or transiently zero, and
+ * immediately clears the window whenever the charging state flips so plug/unplug transitions
+ * respond without lag.
  */
 class BatteryCurrentRollingAverage(
     private val windowSize: Int = CockpitWidgetModel.CURRENT_AVERAGE_WINDOW,
