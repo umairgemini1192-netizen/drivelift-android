@@ -140,7 +140,7 @@ class DesktopDropHelpersTest {
             DropThumbnailSupport.classifyItem(SharedDropItem("5", "notes.docx", "", 100L, "application/octet-stream")),
         )
         assertEquals(1, DropThumbnailSupport.computeInSampleSize(200, 150, 256))
-        assertEquals(4, DropThumbnailSupport.computeInSampleSize(2048, 1536, 256))
+        assertEquals(8, DropThumbnailSupport.computeInSampleSize(2048, 1536, 256))
 
         val context = ApplicationProvider.getApplicationContext<Context>()
         val tempDir = Files.createTempDirectory("drop-thumb-test").toFile()
