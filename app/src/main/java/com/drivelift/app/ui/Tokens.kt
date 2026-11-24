@@ -41,6 +41,8 @@ object Tokens {
     val FolderThumb = 60.dp
     val BentoIconWell = 38.dp
     val DriveFolderIconWell = 40.dp
+    val DropGridIconWell = 44.dp
+    val DropRemoveBadge = 28.dp
     val StatusDot = 8.dp
     val GridCell = 104.dp
     val DriveGridCell = 132.dp
@@ -116,6 +118,9 @@ object Tokens {
 
     /** Below this screen width in dp, the same stacking applies. */
     const val COMPACT_WIDTH_DP = 360
+
+    /** At or above this screen width in dp (when not at large font scale), Desktop Drop's Share Queue grid uses 3 columns. */
+    const val DROP_GRID_THREE_COL_WIDTH_DP = 420
 
     /** Durations in milliseconds. */
     object Motion {

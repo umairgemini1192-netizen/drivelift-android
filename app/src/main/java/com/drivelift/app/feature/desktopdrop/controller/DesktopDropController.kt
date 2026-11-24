@@ -6,6 +6,7 @@ import android.net.Uri
 import android.provider.OpenableColumns
 import androidx.documentfile.provider.DocumentFile
 import com.drivelift.app.feature.desktopdrop.data.AndroidDropDestinationWriter
+import com.drivelift.app.feature.desktopdrop.data.AndroidDropThumbnailProvider
 import com.drivelift.app.feature.desktopdrop.data.DesktopDropPrefs
 import com.drivelift.app.feature.desktopdrop.data.DropPathSanitizer
 import com.drivelift.app.feature.desktopdrop.data.SharedItemSource
@@ -114,6 +115,7 @@ class DesktopDropController(
         destinationLabelProvider = { prefs.current.destinationLabel },
         clock = clock,
         onStateChanged = { syncSnapshot() },
+        thumbnailProvider = AndroidDropThumbnailProvider(app, itemSource),
     )
 
     private val _snapshot = MutableStateFlow(DesktopDropSnapshot(prefs = prefs.current))
@@ -452,6 +454,7 @@ class DesktopDropController(
 
     /** Seeds deterministic synthetic state for Robolectric UI tests without opening sockets. */
     internal fun seedPreviewStateForTest(snapshot: DesktopDropSnapshot) {
+        engine.setSharedItems(snapshot.sharedItems)
         setSnapshot(snapshot)
     }
 

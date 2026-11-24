@@ -1,5 +1,10 @@
 package com.drivelift.app.feature.desktopdrop
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.LinearGradient
+import android.graphics.Paint
+import android.graphics.Shader
 import android.os.Looper
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -7,6 +12,7 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertWidthIsAtLeast
 import androidx.compose.ui.test.junit4.createEmptyComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onAllNodesWithText
@@ -18,6 +24,8 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
+import coil.Coil
+import coil.ImageLoader
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
 import com.drivelift.app.feature.desktopdrop.model.BiometricGateMode
@@ -49,6 +57,9 @@ import org.robolectric.RuntimeEnvironment
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
 
 @RunWith(RobolectricTestRunner::class)
 @GraphicsMode(GraphicsMode.Mode.NATIVE)
@@ -72,6 +83,12 @@ class DesktopDropUiTest {
         RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
         RuntimeEnvironment.setFontScale(1f)
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
+        Coil.setImageLoader(
+            ImageLoader.Builder(app)
+                .crossfade(false)
+                .allowHardware(false)
+                .build(),
+        )
         Graph.get(app).clock = { FIXED_TIME_MS }
     }
 
@@ -80,6 +97,7 @@ class DesktopDropUiTest {
         Graph.get(app).desktopDrop.prefs.setGateMode(BiometricGateMode.APPROVE_EVERY_START)
         Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(DesktopDropSnapshot())
         Graph.get(app).clock = System::currentTimeMillis
+        Coil.reset()
         RuntimeEnvironment.setFontScale(1f)
         RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
         pump(10)
@@ -303,6 +321,164 @@ class DesktopDropUiTest {
                 }
             }
         }
+    }
+
+    @Test
+    fun desktopDropShareQueueVisualThumbnailGridAllVariants() {
+        val tempDir = Files.createTempDirectory("dd-grid-ui-test").toFile()
+        try {
+            val synthPhoto = File(tempDir, "SYNTH_SUNSET.png").also { writeSyntheticGradientPng(it) }
+            val seededItems = listOf(
+                SharedDropItem(
+                    id = "grid-photo",
+                    name = "SYNTH_SUNSET.png",
+                    relativePath = "Camera",
+                    sizeBytes = 4_200_000L,
+                    mimeType = "image/png",
+                    localFilePath = synthPhoto.absolutePath,
+                    addedAtMs = FIXED_TIME_MS,
+                ),
+                SharedDropItem(
+                    id = "grid-video",
+                    name = "SYNTH_DRONE_CLIP.mp4",
+                    relativePath = "Movies",
+                    sizeBytes = 128_000_000L,
+                    mimeType = "video/mp4",
+                    addedAtMs = FIXED_TIME_MS - 60_000L,
+                ),
+                SharedDropItem(
+                    id = "grid-pdf",
+                    name = "Quarterly_Report.pdf",
+                    relativePath = "Docs",
+                    sizeBytes = 2_450_000L,
+                    mimeType = "application/pdf",
+                    addedAtMs = FIXED_TIME_MS - 120_000L,
+                ),
+                SharedDropItem(
+                    id = "grid-apk",
+                    name = "DriveLift_preview.apk",
+                    relativePath = "Builds",
+                    sizeBytes = 19_200_000L,
+                    mimeType = "application/vnd.android.package-archive",
+                    addedAtMs = FIXED_TIME_MS - 180_000L,
+                ),
+                SharedDropItem(
+                    id = "grid-doc",
+                    name = "Contract_Final.docx",
+                    relativePath = "Work",
+                    sizeBytes = 540_000L,
+                    mimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                    addedAtMs = FIXED_TIME_MS - 240_000L,
+                ),
+                SharedDropItem(
+                    id = "grid-zip",
+                    name = "SYNTH_EXPORT.zip",
+                    relativePath = "Exports",
+                    sizeBytes = 420_000_000L,
+                    mimeType = "application/zip",
+                    addedAtMs = FIXED_TIME_MS - 300_000L,
+                ),
+            )
+
+            for (variant in Variant.entries) {
+                Graph.get(app).desktopDrop.controller.seedPreviewStateForTest(
+                    DesktopDropSnapshot(
+                        status = ServerStatus.STOPPED,
+                        mode = ConnectivityMode.SAME_WIFI,
+                        sharedItems = seededItems,
+                    ),
+                )
+                RuntimeEnvironment.setQualifiers(variant.qualifiers)
+                RuntimeEnvironment.setFontScale(variant.fontScale)
+                compose.mainClock.autoAdvance = false
+                val appVm = AppViewModel(app)
+                val dropVm = DesktopDropViewModel(app)
+                pump(12)
+
+                ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+                    scenario.onActivity { activity ->
+                        val bars = SystemBarStyle.dark(android.graphics.Color.TRANSPARENT)
+                        activity.enableEdgeToEdge(statusBarStyle = bars, navigationBarStyle = bars)
+                        activity.setContent {
+                            DriveLiftTheme {
+                                GlassBackdrop {
+                                    DesktopDropScreen(appViewModel = appVm, vm = dropVm)
+                                }
+                            }
+                        }
+                    }
+                    waitForTag("dd-screen")
+                    compose.onNodeWithTag("dd-list").performScrollToKey("share-row-grid-photo")
+                    pump(6)
+                    waitForTag("dd-share-tile-grid-photo")
+                    waitForTag("dd-share-tile-grid-video")
+                    pump(6)
+
+                    // Verify 2-column side-by-side layout on standard, large_font, and compact widths.
+                    val leftBounds = compose.onNodeWithTag("dd-share-tile-grid-photo").fetchSemanticsNode().boundsInRoot
+                    val rightBounds = compose.onNodeWithTag("dd-share-tile-grid-video").fetchSemanticsNode().boundsInRoot
+                    assertTrue(
+                        "Tiles grid-photo ($leftBounds) and grid-video ($rightBounds) must sit side-by-side in a 2-column grid",
+                        kotlin.math.abs(leftBounds.top - rightBounds.top) < 8f && rightBounds.left >= leftBounds.right,
+                    )
+
+                    // Verify filename, size badge, and >= 48dp touch target on the compact X overlay button.
+                    compose.onNodeWithText("SYNTH_SUNSET.png").assertExists()
+                    compose.onNodeWithTag("dd-share-size-grid-photo").assertExists()
+                    compose.onNodeWithTag("dd-share-remove-grid-photo")
+                        .assertHeightIsAtLeast(Tokens.TouchTarget)
+                        .assertWidthIsAtLeast(Tokens.TouchTarget)
+
+                    // Scroll row 2 (PDF + APK) into frame so the screenshot captures image, video, PDF, and APK tiles together.
+                    compose.onNodeWithTag("dd-list").performScrollToKey("share-row-grid-pdf")
+                    pump(6)
+                    waitForTag("dd-share-tile-grid-pdf")
+                    waitForTag("dd-share-tile-grid-apk")
+
+                    if (recordDd) {
+                        compose.onRoot().captureRoboImage(
+                            "build/outputs/screenshots/desktop-drop-share-grid-${variant.name.lowercase()}.png",
+                        )
+                    }
+
+                    if (variant == Variant.STANDARD) {
+                        compose.onNodeWithText("Quarterly_Report.pdf").assertExists()
+                        compose.onNodeWithText("DriveLift_preview.apk").assertExists()
+
+                        // Tapping the compact X overlay removes only that item from the Share Queue.
+                        compose.onNodeWithTag("dd-share-remove-grid-pdf").performClick()
+                        pump(6)
+                        assertTrue(
+                            compose.onAllNodesWithTag("dd-share-tile-grid-pdf").fetchSemanticsNodes().isEmpty(),
+                        )
+                        compose.onNodeWithTag("dd-share-tile-grid-apk").assertExists()
+                    }
+                }
+            }
+        } finally {
+            tempDir.deleteRecursively()
+        }
+    }
+
+    private fun writeSyntheticGradientPng(target: File) {
+        val bitmap = Bitmap.createBitmap(240, 240, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        val paint = Paint().apply {
+            shader = LinearGradient(
+                0f,
+                0f,
+                240f,
+                240f,
+                intArrayOf(0xFF00D4FF.toInt(), 0xFF45228C.toInt(), 0xFF34F5A0.toInt()),
+                null,
+                Shader.TileMode.CLAMP,
+            )
+        }
+        canvas.drawRect(0f, 0f, 240f, 240f, paint)
+        FileOutputStream(target).use { out ->
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+        }
+        bitmap.recycle()
     }
 
     companion object {

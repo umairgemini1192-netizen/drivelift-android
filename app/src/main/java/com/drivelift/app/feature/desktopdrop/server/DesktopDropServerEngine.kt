@@ -2,6 +2,9 @@ package com.drivelift.app.feature.desktopdrop.server
 
 import com.drivelift.app.feature.desktopdrop.data.DropDestinationWriter
 import com.drivelift.app.feature.desktopdrop.data.DropPathSanitizer
+import com.drivelift.app.feature.desktopdrop.data.DropThumbnailProvider
+import com.drivelift.app.feature.desktopdrop.data.DropThumbnailSupport
+import com.drivelift.app.feature.desktopdrop.data.PassthroughDropThumbnailProvider
 import com.drivelift.app.feature.desktopdrop.data.SharedItemSource
 import com.drivelift.app.feature.desktopdrop.model.DropJson
 import com.drivelift.app.feature.desktopdrop.model.DropTransferProgress
@@ -35,6 +38,7 @@ import io.ktor.server.request.receiveText
 import io.ktor.server.request.userAgent
 import io.ktor.server.response.header
 import io.ktor.server.response.respond
+import io.ktor.server.response.respondBytes
 import io.ktor.server.response.respondOutputStream
 import io.ktor.server.response.respondText
 import io.ktor.server.response.respondTextWriter
@@ -83,6 +87,7 @@ class DesktopDropServerEngine(
     private val destinationLabelProvider: () -> String,
     private val clock: () -> Long = System::currentTimeMillis,
     private val onStateChanged: () -> Unit = {},
+    private val thumbnailProvider: DropThumbnailProvider = PassthroughDropThumbnailProvider(itemSource),
 ) {
     private var serverScope: CoroutineScope? = null
     private var server: EmbeddedServer<CIOApplicationEngine, CIOApplicationEngine.Configuration>? = null
@@ -140,7 +145,7 @@ class DesktopDropServerEngine(
     }
 
     fun sharedItemsSnapshot(): List<SharedDropItem> =
-        sharedItemsMap.values.sortedBy { it.addedAtMs }
+        sharedItemsMap.values.sortedByDescending { it.addedAtMs }
 
     fun transfersSnapshot(): List<DropTransferProgress> =
         activeTransfers.values.sortedByDescending { it.updatedAtMs }
@@ -382,7 +387,9 @@ class DesktopDropServerEngine(
                             append("\"name\":${DropJson.quoted(item.name)},")
                             append("\"relativePath\":${DropJson.quoted(item.relativePath)},")
                             append("\"sizeBytes\":${item.sizeBytes},")
-                            append("\"mimeType\":${DropJson.quoted(item.mimeType)}")
+                            append("\"mimeType\":${DropJson.quoted(item.mimeType)},")
+                            append("\"addedAtMs\":${item.addedAtMs},")
+                            append("\"hasThumbnail\":${DropThumbnailSupport.supportsThumbnail(item)}")
                             append('}')
                         }
                     }
@@ -391,6 +398,25 @@ class DesktopDropServerEngine(
                         """{"files":[$itemsJson],"destinationLabel":${DropJson.quoted(destinationLabelProvider())}}""",
                         ContentType.Application.Json,
                     )
+                }
+
+                get("/thumb/{id}") {
+                    requireAuthorizedPeer(call) ?: return@get
+                    val itemId = call.parameters["id"].orEmpty()
+                    val item = sharedItemsMap[itemId]
+                    if (item == null) {
+                        call.respondText("""{"error":"File not found"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    val thumb = thumbnailProvider.loadThumbnail(item)
+                    if (thumb == null) {
+                        call.respondText("""{"error":"Thumbnail unavailable"}""", ContentType.Application.Json, HttpStatusCode.NotFound)
+                        return@get
+                    }
+                    val contentType = runCatching { ContentType.parse(thumb.contentType) }
+                        .getOrDefault(ContentType.Image.JPEG)
+                    call.response.header(HttpHeaders.CacheControl, "private, max-age=300")
+                    call.respondBytes(thumb.bytes, contentType = contentType)
                 }
 
                 get("/api/download/{fileId}") {
