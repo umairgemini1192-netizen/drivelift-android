@@ -1,0 +1,11 @@
+[versions]
+# Dual-licensed GPL-3.0-or-later OR Apache-2.0 (see COPYING and LICENSES/Apache-2.0).
+# DriveLift elects the Apache-2.0 license option.
+libadbAndroid = "3.1.1"
+# Apache-2.0 TLSv1.3 Conscrypt provider required by libadb-android for wireless pairing
+# on Android 11-17 without hidden API reflection.
+conscryptAndroid = "2.5.3"
+
+[libraries]
+libadb-android = { module = "com.github.MuntashirAkon:libadb-android", version.ref = "libadbAndroid" }
+conscrypt-android = { module = "org.conscrypt:conscrypt-android", version.ref = "conscryptAndroid" }

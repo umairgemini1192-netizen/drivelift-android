@@ -53,12 +53,15 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.automode.AdbSilentExecutor
+import com.drivelift.app.feature.automode.AutoModeAvailability
+import com.drivelift.app.feature.automode.AutoModeStatusSnapshot
 import com.drivelift.app.feature.cleaner.cache.GuidedPillState
-import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
-import com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter
-import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
+import com.drivelift.app.feature.cleaner.ui.AutoModeProgressPill
 import com.drivelift.app.feature.cleaner.ui.GuidedDynamicIslandPill
 import com.drivelift.app.feature.hibernation.engine.AppDrainCandidate
 import com.drivelift.app.feature.hibernation.engine.HibernationMode
@@ -81,11 +84,13 @@ data class SleepModeUiState(
     val candidates: List<AppDrainCandidate> = emptyList(),
     val selectedPackages: Set<String> = emptySet(),
     val protectedRules: List<ProtectedAppRule> = defaultProtectedRules(),
-    val shizukuStatus: ShizukuStatusSnapshot = ShizukuStatusSnapshot(
-        availability = ShizukuAvailability.NOT_INSTALLED,
+    val autoModeStatus: AutoModeStatusSnapshot = AutoModeStatusSnapshot(
+        availability = AutoModeAvailability.SETUP_REQUIRED,
         effectiveMode = HibernationMode.GUIDED_PILL,
-        detail = "Shizuku not installed. Guided Sleep pill fallback is ready.",
+        detail = "Turn on built-in Auto Mode once to sleep apps without prompts.",
+        isConfigured = false,
     ),
+    val autoProgressMessage: String? = null,
     val guidedPill: GuidedPillState? = null,
     val lastReport: SleepExecutionReport? = null,
 ) {
@@ -99,6 +104,7 @@ data class SleepModeUiState(
 @Composable
 fun SleepModeScreen(
     onBack: () -> Unit,
+    onOpenAutoMode: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val context = LocalContext.current
@@ -107,6 +113,9 @@ fun SleepModeScreen(
 
     LaunchedEffect(module) {
         module.refreshSleepCandidates()
+    }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
+        module.refreshAutoModeStatus()
     }
 
     SleepModeContent(
@@ -125,7 +134,7 @@ fun SleepModeScreen(
         onDismissReport = { module.dismissSleepReport() },
         onOpenGuidedAppInfo = { pkg ->
             runCatching {
-                context.startActivity(ShizukuSilentAdapter.createAppInfoIntent(pkg))
+                context.startActivity(AdbSilentExecutor.createAppInfoIntent(pkg))
             }
         },
         onConfirmGuidedStep = { module.confirmGuidedSleepStep() },
@@ -133,17 +142,13 @@ fun SleepModeScreen(
             val nextPkg = module.advanceGuidedSleepToNextApp()
             if (nextPkg != null) {
                 runCatching {
-                    context.startActivity(ShizukuSilentAdapter.createAppInfoIntent(nextPkg))
+                    context.startActivity(AdbSilentExecutor.createAppInfoIntent(nextPkg))
                 }
             }
         },
         onSkipGuidedStep = { module.skipGuidedSleepStep() },
         onCancelGuidedSession = { module.cancelGuidedSleepSession() },
-        onShizukuAction = {
-            module.handleShizukuBannerAction { intent ->
-                runCatching { context.startActivity(intent) }
-            }
-        },
+        onAutoModeAction = onOpenAutoMode,
         modifier = modifier,
     )
 }
@@ -169,7 +174,7 @@ fun SleepModeContent(
     onSkipGuidedStep: () -> Unit,
     onCancelGuidedSession: () -> Unit,
     modifier: Modifier = Modifier,
-    onShizukuAction: () -> Unit = {},
+    onAutoModeAction: () -> Unit = {},
     onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -215,6 +220,16 @@ fun SleepModeContent(
             },
         )
 
+        if (state.autoProgressMessage != null) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Tokens.Edge, vertical = Tokens.Small),
+            ) {
+                AutoModeProgressPill(message = state.autoProgressMessage)
+            }
+        }
+
         if (state.guidedPill != null && state.guidedPill.isActive) {
             Box(
                 modifier = Modifier
@@ -247,9 +262,9 @@ fun SleepModeContent(
         ) {
             item(key = "mode-card") {
                 SleepModeStatusCard(
-                    shizukuStatus = state.shizukuStatus,
+                    autoModeStatus = state.autoModeStatus,
                     candidateCount = state.candidates.size,
-                    onShizukuAction = onShizukuAction,
+                    onAutoModeAction = onAutoModeAction,
                 )
             }
 
@@ -381,7 +396,7 @@ fun SleepModeContent(
         if (!state.isLoading && state.candidates.isNotEmpty() && state.guidedPill == null) {
             SleepBottomBar(
                 selectedCount = state.selectedCandidates.size,
-                mode = state.shizukuStatus.effectiveMode,
+                mode = state.autoModeStatus.effectiveMode,
                 isSleepingBatch = state.isSleepingBatch,
                 onStartSleep = onStartSleep,
             )
@@ -391,25 +406,29 @@ fun SleepModeContent(
 
 @Composable
 private fun SleepModeStatusCard(
-    shizukuStatus: ShizukuStatusSnapshot,
+    autoModeStatus: AutoModeStatusSnapshot,
     candidateCount: Int,
-    onShizukuAction: () -> Unit,
+    onAutoModeAction: () -> Unit,
 ) {
-    val isSilent = shizukuStatus.effectiveMode == HibernationMode.SHIZUKU_SILENT
-    val accent = when (shizukuStatus.availability) {
-        ShizukuAvailability.READY -> GlassPalette.HudEmerald
-        ShizukuAvailability.PERMISSION_REQUIRED -> MaterialTheme.colorScheme.primary
-        ShizukuAvailability.NOT_RUNNING -> GlassPalette.HudAmber
-        ShizukuAvailability.NOT_INSTALLED,
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
-        -> GlassPalette.HudElectricCyan
+    val isSilent = autoModeStatus.effectiveMode == HibernationMode.AUTO_SILENT
+    val accent = when (autoModeStatus.availability) {
+        AutoModeAvailability.READY -> GlassPalette.HudEmerald
+        AutoModeAvailability.NEEDS_WIFI -> GlassPalette.HudAmber
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> MaterialTheme.colorScheme.primary
+        AutoModeAvailability.SETUP_REQUIRED -> GlassPalette.HudElectricCyan
     }
-    val actionLabel = when (shizukuStatus.availability) {
-        ShizukuAvailability.READY -> "Refresh Shizuku"
-        ShizukuAvailability.PERMISSION_REQUIRED -> "Bind Shizuku Silent Mode"
-        ShizukuAvailability.NOT_RUNNING -> "Open Shizuku"
-        ShizukuAvailability.NOT_INSTALLED -> "Enable Shizuku Silent Mode"
-        ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION -> null
+    val headline = when (autoModeStatus.availability) {
+        AutoModeAvailability.READY -> "Auto Mode is on"
+        AutoModeAvailability.NEEDS_WIFI -> "Auto Mode needs Wi-Fi"
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish Auto Mode setup"
+        AutoModeAvailability.SETUP_REQUIRED -> "Guided Sleep pill ready"
+    }
+    val actionLabel = when (autoModeStatus.availability) {
+        AutoModeAvailability.READY,
+        AutoModeAvailability.NEEDS_WIFI,
+        -> "Manage Auto Mode"
+        AutoModeAvailability.BOOTSTRAP_INCOMPLETE -> "Finish Auto Mode setup"
+        AutoModeAvailability.SETUP_REQUIRED -> "Turn on Auto Mode"
     }
 
     GlassPanel(
@@ -435,13 +454,13 @@ private fun SleepModeStatusCard(
                     modifier = Modifier.size(Tokens.Icon),
                 )
                 Text(
-                    text = if (isSilent) "Shizuku silent sleep ready" else "Guided Sleep pill ready",
+                    text = headline,
                     style = MaterialTheme.typography.titleMedium,
                     color = accent,
                 )
             }
             Text(
-                text = shizukuStatus.detail,
+                text = autoModeStatus.detail,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -450,27 +469,25 @@ private fun SleepModeStatusCard(
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
-            if (actionLabel != null) {
-                if (isSilent) {
-                    OutlinedButton(
-                        onClick = onShizukuAction,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = Tokens.TouchTarget)
-                            .testTag("shizuku-banner-action"),
-                    ) {
-                        Text(actionLabel)
-                    }
-                } else {
-                    Button(
-                        onClick = onShizukuAction,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .heightIn(min = Tokens.TouchTarget)
-                            .testTag("shizuku-banner-action"),
-                    ) {
-                        Text(actionLabel)
-                    }
+            if (isSilent) {
+                OutlinedButton(
+                    onClick = onAutoModeAction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Tokens.TouchTarget)
+                        .testTag("automode-banner-action"),
+                ) {
+                    Text(actionLabel)
+                }
+            } else {
+                Button(
+                    onClick = onAutoModeAction,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Tokens.TouchTarget)
+                        .testTag("automode-banner-action"),
+                ) {
+                    Text(actionLabel)
                 }
             }
         }
@@ -818,7 +835,7 @@ private fun SleepBottomBar(
 ) {
     val label = when {
         isSleepingBatch -> "Sleeping apps"
-        mode == HibernationMode.SHIZUKU_SILENT -> "Sleep $selectedCount apps"
+        mode == HibernationMode.AUTO_SILENT -> "Sleep $selectedCount apps"
         else -> "Start Guided Sleep ($selectedCount)"
     }
 

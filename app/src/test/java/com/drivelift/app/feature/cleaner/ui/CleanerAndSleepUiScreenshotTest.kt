@@ -26,10 +26,13 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.automode.AutoModeAvailability
+import com.drivelift.app.feature.automode.AutoModeStatusSnapshot
+import com.drivelift.app.feature.automode.AutoModeWizardState
+import com.drivelift.app.feature.automode.AutoModeWizardStep
+import com.drivelift.app.feature.automode.ui.AutoModeSetupContent
 import com.drivelift.app.feature.cleaner.cache.GuidedPillMode
 import com.drivelift.app.feature.cleaner.cache.GuidedPillState
-import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
-import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
 import com.drivelift.app.feature.cleaner.engine.CleanerCategory
 import com.drivelift.app.feature.cleaner.engine.CleanerCategoryGroup
 import com.drivelift.app.feature.cleaner.engine.CleanerItem
@@ -239,10 +242,11 @@ class CleanerAndSleepUiScreenshotTest {
             expandedCategories = setOf(CleanerCategory.HIDDEN_CACHE),
             breakdown = sampleBreakdown,
             deepCleanCards = sampleDeepCards,
-            shizukuStatus = ShizukuStatusSnapshot(
-                availability = ShizukuAvailability.NOT_INSTALLED,
+            autoModeStatus = AutoModeStatusSnapshot(
+                availability = AutoModeAvailability.SETUP_REQUIRED,
                 effectiveMode = HibernationMode.GUIDED_PILL,
-                detail = "Shizuku not installed. Guided Pill fallback is ready.",
+                detail = "Turn on built-in Auto Mode once to clean and sleep apps without prompts.",
+                isConfigured = false,
             ),
         )
         launchAndCaptureV3(
@@ -291,10 +295,11 @@ class CleanerAndSleepUiScreenshotTest {
             deepCleanCards = sampleDeepCards,
             celebrationReclaimedBytes = 930L * 1024L * 1024L,
             celebrationDeletedCount = 24,
-            shizukuStatus = ShizukuStatusSnapshot(
-                availability = ShizukuAvailability.READY,
-                effectiveMode = HibernationMode.SHIZUKU_SILENT,
-                detail = "Shizuku silent mode is active.",
+            autoModeStatus = AutoModeStatusSnapshot(
+                availability = AutoModeAvailability.READY,
+                effectiveMode = HibernationMode.AUTO_SILENT,
+                detail = "Auto Mode is on. Runs silently on Wi-Fi and turns Wireless debugging back off when done.",
+                isConfigured = true,
             ),
         )
         launchAndCaptureV3(
@@ -425,10 +430,11 @@ class CleanerAndSleepUiScreenshotTest {
                 label = "Messenger",
                 immutable = false,
             ),
-            shizukuStatus = ShizukuStatusSnapshot(
-                availability = ShizukuAvailability.READY,
-                effectiveMode = HibernationMode.SHIZUKU_SILENT,
-                detail = "Shizuku silent mode is active.",
+            autoModeStatus = AutoModeStatusSnapshot(
+                availability = AutoModeAvailability.READY,
+                effectiveMode = HibernationMode.AUTO_SILENT,
+                detail = "Auto Mode is on. Runs silently on Wi-Fi and turns Wireless debugging back off when done.",
+                isConfigured = true,
             ),
         )
         launchAndCaptureV3(
@@ -572,6 +578,74 @@ class CleanerAndSleepUiScreenshotTest {
             pump(10)
             compose.onNodeWithTag("cleaner-item-HIDDEN_CACHE:com.example.browser").assertIsDisplayed()
         }
+    }
+
+    @Test
+    fun autoModeSetupWizardStep1AndReadyStatesRenderAcrossVariants() {
+        val step1State = AutoModeWizardState(
+            step = AutoModeWizardStep.ENABLE_DEVELOPER_OPTIONS,
+            isDeveloperOptionsEnabled = false,
+            isOnWifi = true,
+        )
+        launchAndCaptureV3(
+            name = "automode-wizard-step1",
+            content = {
+                AutoModeSetupContent(
+                    state = step1State,
+                    onBack = {},
+                    onRefresh = {},
+                    onOpenAboutPhone = {},
+                    onOpenWifiSettings = {},
+                    onPostNotificationAndOpenWirelessDebugging = {},
+                    onSubmitPairingCode = {},
+                    onRetryBootstrap = {},
+                    onTurnOffAutoMode = {},
+                )
+            },
+            verify = { variant ->
+                compose.onNodeWithTag("automode-setup-screen").assertIsDisplayed()
+                compose.onNodeWithTag("automode-step1-card").assertExists()
+                compose.onNodeWithText("Tap Build number 7 times").assertExists()
+                if (variant == Variant.STANDARD) {
+                    compose.onNodeWithTag("automode-open-about-phone").assertIsDisplayed()
+                    compose.onNodeWithTag("automode-open-about-phone").assertHeightIsAtLeast(Tokens.TouchTarget)
+                }
+            },
+        )
+
+        val readyState = AutoModeWizardState(
+            step = AutoModeWizardStep.READY,
+            isDeveloperOptionsEnabled = true,
+            isOnWifi = true,
+            hasStoredKeyPair = true,
+            isPaired = true,
+            hasWriteSecureSettings = true,
+            isBootstrapComplete = true,
+            statusMessage = "Auto Mode is on",
+        )
+        launchAndCaptureV3(
+            name = "automode-wizard-ready",
+            content = {
+                AutoModeSetupContent(
+                    state = readyState,
+                    onBack = {},
+                    onRefresh = {},
+                    onOpenAboutPhone = {},
+                    onOpenWifiSettings = {},
+                    onPostNotificationAndOpenWirelessDebugging = {},
+                    onSubmitPairingCode = {},
+                    onRetryBootstrap = {},
+                    onTurnOffAutoMode = {},
+                )
+            },
+            verify = { variant ->
+                compose.onNodeWithTag("automode-ready-card").assertIsDisplayed()
+                compose.onNodeWithText("Auto Mode is on").assertIsDisplayed()
+                if (variant == Variant.STANDARD) {
+                    compose.onNodeWithTag("automode-turn-off-button").assertHeightIsAtLeast(Tokens.TouchTarget)
+                }
+            },
+        )
     }
 
     private companion object {

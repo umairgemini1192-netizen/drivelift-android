@@ -1,7 +1,7 @@
 package com.drivelift.app.feature.hibernation.engine
 
 /**
- * Options controlling which Shizuku hibernation commands are emitted for a target package.
+ * Options controlling which ADB hibernation commands are emitted for a target package.
  */
 data class HibernationCommandOptions(
     val restrictBackgroundAppOp: Boolean = true,
@@ -11,9 +11,9 @@ data class HibernationCommandOptions(
 )
 
 /**
- * Validated, argument-tokenized command ready for Shizuku binder/process execution without a shell.
+ * Validated, argument-tokenized command ready for embedded localhost ADB execution.
  */
-data class ShizukuCommandSpec(
+data class AdbCommandSpec(
     val args: List<String>,
     val description: String,
 ) {
@@ -22,9 +22,9 @@ data class ShizukuCommandSpec(
 }
 
 /**
- * Builds safe, validated command sequences for Shizuku-backed app hibernation and recovery.
+ * Builds safe, validated command sequences for Auto Mode app hibernation and recovery.
  */
-object ShizukuHibernationCommandBuilder {
+object HibernationCommandBuilder {
 
     private const val MAX_PACKAGE_LENGTH = 255
 
@@ -69,7 +69,7 @@ object ShizukuHibernationCommandBuilder {
         packageName: String,
         options: HibernationCommandOptions = HibernationCommandOptions(),
         protectedPackages: Set<String> = emptySet(),
-    ): List<ShizukuCommandSpec> {
+    ): List<AdbCommandSpec> {
         val pkg = validatePackageName(packageName)
         require(pkg !in BackgroundDrainerScorer.ALWAYS_PROTECTED_PACKAGES) {
             "Refusing to build hibernation commands for protected system/self package: $pkg"
@@ -81,7 +81,7 @@ object ShizukuHibernationCommandBuilder {
         return buildList {
             if (options.restrictBackgroundAppOp) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "ignore"),
                         description = "Restrict background execution via AppOps",
                     ),
@@ -89,7 +89,7 @@ object ShizukuHibernationCommandBuilder {
             }
             if (options.setInactive) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("am", "set-inactive", pkg, "true"),
                         description = "Mark app inactive in ActivityManager",
                     ),
@@ -97,7 +97,7 @@ object ShizukuHibernationCommandBuilder {
             }
             if (options.forceStop) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("am", "force-stop", pkg),
                         description = "Force-stop background processes",
                     ),
@@ -105,7 +105,7 @@ object ShizukuHibernationCommandBuilder {
             }
             if (options.suspendPackage) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("pm", "suspend", pkg),
                         description = "Suspend package until unsuspended",
                     ),
@@ -122,12 +122,12 @@ object ShizukuHibernationCommandBuilder {
         unsuspend: Boolean = true,
         restoreAppOp: Boolean = true,
         clearInactive: Boolean = true,
-    ): List<ShizukuCommandSpec> {
+    ): List<AdbCommandSpec> {
         val pkg = validatePackageName(packageName)
         return buildList {
             if (unsuspend) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("pm", "unsuspend", pkg),
                         description = "Unsuspend package",
                     ),
@@ -135,7 +135,7 @@ object ShizukuHibernationCommandBuilder {
             }
             if (restoreAppOp) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("appops", "set", pkg, "RUN_ANY_IN_BACKGROUND", "allow"),
                         description = "Restore background execution AppOp",
                     ),
@@ -143,7 +143,7 @@ object ShizukuHibernationCommandBuilder {
             }
             if (clearInactive) {
                 add(
-                    ShizukuCommandSpec(
+                    AdbCommandSpec(
                         args = listOf("am", "set-inactive", pkg, "false"),
                         description = "Clear inactive state in ActivityManager",
                     ),

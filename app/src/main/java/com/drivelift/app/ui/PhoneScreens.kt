@@ -42,6 +42,7 @@ import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Bolt
 import androidx.compose.material.icons.outlined.CheckCircle
 import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Close
@@ -134,6 +135,8 @@ fun PhoneScreen(
     onOpenAppLock: () -> Unit = {},
     onOpenCockpit: () -> Unit = {},
     onOpenCleaner: () -> Unit = {},
+    onOpenAutoMode: () -> Unit = {},
+    autoModeOn: Boolean = false,
     onOpenExplorer: (LocalFileCategory) -> Unit = {},
     onOpenDrive: () -> Unit = {},
     onOpenWhatsAppQuickSender: () -> Unit = {},
@@ -181,6 +184,8 @@ fun PhoneScreen(
                 onOpenAppLock = onOpenAppLock,
                 onOpenCockpit = onOpenCockpit,
                 onOpenCleaner = onOpenCleaner,
+                onOpenAutoMode = onOpenAutoMode,
+                autoModeOn = autoModeOn,
                 onOpenStorage = onOpenStorage,
                 onOpenFavorites = onOpenFavorites,
                 onOpenAllFiles = { onOpenExplorer(LocalFileCategory.ALL) },
@@ -428,6 +433,8 @@ private fun PhoneCommandBentoGrid(
     onOpenAppLock: () -> Unit,
     onOpenCockpit: () -> Unit,
     onOpenCleaner: () -> Unit,
+    onOpenAutoMode: () -> Unit,
+    autoModeOn: Boolean,
     onOpenStorage: () -> Unit,
     onOpenFavorites: () -> Unit,
     onOpenAllFiles: () -> Unit,
@@ -500,6 +507,23 @@ private fun PhoneCommandBentoGrid(
                 iconTint = MaterialTheme.colorScheme.tertiary,
                 onClick = onOpenAllFiles,
                 modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-explorer-tile"),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            CommandBentoTile(
+                title = if (autoModeOn) "Auto Mode is on" else "Turn on Auto Mode",
+                subtitle = if (autoModeOn) {
+                    "Hands-free Clean & Sleep on Wi-Fi"
+                } else {
+                    "One-time setup for silent Clean & Sleep"
+                },
+                icon = Icons.Outlined.Bolt,
+                iconTint = if (autoModeOn) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.primary,
+                onClick = onOpenAutoMode,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-automode-tile"),
             )
         }
     }

@@ -1,19 +1,25 @@
 package com.drivelift.app.feature.cleaner
 
 import android.app.Application
-import android.content.Intent
 import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Environment
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.automode.AdbPairingNotifier
+import com.drivelift.app.feature.automode.AdbSilentExecutor
+import com.drivelift.app.feature.automode.AndroidAutoModeSystemGateway
+import com.drivelift.app.feature.automode.AndroidKeystoreAdbKeyStorage
+import com.drivelift.app.feature.automode.AutoModeAvailability
+import com.drivelift.app.feature.automode.AutoModeStatusSnapshot
+import com.drivelift.app.feature.automode.AutoModeWizardState
+import com.drivelift.app.feature.automode.AutoModeWizardStateMachine
+import com.drivelift.app.feature.automode.AutoSessionOutcome
+import com.drivelift.app.feature.automode.LibAdbTransport
+import com.drivelift.app.feature.automode.SharedPrefsAutoModePreferences
 import com.drivelift.app.feature.cleaner.cache.AndroidAppStorageStatsSource
 import com.drivelift.app.feature.cleaner.cache.GuidedCleanTarget
 import com.drivelift.app.feature.cleaner.cache.GuidedSessionController
-import com.drivelift.app.feature.cleaner.cache.ReflectionShizukuRuntimeBridge
-import com.drivelift.app.feature.cleaner.cache.ShizukuAvailability
-import com.drivelift.app.feature.cleaner.cache.ShizukuSilentAdapter
-import com.drivelift.app.feature.cleaner.cache.ShizukuStatusSnapshot
 import com.drivelift.app.feature.cleaner.engine.AppCacheAndUsageAggregator
 import com.drivelift.app.feature.cleaner.engine.CleanerCategory
 import com.drivelift.app.feature.cleaner.engine.CleanerCategoryGroup
@@ -44,9 +50,9 @@ import kotlinx.coroutines.launch
 import java.io.File
 
 /**
- * Self-contained Phase 3 coordinator wiring Phase 1 (cleaner engine) and Phase 2 (hibernation engine)
- * with Android StorageStatsManager/UsageStatsManager, optional Shizuku silent execution, and
- * Android 16/17 Guided Pill fallback.
+ * Self-contained coordinator wiring Storage Cleaner, Sleep Mode, Android StorageStatsManager /
+ * UsageStatsManager, Built-in Auto Mode (embedded localhost Wireless Debugging ADB client), and
+ * Guided Pill fallback.
  */
 class CleanerSleepModule(
     private val app: Application,
@@ -60,8 +66,17 @@ class CleanerSleepModule(
     )
     private val userWhitelistPackages = MutableStateFlow<List<ProtectedAppRule>>(emptyList())
 
-    val shizukuAdapter = ShizukuSilentAdapter(
-        bridge = ReflectionShizukuRuntimeBridge(app),
+    private val autoModeKeyStorage = AndroidKeystoreAdbKeyStorage(app)
+    private val autoModePrefs = SharedPrefsAutoModePreferences(app)
+    val autoModeSystemGateway = AndroidAutoModeSystemGateway(app)
+    private val autoModeTransport = LibAdbTransport(app, autoModeKeyStorage)
+    private val autoModeWizardMachine = AutoModeWizardStateMachine()
+
+    val adbSilentExecutor = AdbSilentExecutor(
+        transport = autoModeTransport,
+        systemGateway = autoModeSystemGateway,
+        keyStorage = autoModeKeyStorage,
+        preferences = autoModePrefs,
         protectedPackagesProvider = {
             userWhitelistPackages.value.map { it.packageName }.toSet()
         },
@@ -86,16 +101,24 @@ class CleanerSleepModule(
     private var cachedDuplicateGroups: List<DuplicateGroup> = emptyList()
     private var initialScanTriggered = false
 
+    private val _autoModeWizardState = MutableStateFlow(
+        autoModeWizardMachine.onEnvironmentUpdated(
+            AutoModeWizardState(),
+            adbSilentExecutor.environmentSnapshot(),
+        ),
+    )
+    val autoModeWizardState: StateFlow<AutoModeWizardState> = _autoModeWizardState.asStateFlow()
+
     private val _cleanerState = MutableStateFlow(
         CleanerDashboardUiState(
-            shizukuStatus = shizukuAdapter.inspectStatus(),
+            autoModeStatus = adbSilentExecutor.inspectStatus(),
         ),
     )
     val cleanerState: StateFlow<CleanerDashboardUiState> = _cleanerState.asStateFlow()
 
     private val _sleepState = MutableStateFlow(
         SleepModeUiState(
-            shizukuStatus = shizukuAdapter.inspectStatus(),
+            autoModeStatus = adbSilentExecutor.inspectStatus(),
             protectedRules = defaultProtectedRules(),
         ),
     )
@@ -110,14 +133,14 @@ class CleanerSleepModule(
 
     fun runFullCleanerScan() {
         scope.launch {
-            val status = shizukuAdapter.inspectStatus()
+            val status = adbSilentExecutor.inspectStatus()
             val hasUsage = statsSource.hasUsageStatsAccess()
             _cleanerState.update {
                 it.copy(
                     isLoading = true,
                     errorMessage = null,
                     needsUsageAccess = !hasUsage,
-                    shizukuStatus = status,
+                    autoModeStatus = status,
                     celebrationReclaimedBytes = null,
                 )
             }
@@ -155,7 +178,7 @@ class CleanerSleepModule(
                         breakdown = breakdown,
                         deepCleanCards = deepCards,
                         scannedFileCount = junkResult.scannedFileCount,
-                        shizukuStatus = status,
+                        autoModeStatus = status,
                     )
                 }
             }.onFailure { err ->
@@ -249,29 +272,63 @@ class CleanerSleepModule(
             var totalReclaimed = fileResult?.reclaimedBytes ?: 0L
             var totalDeleted = fileResult?.deletedPaths?.size ?: 0
 
-            val status = shizukuAdapter.inspectStatus()
+            val status = adbSilentExecutor.inspectStatus()
             val guidedTargets = mutableListOf<GuidedCleanTarget>()
-            for (cacheItem in cacheItems) {
-                val pkg = cacheItem.packageName ?: continue
-                if (status.effectiveMode == HibernationMode.SHIZUKU_SILENT) {
-                    val cleared = shizukuAdapter.clearAppCacheSilent(pkg)
-                    if (cleared.isSuccess) {
-                        totalReclaimed += cacheItem.sizeBytes
-                        totalDeleted++
-                    } else {
+            var fallbackReason: String? = null
+
+            if (cacheItems.isNotEmpty()) {
+                if (status.effectiveMode == HibernationMode.AUTO_SILENT) {
+                    _cleanerState.update {
+                        it.copy(
+                            autoProgressMessage = "Auto Mode: trimming caches for ${cacheItems.size} apps...",
+                            autoModeStatus = status,
+                        )
+                    }
+                    when (val outcome = adbSilentExecutor.runWithAutoSession { executor -> executor.trimCachesSilent() }) {
+                        is AutoSessionOutcome.Completed -> {
+                            if (outcome.value.isSuccess) {
+                                totalReclaimed += cacheItems.sumOf { it.sizeBytes }
+                                totalDeleted += cacheItems.size
+                            } else {
+                                fallbackReason = outcome.value.exceptionOrNull()?.message
+                                    ?: "Could not trim caches automatically - using guided steps this time"
+                                for (cacheItem in cacheItems) {
+                                    val pkg = cacheItem.packageName ?: continue
+                                    guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
+                                }
+                            }
+                        }
+                        is AutoSessionOutcome.FallbackToGuided -> {
+                            fallbackReason = outcome.reason
+                            for (cacheItem in cacheItems) {
+                                val pkg = cacheItem.packageName ?: continue
+                                guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
+                            }
+                        }
+                    }
+                    _cleanerState.update { it.copy(autoProgressMessage = null) }
+                } else {
+                    if (status.isConfigured && status.availability == AutoModeAvailability.NEEDS_WIFI) {
+                        fallbackReason = AdbSilentExecutor.FALLBACK_REASON_NO_WIFI
+                    }
+                    for (cacheItem in cacheItems) {
+                        val pkg = cacheItem.packageName ?: continue
                         guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
                     }
-                } else {
-                    guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
                 }
             }
 
+            val refreshedStatus = adbSilentExecutor.inspectStatus()
             if (guidedTargets.isNotEmpty()) {
-                val pill = guidedCleanController.startGuidedClean(guidedTargets)
+                val pill = guidedCleanController.startGuidedClean(
+                    targets = guidedTargets,
+                    fallbackReason = fallbackReason,
+                )
                 _cleanerState.update {
                     it.copy(
                         guidedPill = pill,
-                        shizukuStatus = status,
+                        autoModeStatus = refreshedStatus,
+                        autoProgressMessage = null,
                     )
                 }
             } else {
@@ -280,7 +337,8 @@ class CleanerSleepModule(
                         celebrationReclaimedBytes = totalReclaimed,
                         celebrationDeletedCount = totalDeleted,
                         selectedItemIds = emptySet(),
-                        shizukuStatus = status,
+                        autoModeStatus = refreshedStatus,
+                        autoProgressMessage = null,
                     )
                 }
             }
@@ -313,29 +371,120 @@ class CleanerSleepModule(
         _cleanerState.update { it.copy(guidedPill = null) }
     }
 
-    fun refreshShizukuStatus(): ShizukuStatusSnapshot {
-        val status = shizukuAdapter.inspectStatus()
-        _cleanerState.update { it.copy(shizukuStatus = status) }
-        _sleepState.update { it.copy(shizukuStatus = status) }
+    // -------------------------------------------------------------------------
+    // Built-in Auto Mode setup wizard & notification pairing flow
+    // -------------------------------------------------------------------------
+
+    fun refreshAutoModeStatus(): AutoModeStatusSnapshot {
+        val status = adbSilentExecutor.inspectStatus()
+        val env = adbSilentExecutor.environmentSnapshot()
+        _autoModeWizardState.update { current ->
+            autoModeWizardMachine.onEnvironmentUpdated(current, env)
+        }
+        _cleanerState.update { it.copy(autoModeStatus = status) }
+        _sleepState.update { it.copy(autoModeStatus = status) }
         return status
     }
 
-    fun handleShizukuBannerAction(openExternalIntent: (Intent) -> Unit) {
-        val status = shizukuAdapter.inspectStatus()
-        when (status.availability) {
-            ShizukuAvailability.PERMISSION_REQUIRED -> {
-                shizukuAdapter.requestSilentModePermission()
-            }
-            ShizukuAvailability.NOT_RUNNING,
-            ShizukuAvailability.NOT_INSTALLED,
-            -> {
-                openExternalIntent(ShizukuSilentAdapter.createOpenShizukuIntent(app))
-            }
-            ShizukuAvailability.READY,
-            ShizukuAvailability.UNSUPPORTED_ANDROID_VERSION,
-            -> Unit
+    fun postPairingNotification() {
+        refreshAutoModeStatus()
+        val current = _autoModeWizardState.value
+        val next = autoModeWizardMachine.onPairingNotificationPosted(current)
+        _autoModeWizardState.value = next
+        if (next.pairingNotificationPosted) {
+            AdbPairingNotifier.showPairingPrompt(app)
         }
-        refreshShizukuStatus()
+    }
+
+    fun submitPairingCodeFromWizard(rawCode: String) {
+        scope.launch {
+            performPairingAndBootstrap(rawCode, fromNotification = false)
+        }
+    }
+
+    suspend fun handlePairingCodeFromNotification(rawCode: String) {
+        performPairingAndBootstrap(rawCode, fromNotification = true)
+    }
+
+    private suspend fun performPairingAndBootstrap(rawCode: String, fromNotification: Boolean) {
+        val sanitized = autoModeWizardMachine.sanitizePairingCode(rawCode)
+        if (sanitized == null) {
+            val msg = "Enter the 6-digit pairing code shown in Wireless debugging."
+            _autoModeWizardState.update { autoModeWizardMachine.onPairingFailed(it, msg) }
+            if (fromNotification) {
+                AdbPairingNotifier.showPairingPrompt(app, errorHint = msg)
+            }
+            return
+        }
+
+        _autoModeWizardState.update { autoModeWizardMachine.onPairingStarted(it) }
+        if (fromNotification) {
+            AdbPairingNotifier.showProgress(app, "Pairing with local Wireless debugging...")
+        }
+
+        val pairResult = adbSilentExecutor.pairWithCode(sanitized)
+        if (pairResult.isFailure) {
+            val errMsg = pairResult.exceptionOrNull()?.message
+                ?: "Pairing failed. Check the 6-digit code and try again."
+            _autoModeWizardState.update { autoModeWizardMachine.onPairingFailed(it, errMsg) }
+            if (fromNotification) {
+                AdbPairingNotifier.showPairingPrompt(app, errorHint = errMsg)
+            }
+            return
+        }
+
+        _autoModeWizardState.update { autoModeWizardMachine.onPairingSucceeded(it) }
+        if (fromNotification) {
+            AdbPairingNotifier.showProgress(app, "Paired. Finishing one-time permission setup...")
+        }
+
+        val bootstrapResult = adbSilentExecutor.runOneTimeBootstrap()
+        if (bootstrapResult.isSuccess) {
+            _autoModeWizardState.update { autoModeWizardMachine.onBootstrapSucceeded(it) }
+            refreshAutoModeStatus()
+            if (fromNotification) {
+                AdbPairingNotifier.showReady(app)
+            } else {
+                AdbPairingNotifier.dismiss(app)
+            }
+        } else {
+            val errMsg = bootstrapResult.exceptionOrNull()?.message
+                ?: "Paired, but could not finish permission grant. Open DriveLift to tap Finish setup."
+            _autoModeWizardState.update { autoModeWizardMachine.onBootstrapFailed(it, errMsg) }
+            if (fromNotification) {
+                AdbPairingNotifier.showPairingPrompt(app, errorHint = errMsg)
+            }
+        }
+    }
+
+    fun retryOneTimeBootstrap() {
+        scope.launch {
+            _autoModeWizardState.update { autoModeWizardMachine.onBootstrapStarted(it) }
+            val result = adbSilentExecutor.runOneTimeBootstrap()
+            if (result.isSuccess) {
+                _autoModeWizardState.update { autoModeWizardMachine.onBootstrapSucceeded(it) }
+                AdbPairingNotifier.dismiss(app)
+                refreshAutoModeStatus()
+            } else {
+                val errMsg = result.exceptionOrNull()?.message
+                    ?: "Could not finish one-time setup. Make sure Wireless debugging is on and try again."
+                _autoModeWizardState.update { autoModeWizardMachine.onBootstrapFailed(it, errMsg) }
+            }
+        }
+    }
+
+    fun turnOffAutoMode() {
+        scope.launch {
+            adbSilentExecutor.turnOffAutoMode()
+            AdbPairingNotifier.dismiss(app)
+            val envAfter = adbSilentExecutor.environmentSnapshot()
+            _autoModeWizardState.update { current ->
+                autoModeWizardMachine.onTurnedOff(current, envAfter)
+            }
+            val status = adbSilentExecutor.inspectStatus()
+            _cleanerState.update { it.copy(autoModeStatus = status) }
+            _sleepState.update { it.copy(autoModeStatus = status) }
+        }
     }
 
     fun advanceGuidedCleanToNextApp(): String? {
@@ -364,12 +513,12 @@ class CleanerSleepModule(
     }
 
     // -------------------------------------------------------------------------
-    // Sleep Mode (Phase 2 wiring)
+    // Sleep Mode
     // -------------------------------------------------------------------------
 
     fun refreshSleepCandidates() {
         scope.launch {
-            val status = shizukuAdapter.inspectStatus()
+            val status = adbSilentExecutor.inspectStatus()
             val hasUsage = statsSource.hasUsageStatsAccess()
             val allRules = defaultProtectedRules() + userWhitelistPackages.value
             _sleepState.update {
@@ -377,7 +526,7 @@ class CleanerSleepModule(
                     isLoading = true,
                     needsUsageAccess = !hasUsage,
                     errorMessage = null,
-                    shizukuStatus = status,
+                    autoModeStatus = status,
                     protectedRules = allRules,
                 )
             }
@@ -406,7 +555,7 @@ class CleanerSleepModule(
                         candidates = ranked,
                         selectedPackages = ranked.map { c -> c.packageName }.toSet(),
                         protectedRules = allRules,
-                        shizukuStatus = status,
+                        autoModeStatus = status,
                     )
                 }
             }.onFailure { err ->
@@ -462,38 +611,88 @@ class CleanerSleepModule(
         val targets = current.selectedCandidates
         if (targets.isEmpty()) return
 
-        val status = shizukuAdapter.inspectStatus()
+        val status = adbSilentExecutor.inspectStatus()
         val sessionId = "sleep-${graph.clock()}"
-        if (status.effectiveMode == HibernationMode.SHIZUKU_SILENT) {
+        if (status.effectiveMode == HibernationMode.AUTO_SILENT) {
             scope.launch {
-                _sleepState.update { it.copy(isSleepingBatch = true, lastReport = null) }
+                _sleepState.update {
+                    it.copy(
+                        isSleepingBatch = true,
+                        autoProgressMessage = "Auto Mode: connecting to sleep ${targets.size} apps...",
+                        lastReport = null,
+                        autoModeStatus = status,
+                    )
+                }
                 val initial = sleepStateMachine.startSession(
                     sessionId = sessionId,
-                    mode = HibernationMode.SHIZUKU_SILENT,
+                    mode = HibernationMode.AUTO_SILENT,
                     candidates = targets,
                     nowMs = graph.clock(),
                 )
-                val finalState = sleepStateMachine.runSilentBatch(
-                    initialState = initial,
-                    executor = shizukuAdapter,
-                    clockMs = { graph.clock() },
-                )
-                val report = sleepStateMachine.buildReport(finalState, graph.clock())
-                _sleepState.update {
-                    it.copy(
-                        isSleepingBatch = false,
-                        lastReport = report,
-                        shizukuStatus = status,
+                val outcome = adbSilentExecutor.runWithAutoSession { executor ->
+                    sleepStateMachine.runSilentBatch(
+                        initialState = initial,
+                        executor = executor,
+                        clockMs = { graph.clock() },
+                        onStateChange = { stepState ->
+                            val currentApp = stepState.currentCandidate?.appLabel
+                            if (currentApp != null) {
+                                _sleepState.update {
+                                    it.copy(
+                                        autoProgressMessage = "Auto Mode: sleeping $currentApp (${stepState.results.size + 1} of ${stepState.queue.size})",
+                                    )
+                                }
+                            }
+                        },
                     )
+                }
+                val refreshed = adbSilentExecutor.inspectStatus()
+                when (outcome) {
+                    is AutoSessionOutcome.Completed -> {
+                        val report = sleepStateMachine.buildReport(outcome.value, graph.clock())
+                        _sleepState.update {
+                            it.copy(
+                                isSleepingBatch = false,
+                                autoProgressMessage = null,
+                                lastReport = report,
+                                autoModeStatus = refreshed,
+                            )
+                        }
+                    }
+                    is AutoSessionOutcome.FallbackToGuided -> {
+                        val pill = guidedSleepController.startGuidedSleep(
+                            sessionId = sessionId,
+                            candidates = targets,
+                            fallbackReason = outcome.reason,
+                        )
+                        _sleepState.update {
+                            it.copy(
+                                isSleepingBatch = false,
+                                autoProgressMessage = null,
+                                guidedPill = pill,
+                                lastReport = guidedSleepController.lastSleepReport,
+                                autoModeStatus = refreshed,
+                            )
+                        }
+                    }
                 }
             }
         } else {
-            val pill = guidedSleepController.startGuidedSleep(sessionId, targets)
+            val fallbackReason = if (status.isConfigured && status.availability == AutoModeAvailability.NEEDS_WIFI) {
+                AdbSilentExecutor.FALLBACK_REASON_NO_WIFI
+            } else {
+                null
+            }
+            val pill = guidedSleepController.startGuidedSleep(
+                sessionId = sessionId,
+                candidates = targets,
+                fallbackReason = fallbackReason,
+            )
             _sleepState.update {
                 it.copy(
                     guidedPill = pill,
                     lastReport = guidedSleepController.lastSleepReport,
-                    shizukuStatus = status,
+                    autoModeStatus = status,
                 )
             }
         }
