@@ -82,6 +82,10 @@ object LiveNotificationParser {
         """^\d+(?:\.\d+)?\s*(?:km|mi|ft|yd|m)\s*(?:-|on|toward)?\s*""",
         RegexOption.IGNORE_CASE,
     )
+    private val speedRegex = Regex(
+        """\b(\d{1,3})\s*(km/h|kph|mph)\b""",
+        RegexOption.IGNORE_CASE,
+    )
 
     /** `Notification.FLAG_PROMOTED_ONGOING` exists from Android 16; read it by name so older SDKs compile and run. */
     private val flagPromotedOngoing: Int by lazy {
@@ -303,6 +307,7 @@ object LiveNotificationParser {
         val eta = extractEta(text, subText)
         val direction = inferTurnDirection("$title $text")
         val trip = extractRemainingTrip(title, text, subText)
+        val speedKmh = extractSpeedKmh(title, text, subText)
 
         return CockpitLiveActivity.MapsNavActivity(
             id = CockpitLiveActivity.ID_MAPS,
@@ -316,9 +321,25 @@ object LiveNotificationParser {
             destinationText = subText.takeIf { it.isNotEmpty() && !etaHintRegex.containsMatchIn(it) }.orEmpty(),
             maneuverIcon = snapshot.maneuverIcon,
             remainingTripKm = trip?.km,
+            speedKmh = speedKmh,
             tripUsesMiles = trip?.imperial == true,
             updatedAtMs = snapshot.updatedAtMs,
         )
+    }
+
+    /** Optional speed parsed from navigation notification text, normalized to km/h. */
+    fun extractSpeedKmh(title: String, text: String, subText: String): Int? {
+        for (source in listOf(subText, text, title)) {
+            val match = speedRegex.find(source) ?: continue
+            val raw = match.groupValues[1].toIntOrNull() ?: continue
+            val unit = match.groupValues[2].lowercase()
+            return if (unit == "mph") {
+                kotlin.math.round(raw * 1.609344).toInt().coerceIn(0, 350)
+            } else {
+                raw.coerceIn(0, 350)
+            }
+        }
+        return null
     }
 
     /** A distance read from notification text, in kilometres. */

@@ -976,6 +976,7 @@ class CockpitUiScreenshotTest {
         notificationKey = "notif_nav_v3",
         remainingTripKm = 8.4,
         droveTripKm = 3.2,
+        speedKmh = 64,
     )
 
     private fun v3Slot(queue: List<CockpitLiveActivity>, index: Int = 0) = CockpitSlotState(
@@ -1212,25 +1213,25 @@ class CockpitUiScreenshotTest {
                 compose.onNodeWithText("San Francisco").assertIsDisplayed()
                 compose.onNodeWithTag("cockpit-nav-card").assertIsDisplayed()
 
-                // Four lane arrows share the full row evenly: first at the left edge, last at the right edge.
-                val lanes = compose.onNodeWithTag("cockpit-nav-lanes", useUnmergedTree = true).assertExists().getBoundsInRoot()
-                val arrows = (0..3).map { index ->
-                    compose.onNodeWithTag("cockpit-nav-lane-$index", useUnmergedTree = true).assertExists().getBoundsInRoot()
-                }
-                assertTrue("first arrow sits at the left edge", (arrows.first().left - lanes.left).value < 1f)
-                assertTrue("last arrow sits at the right edge", (lanes.right - arrows.last().right).value < 1f)
-                val gaps = arrows.zipWithNext().map { (a, b) -> (b.left - a.right).value }
-                assertTrue("arrow gaps must be even: $gaps", gaps.max() - gaps.min() < 1f)
+                // Bogus always-visible 4-arrow row is removed; single clean active turn icon leads.
+                assertEquals(0, compose.onAllNodesWithTag("cockpit-nav-lanes", useUnmergedTree = true).fetchSemanticsNodes().size)
+                compose.onNodeWithTag("cockpit-nav-turn-icon", useUnmergedTree = true).assertIsDisplayed()
 
-                // Trip footer and its hairline never crowd the 90 ft header.
-                compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true)
-                    .assert(hasText("3.2 km drove \u00B7 8.4 km left"))
-                    .assertExists()
+                // Structured 4-metric Driving Navigation HUD: ETA, KM Left, Live Speed (km/h), KM Driven.
+                val hudRow = compose.onNodeWithTag("cockpit-nav-hud-row", useUnmergedTree = true).assertIsDisplayed().getBoundsInRoot()
+                compose.onNodeWithTag("cockpit-nav-hud-eta", useUnmergedTree = true).assertExists()
+                compose.onNodeWithTag("cockpit-nav-hud-left", useUnmergedTree = true).assertExists()
+                compose.onNodeWithTag("cockpit-nav-hud-speed", useUnmergedTree = true).assertExists()
+                compose.onNodeWithTag("cockpit-nav-hud-driven", useUnmergedTree = true).assertExists()
+                compose.onNodeWithText("12 min", useUnmergedTree = true).assertExists()
+                compose.onNodeWithText("8.4 km", useUnmergedTree = true).assertExists()
+                compose.onNodeWithText("64", useUnmergedTree = true).assertExists()
+                compose.onNodeWithText("3.2 km", useUnmergedTree = true).assertExists()
+
                 val header = compose.onNodeWithTag("cockpit-nav-card-distance", useUnmergedTree = true).getBoundsInRoot()
-                val tripText = compose.onNodeWithTag("cockpit-nav-trip-text", useUnmergedTree = true).getBoundsInRoot()
                 val hairline = compose.onNodeWithTag("cockpit-nav-progress", useUnmergedTree = true).assertExists().getBoundsInRoot()
-                assertTrue("trip text sits below the turn header", tripText.top >= header.bottom)
-                assertTrue("hairline is the last line of the card", hairline.top >= tripText.bottom)
+                assertTrue("HUD row sits below the turn header", hudRow.top >= header.bottom)
+                assertTrue("hairline is the last line of the card", hairline.top >= hudRow.bottom)
                 assertEquals("hairline is 2dp", 2f, (hairline.bottom - hairline.top).value, 0.6f)
             },
         )
@@ -1479,6 +1480,7 @@ class CockpitUiScreenshotTest {
             label = "BATT",
             isCharging = false,
             current = CockpitWidgetModel.formatBatteryCurrent(microAmps = -510_000L, isCharging = false),
+            charge = CockpitWidgetModel.formatBatteryCharge(microAmpHours = 3_120_000L),
         )
         val charging = BatteryHudMetric(
             percent = 84,
@@ -1487,6 +1489,7 @@ class CockpitUiScreenshotTest {
             label = "CHRG",
             isCharging = true,
             current = CockpitWidgetModel.formatBatteryCurrent(microAmps = 2_450_000L, isCharging = true),
+            charge = CockpitWidgetModel.formatBatteryCharge(microAmpHours = 4_210_000L),
         )
         val ram = CockpitHudBitmapRenderer.formatRamHudMetric(
             availBytes = (1.8 * 1024 * 1024 * 1024).toLong(),
@@ -1545,6 +1548,8 @@ class CockpitUiScreenshotTest {
                     "cockpit-widget-battery-gauge",
                     "cockpit-widget-battery-current",
                     "cockpit-widget-ram-gauge",
+                    "cockpit-widget-ram-used",
+                    "cockpit-widget-ram-free",
                     "cockpit-widget-alarm-pill",
                     "cockpit-widget-pinned-row",
                 )) {

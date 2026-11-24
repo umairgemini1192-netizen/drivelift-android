@@ -4,7 +4,6 @@ import android.app.AlarmManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import androidx.glance.appwidget.updateAll
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -26,7 +25,7 @@ class CockpitAlarmSyncReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         CoroutineScope(SupervisorJob() + Dispatchers.Default).launch {
             try {
-                CockpitGlanceWidget().updateAll(context.applicationContext)
+                CockpitGlanceWidget.updateAllWidgets(context.applicationContext)
             } finally {
                 pendingResult.finish()
             }

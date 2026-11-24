@@ -83,12 +83,14 @@ class CockpitHudBitmapRendererTest {
             totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
         )
         assertEquals("10.5/12G", ramMetric.valueText)
-        assertEquals("1.5G FREE", ramMetric.label)
+        assertEquals("RAM", ramMetric.label)
+        assertEquals("88%", ramMetric.usedPercentText)
+        assertEquals("1.5G free", ramMetric.freeText)
 
         val ramBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
             sizePx = 128,
             fraction = ramMetric.fraction,
-            valueText = ramMetric.valueText,
+            valueText = ramMetric.usedPercentText,
             subLabel = ramMetric.label,
             accentColor = GlassPalette.HudElectricCyan,
             density = 2f,

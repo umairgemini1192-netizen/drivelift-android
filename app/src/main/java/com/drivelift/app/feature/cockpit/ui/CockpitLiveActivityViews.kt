@@ -14,7 +14,8 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -26,11 +27,13 @@ import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.outlined.OpenInNew
 import androidx.compose.material.icons.outlined.ArrowUpward
 import androidx.compose.material.icons.outlined.BluetoothAudio
 import androidx.compose.material.icons.outlined.Call
@@ -41,6 +44,7 @@ import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MicOff
 import androidx.compose.material.icons.outlined.PhoneInTalk
+import androidx.compose.material.icons.outlined.SwapHoriz
 import androidx.compose.material.icons.outlined.TurnLeft
 import androidx.compose.material.icons.outlined.TurnRight
 import androidx.compose.material.icons.outlined.UTurnLeft
@@ -68,8 +72,10 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
@@ -91,7 +97,9 @@ import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
 import com.drivelift.app.feature.cockpit.notifications.CallAudioOutput
 import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.ui.CockpitLivePalette
+import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
+import com.drivelift.app.ui.TABULAR_DIGITS
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.delay
 import kotlin.math.PI
@@ -201,9 +209,13 @@ internal fun SwapTransition(
 }
 
 /**
- * One drag detector that decides its axis once (horizontal when `abs(dragX) > abs(dragY)`), so a
- * horizontal swap between activities can never fire during the vertical swipe-up that collapses
- * the island, and the other way round. A vertical axis is only claimed when [enableVertical].
+ * One axis-locked drag detector running on [PointerEventPass.Initial] so horizontal swap drags
+ * intercept cleanly BEFORE child `clickable` / `combinedClickable` controls can consume them,
+ * while normal taps and long-presses below touch slop pass straight through untouched.
+ *
+ * The axis locks once (`abs(dragX) > abs(dragY)` for horizontal, upward drag for vertical when
+ * [enableVertical] is true), so a horizontal swap can never fire during a vertical swipe-up and
+ * vice versa.
  */
 @Composable
 internal fun Modifier.cockpitAxisLockedSwipe(
@@ -211,6 +223,8 @@ internal fun Modifier.cockpitAxisLockedSwipe(
     enableVertical: Boolean,
     onSwipeNext: () -> Unit,
     onSwipePrevious: () -> Unit,
+    enableHorizontal: Boolean = true,
+    verticalThresholdPx: Float = Tokens.Cockpit.EXPAND_SWIPE_COLLAPSE_PX,
     onHorizontalDrag: (totalPx: Float) -> Unit = {},
     onHorizontalEnd: () -> Unit = {},
     onVerticalStart: () -> Unit = {},
@@ -224,46 +238,54 @@ internal fun Modifier.cockpitAxisLockedSwipe(
     val verticalStart by rememberUpdatedState(onVerticalStart)
     val verticalDrag by rememberUpdatedState(onVerticalDrag)
     val verticalEnd by rememberUpdatedState(onVerticalEnd)
-    return this.pointerInput(key, enableVertical) {
-        var total = Offset.Zero
-        var verticalTotal = 0f
-        var axis = AXIS_NONE
-        detectDragGestures(
-            onDragStart = {
-                total = Offset.Zero
-                verticalTotal = 0f
-                axis = AXIS_NONE
-            },
-            onDragEnd = {
-                when (axis) {
-                    AXIS_HORIZONTAL -> {
-                        horizontalEnd()
-                        if (total.x <= -Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
-                            next()
-                        } else if (total.x >= Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
-                            previous()
-                        }
+    return this.pointerInput(key, enableHorizontal, enableVertical, verticalThresholdPx) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false, pass = PointerEventPass.Initial)
+            var total = Offset.Zero
+            var verticalTotal = 0f
+            var axis = AXIS_NONE
+            while (true) {
+                val event = awaitPointerEvent(pass = PointerEventPass.Initial)
+                val change = event.changes.firstOrNull { it.id == down.id }
+                if (change == null) {
+                    when (axis) {
+                        AXIS_HORIZONTAL -> horizontalEnd()
+                        AXIS_VERTICAL -> verticalEnd(false)
+                        else -> Unit
                     }
-                    AXIS_VERTICAL -> verticalEnd(verticalTotal <= Tokens.Cockpit.EXPAND_SWIPE_COLLAPSE_PX)
-                    else -> Unit
+                    break
                 }
-            },
-            onDragCancel = {
-                when (axis) {
-                    AXIS_HORIZONTAL -> horizontalEnd()
-                    AXIS_VERTICAL -> verticalEnd(false)
-                    else -> Unit
+                if (!change.pressed) {
+                    when (axis) {
+                        AXIS_HORIZONTAL -> {
+                            change.consume()
+                            horizontalEnd()
+                            if (total.x <= -Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
+                                next()
+                            } else if (total.x >= Tokens.Cockpit.CYCLE_SWIPE_THRESHOLD_PX) {
+                                previous()
+                            }
+                        }
+                        AXIS_VERTICAL -> {
+                            change.consume()
+                            verticalEnd(verticalTotal <= verticalThresholdPx)
+                        }
+                        else -> Unit
+                    }
+                    break
                 }
-            },
-            onDrag = { change, amount ->
-                total += amount
+                val delta = change.position - change.previousPosition
+                total += delta
+                var justLockedVertical = false
                 if (axis == AXIS_NONE &&
                     (abs(total.x) >= AXIS_LOCK_PX || abs(total.y) >= AXIS_LOCK_PX)
                 ) {
                     axis = if (abs(total.x) > abs(total.y)) {
-                        AXIS_HORIZONTAL
-                    } else if (enableVertical) {
+                        if (enableHorizontal) AXIS_HORIZONTAL else AXIS_IGNORED
+                    } else if (enableVertical && total.y < 0f) {
                         verticalStart()
+                        verticalTotal = total.y.coerceAtMost(0f)
+                        justLockedVertical = true
                         AXIS_VERTICAL
                     } else {
                         AXIS_IGNORED
@@ -276,13 +298,15 @@ internal fun Modifier.cockpitAxisLockedSwipe(
                     }
                     AXIS_VERTICAL -> {
                         change.consume()
-                        verticalTotal = (verticalTotal + amount.y).coerceAtMost(0f)
+                        if (!justLockedVertical) {
+                            verticalTotal = (verticalTotal + delta.y).coerceAtMost(0f)
+                        }
                         verticalDrag(verticalTotal)
                     }
                     else -> Unit
                 }
-            },
-        )
+            }
+        }
     }
 }
 
@@ -520,9 +544,11 @@ internal fun DedicatedActivityCard(
     slotState: CockpitSlotState,
     callAudio: CallAudioUiState,
     actions: CockpitActivityActions,
+    onCycleNext: () -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val primary = slotState.primary
+    val canSwap = slotState.visibleQueue.size > 1
     Column(
         modifier = modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -536,11 +562,35 @@ internal fun DedicatedActivityCard(
                 }
             }
             is CockpitLiveActivity.ScreenRecordingActivity -> RecordingBanner(primary, actions)
-            is CockpitLiveActivity.MapsNavActivity -> NavigationCard(primary, actions)
+            is CockpitLiveActivity.MapsNavActivity -> NavigationCard(
+                nav = primary,
+                actions = actions,
+                canSwap = canSwap,
+                onCycleNext = onCycleNext,
+            )
             else -> Unit
         }
-        if (slotState.visibleQueue.size > 1) {
-            ActivityPagerDots(count = slotState.visibleQueue.size, activeIndex = slotState.activeIndex)
+        if (canSwap) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
+                    ActivityPagerDots(count = slotState.visibleQueue.size, activeIndex = slotState.activeIndex)
+                }
+                if (primary !is CockpitLiveActivity.MapsNavActivity) {
+                    CallCircleButton(
+                        size = Tokens.Cockpit.HeaderActionWell,
+                        container = CockpitLivePalette.Charcoal,
+                        content = CockpitLivePalette.Cyan,
+                        icon = Icons.Outlined.SwapHoriz,
+                        description = "Swap activity",
+                        tag = "cockpit-cycle-next",
+                        onClick = onCycleNext,
+                    )
+                }
+            }
         }
     }
 }
@@ -880,42 +930,80 @@ private fun RecordingBanner(
 private fun NavigationCard(
     nav: CockpitLiveActivity.MapsNavActivity,
     actions: CockpitActivityActions,
+    canSwap: Boolean = false,
+    onCycleNext: () -> Unit = {},
 ) {
     val maneuverImage = remember(nav.maneuverIcon) {
         nav.maneuverIcon?.takeIf { !it.isRecycled }?.asImageBitmap()
     }
+    val stackHud = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+
+    val remaining = nav.remainingTripKm
+    val drove = nav.droveTripKm
+    val trip = if (remaining != null && drove != null) {
+        TripProgress(startKm = drove + remaining, remainingKm = remaining, droveKm = drove)
+    } else {
+        null
+    }
+    val etaValue = nav.etaText.ifBlank { "--" }
+    val leftLabel = "LEFT"
+    val leftValue = TripDistanceFormat.hudValue(nav.remainingTripKm, nav.tripUsesMiles)
+    val speedValue = TripDistanceFormat.speedValue(nav.speedKmh)
+    val drivenLabel = "DRIVEN"
+    val drivenValue = TripDistanceFormat.hudValue(nav.droveTripKm, nav.tripUsesMiles)
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(Tokens.Medium))
-            .clickable(role = Role.Button, onClickLabel = "Open navigation") { actions.onOpenNavigation(nav) }
             .testTag("cockpit-nav-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        val straightActive = nav.turnDirection == MapsTurnDirection.STRAIGHT ||
-            nav.turnDirection == MapsTurnDirection.UTURN
-        // Four lane slots share the whole row, so the arrows sit evenly instead of bunching left.
+        // Header row: single clean active turn icon + distance/road/destination + compact icon controls.
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .testTag("cockpit-nav-lanes"),
+                .clip(RoundedCornerShape(Tokens.Medium))
+                .clickable(role = Role.Button, onClickLabel = "Open navigation") { actions.onOpenNavigation(nav) },
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.SpaceBetween,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Row),
         ) {
-            LaneArrow(Icons.Outlined.TurnLeft, nav.turnDirection == MapsTurnDirection.LEFT, "cockpit-nav-lane-0")
-            LaneArrow(Icons.Outlined.ArrowUpward, straightActive, "cockpit-nav-lane-1")
-            LaneArrow(Icons.Outlined.ArrowUpward, straightActive, "cockpit-nav-lane-2")
-            LaneArrow(Icons.Outlined.TurnRight, nav.turnDirection == MapsTurnDirection.RIGHT, "cockpit-nav-lane-3")
-        }
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
-        ) {
+            Box(
+                modifier = Modifier
+                    .size(Tokens.Cockpit.NavTurnBadgeSize)
+                    .clip(RoundedCornerShape(Tokens.RowLoose))
+                    .background(CockpitLivePalette.Charcoal)
+                    .border(
+                        width = Tokens.Hairline,
+                        color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f),
+                        shape = RoundedCornerShape(Tokens.RowLoose),
+                    )
+                    .testTag("cockpit-nav-turn-icon"),
+                contentAlignment = Alignment.Center,
+            ) {
+                if (maneuverImage != null) {
+                    Image(
+                        bitmap = maneuverImage,
+                        contentDescription = "Next maneuver",
+                        contentScale = ContentScale.Fit,
+                        modifier = Modifier.size(Tokens.Cockpit.NavTurnBadgeSize - Tokens.Small),
+                    )
+                } else {
+                    Icon(
+                        imageVector = navManeuverIcon(nav.turnDirection),
+                        contentDescription = "Next maneuver",
+                        tint = MaterialTheme.colorScheme.tertiary,
+                        modifier = Modifier.size(Tokens.Header),
+                    )
+                }
+            }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = nav.distanceText.ifEmpty { "Navigating" },
-                    style = MaterialTheme.typography.headlineMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.titleLarge.copy(
+                        fontWeight = FontWeight.Bold,
+                        fontFeatureSettings = TABULAR_DIGITS,
+                    ),
                     color = CockpitLivePalette.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -923,7 +1011,7 @@ private fun NavigationCard(
                 )
                 Text(
                     text = nav.roadText.ifEmpty { nav.maneuverText },
-                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    style = MaterialTheme.typography.bodyMedium.copy(fontWeight = FontWeight.SemiBold),
                     color = CockpitLivePalette.White,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -938,84 +1026,114 @@ private fun NavigationCard(
                     )
                 }
             }
-            Box(
+            if (canSwap) {
+                CallCircleButton(
+                    size = Tokens.Cockpit.HeaderActionWell,
+                    container = CockpitLivePalette.Charcoal,
+                    content = CockpitLivePalette.Cyan,
+                    icon = Icons.Outlined.SwapHoriz,
+                    description = "Swap activity",
+                    tag = "cockpit-cycle-next",
+                    onClick = onCycleNext,
+                )
+            }
+            CallCircleButton(
+                size = Tokens.Cockpit.HeaderActionWell,
+                container = CockpitLivePalette.Charcoal,
+                content = CockpitLivePalette.White,
+                icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                description = "Open Maps",
+                tag = "cockpit-expanded-open-app",
+                onClick = { actions.onOpenNavigation(nav) },
+            )
+        }
+
+        // Structured 4-metric Driving Navigation HUD: ETA, KM Left, Live Speed (km/h), KM Driven.
+        if (stackHud) {
+            Column(
                 modifier = Modifier
-                    .size(Tokens.Cockpit.NavManeuverBox)
-                    .clip(RoundedCornerShape(Tokens.RowLoose))
-                    .background(CockpitLivePalette.Charcoal),
-                contentAlignment = Alignment.Center,
+                    .fillMaxWidth()
+                    .testTag("cockpit-nav-hud-row"),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Snug),
             ) {
-                if (maneuverImage != null) {
-                    Image(
-                        bitmap = maneuverImage,
-                        contentDescription = "Next maneuver",
-                        contentScale = ContentScale.Fit,
-                        modifier = Modifier.size(Tokens.Cockpit.NavManeuverBox - Tokens.Medium),
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                ) {
+                    NavHudMetricCell(
+                        label = "ETA",
+                        value = etaValue,
+                        accent = MaterialTheme.colorScheme.tertiary,
+                        tag = "cockpit-nav-hud-eta",
+                        modifier = Modifier.weight(1f),
                     )
-                } else {
-                    Icon(
-                        imageVector = navManeuverIcon(nav.turnDirection),
-                        contentDescription = "Next maneuver",
-                        tint = CockpitLivePalette.White,
-                        modifier = Modifier.size(Tokens.Header),
+                    NavHudMetricCell(
+                        label = leftLabel,
+                        value = leftValue,
+                        accent = CockpitLivePalette.White,
+                        tag = "cockpit-nav-hud-left",
+                        modifier = Modifier.weight(1f),
+                    )
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                ) {
+                    NavHudMetricCell(
+                        label = "KM/H",
+                        value = speedValue,
+                        accent = MaterialTheme.colorScheme.primary,
+                        tag = "cockpit-nav-hud-speed",
+                        modifier = Modifier.weight(1f),
+                    )
+                    NavHudMetricCell(
+                        label = drivenLabel,
+                        value = drivenValue,
+                        accent = MaterialTheme.colorScheme.secondary,
+                        tag = "cockpit-nav-hud-driven",
+                        modifier = Modifier.weight(1f),
                     )
                 }
             }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("cockpit-nav-hud-row"),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                NavHudMetricCell(
+                    label = "ETA",
+                    value = etaValue,
+                    accent = MaterialTheme.colorScheme.tertiary,
+                    tag = "cockpit-nav-hud-eta",
+                    modifier = Modifier.weight(1f),
+                )
+                NavHudMetricCell(
+                    label = leftLabel,
+                    value = leftValue,
+                    accent = CockpitLivePalette.White,
+                    tag = "cockpit-nav-hud-left",
+                    modifier = Modifier.weight(1f),
+                )
+                NavHudMetricCell(
+                    label = "KM/H",
+                    value = speedValue,
+                    accent = MaterialTheme.colorScheme.primary,
+                    tag = "cockpit-nav-hud-speed",
+                    modifier = Modifier.weight(1f),
+                )
+                NavHudMetricCell(
+                    label = drivenLabel,
+                    value = drivenValue,
+                    accent = MaterialTheme.colorScheme.secondary,
+                    tag = "cockpit-nav-hud-driven",
+                    modifier = Modifier.weight(1f),
+                )
+            }
         }
-        NavigationTripFooter(nav)
-    }
-}
 
-/**
- * Muted trip line under the turn header: kilometres driven and left, the arrival estimate when the
- * notification has one, and a 2 dp progress hairline at the very bottom of the card.
- */
-@Composable
-private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
-    val remaining = nav.remainingTripKm
-    val drove = nav.droveTripKm
-    val trip = if (remaining != null && drove != null) {
-        TripProgress(startKm = drove + remaining, remainingKm = remaining, droveKm = drove)
-    } else {
-        null
-    }
-    if (trip == null && nav.etaText.isBlank()) return
-    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Tiny)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-        ) {
-            if (trip != null) {
-                Text(
-                    text = TripDistanceFormat.footer(trip.droveKm, trip.remainingKm, nav.tripUsesMiles),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = Tokens.Cockpit.NavTripTextSize,
-                        fontFeatureSettings = "tnum",
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("cockpit-nav-trip-text"),
-                )
-            } else {
-                Spacer(Modifier.weight(1f))
-            }
-            if (nav.etaText.isNotBlank()) {
-                Text(
-                    text = nav.etaText,
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = Tokens.Cockpit.NavTripTextSize,
-                        fontFeatureSettings = "tnum",
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-        }
+        // Crisp 2 dp trip progress hairline at the bottom of the HUD.
         if (trip != null) {
             Box(
                 modifier = Modifier
@@ -1037,13 +1155,44 @@ private fun NavigationTripFooter(nav: CockpitLiveActivity.MapsNavActivity) {
 }
 
 @Composable
-private fun LaneArrow(icon: ImageVector, active: Boolean, tag: String) {
-    Icon(
-        imageVector = icon,
-        contentDescription = null,
-        tint = if (active) CockpitLivePalette.White else MaterialTheme.colorScheme.onSurfaceVariant,
-        modifier = Modifier
-            .size(Tokens.Cockpit.NavLaneArrow)
+private fun NavHudMetricCell(
+    label: String,
+    value: String,
+    accent: Color,
+    tag: String,
+    modifier: Modifier = Modifier,
+) {
+    val shape = RoundedCornerShape(Tokens.Cockpit.NavHudCellRadius)
+    Column(
+        modifier = modifier
+            .clip(shape)
+            .background(GlassPalette.Well)
+            .border(Tokens.Hairline, GlassPalette.WellEdge, shape)
+            .padding(horizontal = Tokens.Snug, vertical = Tokens.Snug)
+            .semantics(mergeDescendants = true) { contentDescription = "$label $value" }
             .testTag(tag),
-    )
+        horizontalAlignment = Alignment.CenterHorizontally,
+        verticalArrangement = Arrangement.spacedBy(Tokens.Stroke),
+    ) {
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = accent,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontSize = Tokens.Cockpit.NavTripTextSize,
+                fontWeight = FontWeight.SemiBold,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
+    }
 }

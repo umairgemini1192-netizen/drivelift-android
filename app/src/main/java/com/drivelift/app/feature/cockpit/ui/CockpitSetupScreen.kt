@@ -976,7 +976,7 @@ fun CockpitMasterWidgetCard(
         CockpitHudBitmapRenderer.renderArcGaugeBitmap(
             sizePx = (58f * density).toInt(),
             fraction = ramMetric.fraction,
-            valueText = ramMetric.valueText,
+            valueText = ramMetric.usedPercentText,
             subLabel = ramMetric.label,
             accentColor = GlassPalette.HudElectricCyan,
             density = density,
@@ -1042,8 +1042,8 @@ fun CockpitMasterWidgetCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(Tokens.Medium),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                    .padding(horizontal = Tokens.Medium, vertical = Tokens.Row),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
                 // Top Bento Split: Zone 1 (Clock + Alarm Pill) | Zone 2 (Status Pill + Dual Neon Arc Gauges)
                 val zone1Content: @Composable () -> Unit = {
@@ -1100,42 +1100,45 @@ fun CockpitMasterWidgetCard(
                                 GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
                             } else {
                                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(Tokens.Cockpit.HudGaugeSize)
-                                        .then(
-                                            if (batteryMetric.isCharging) {
-                                                Modifier
-                                                    .clip(CircleShape)
-                                                    .border(
-                                                        width = Tokens.Stroke,
-                                                        color = GlassPalette.HudEmerald.copy(alpha = 0.55f * chargingPulseAlpha),
-                                                        shape = CircleShape,
-                                                    )
-                                            } else {
-                                                Modifier
-                                            },
+                                    Box(
+                                        modifier = Modifier
+                                            .size(Tokens.Cockpit.HudGaugeSize)
+                                            .then(
+                                                if (batteryMetric.isCharging) {
+                                                    Modifier
+                                                        .clip(CircleShape)
+                                                        .border(
+                                                            width = Tokens.Stroke,
+                                                            color = GlassPalette.HudEmerald.copy(alpha = 0.55f * chargingPulseAlpha),
+                                                            shape = CircleShape,
+                                                        )
+                                                } else {
+                                                    Modifier
+                                                },
+                                            )
+                                            .testTag("cockpit-widget-battery-gauge"),
+                                    ) {
+                                        Image(
+                                            bitmap = batteryGaugeBitmap,
+                                            contentDescription = "Battery ${batteryMetric.valueText}",
+                                            modifier = Modifier.fillMaxSize(),
                                         )
-                                        .testTag("cockpit-widget-battery-gauge"),
-                                ) {
-                                    Image(
-                                        bitmap = batteryGaugeBitmap,
-                                        contentDescription = "Battery ${batteryMetric.valueText}",
-                                        modifier = Modifier.fillMaxSize(),
+                                    }
+                                    BatteryCurrentLabel(
+                                        reading = batteryMetric.current,
+                                        charge = batteryMetric.charge,
                                     )
                                 }
-                                BatteryCurrentLabel(
-                                    reading = batteryMetric.current,
-                                    charge = batteryMetric.charge,
-                                )
+                                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                    Image(
+                                        bitmap = ramGaugeBitmap,
+                                        contentDescription = "RAM ${ramMetric.valueText}",
+                                        modifier = Modifier
+                                            .size(Tokens.Cockpit.HudGaugeSize)
+                                            .testTag("cockpit-widget-ram-gauge"),
+                                    )
+                                    RamTelemetryLabel(ram = ramMetric)
                                 }
-                                Image(
-                                    bitmap = ramGaugeBitmap,
-                                    contentDescription = "RAM ${ramMetric.valueText}",
-                                    modifier = Modifier
-                                        .size(Tokens.Cockpit.HudGaugeSize)
-                                        .testTag("cockpit-widget-ram-gauge"),
-                                )
                             }
                         }
                     }
@@ -1500,19 +1503,46 @@ private fun BatteryCurrentLabel(
                 .testTag("cockpit-widget-battery-current")
                 .semantics { contentDescription = "Battery current ${reading.text}" },
         )
-        if (charge.milliAmpHours != null) {
-            Text(
-                text = charge.text,
-                style = MaterialTheme.typography.labelSmall.copy(
-                    fontFeatureSettings = TABULAR_DIGITS,
-                ),
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 1,
-                modifier = Modifier
-                    .testTag("cockpit-widget-battery-charge")
-                    .semantics { contentDescription = "Battery charge ${charge.text}" },
-            )
-        }
+        Text(
+            text = charge.text,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier
+                .testTag("cockpit-widget-battery-charge")
+                .semantics { contentDescription = "Battery charge ${charge.text}" },
+        )
+    }
+}
+
+@Composable
+private fun RamTelemetryLabel(ram: RamHudMetric) {
+    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+        Text(
+            text = ram.valueText,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = GlassPalette.PrimaryCyan,
+            maxLines = 1,
+            modifier = Modifier
+                .testTag("cockpit-widget-ram-used")
+                .semantics { contentDescription = "RAM used ${ram.valueText}" },
+        )
+        Text(
+            text = ram.freeText,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            modifier = Modifier
+                .testTag("cockpit-widget-ram-free")
+                .semantics { contentDescription = "RAM free ${ram.freeText}" },
+        )
     }
 }
 
