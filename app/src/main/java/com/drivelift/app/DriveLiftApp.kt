@@ -110,9 +110,10 @@ class Graph(app: Application) {
     }
 
     /** Self-contained Cockpit Dynamic Island, Master Widget, Tile & Calibration Hub module. */
-    val cockpit: com.drivelift.app.feature.cockpit.CockpitModule by lazy {
+    private val cockpitLazy = lazy {
         com.drivelift.app.feature.cockpit.CockpitModule(app, this)
     }
+    val cockpit: com.drivelift.app.feature.cockpit.CockpitModule by cockpitLazy
 
     /** Self-contained Storage Cleaner, Shizuku adapter, and Sleep Mode module. */
     val cleanerAndSleep: com.drivelift.app.feature.cleaner.CleanerSleepModule by lazy {
@@ -120,8 +121,20 @@ class Graph(app: Application) {
     }
 
     /** Self-contained App Lock policy, biometric/PIN gate, and monitor wiring module. */
-    val appLock: com.drivelift.app.feature.applock.AppLockModule by lazy {
+    private val appLockLazy = lazy {
         com.drivelift.app.feature.applock.AppLockModule(app, this)
+    }
+    val appLock: com.drivelift.app.feature.applock.AppLockModule by appLockLazy
+
+    internal fun onScreenOff() {
+        lock.lock()
+        if (appLockLazy.isInitialized()) appLock.onScreenOff()
+        if (cockpitLazy.isInitialized()) cockpit.onScreenOff()
+    }
+
+    internal fun onScreenOn() {
+        if (appLockLazy.isInitialized()) appLock.onScreenOn()
+        if (cockpitLazy.isInitialized()) cockpit.onScreenOn()
     }
 
     companion object {
@@ -139,16 +152,27 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
         Notifications.ensureChannels(this)
         // Pick up anything a reboot, crash or force-stop left unfinished.
         graph.transfers.recover()
-        // Turning the screen off ends the unlocked session (owner decision on issue 19).
+        // Turning the screen off ends the unlocked session (owner decision on issue 19) and
+        // immediately pauses background widget, network speed, battery telemetry, and fallback
+        // polling loops; waking resumes them cleanly without standby battery drain.
+        val screenFilter = IntentFilter().apply {
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
+        }
         ContextCompat.registerReceiver(
             this,
             object : BroadcastReceiver() {
                 override fun onReceive(context: Context, intent: Intent) {
-                    graph.lock.lock()
-                    graph.appLock.onScreenOff()
+                    when (intent.action) {
+                        Intent.ACTION_SCREEN_OFF -> graph.onScreenOff()
+                        Intent.ACTION_SCREEN_ON,
+                        Intent.ACTION_USER_PRESENT,
+                        -> graph.onScreenOn()
+                    }
                 }
             },
-            IntentFilter(Intent.ACTION_SCREEN_OFF),
+            screenFilter,
             ContextCompat.RECEIVER_NOT_EXPORTED,
         )
     }

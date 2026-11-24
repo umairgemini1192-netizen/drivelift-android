@@ -109,11 +109,17 @@ class VideoControlsTest {
             compose.onNodeWithText("Original  ·  3840x2160  ·  60 fps").assertExists()
             compose.onNodeWithText("0:30").assertExists()
             compose.onNodeWithText("-1:30").assertExists()
-            // At normal text size too: Material text buttons default to 40 dp, below the 48 dp rule.
-            // The controls are in named groups the owner can find without guessing (issue #14).
-            for (group in listOf("Speed", "Step", "Picture")) compose.onNodeWithText(group).assertExists()
+            // PR #96: 'Speed', 'Step', and 'Picture' text labels are removed in favor of a clean
+            // icon-only transport bar plus a Fit/Fill aspect-ratio toggle.
+            for (removedLabel in listOf("Speed", "Step", "Picture")) {
+                assertTrue(
+                    "$removedLabel text label must not be shown in the icon-only toolbar",
+                    compose.onAllNodesWithText(removedLabel).fetchSemanticsNodes().isEmpty(),
+                )
+            }
+            compose.onNodeWithTag("video-toolbar").assertExists()
             val speedLabels = listOf("Speed 0.5x", steppedSpeedDescription(1f))
-            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Save this frame as a photo", "Rotate the screen", turnDescription(0)) + speedLabels) {
+            for (label in listOf("Back 10 seconds", "Pause", "Forward 10 seconds", "Fill screen", "Save this frame as a photo", "Rotate the screen", turnDescription(0)) + speedLabels) {
                 compose.onNodeWithContentDescription(label)
                     .assertWidthIsAtLeast(Tokens.TouchTarget)
                     .assertHeightIsAtLeast(Tokens.TouchTarget)

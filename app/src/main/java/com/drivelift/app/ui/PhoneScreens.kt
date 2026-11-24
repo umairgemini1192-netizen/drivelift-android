@@ -151,8 +151,13 @@ fun PhoneScreen(
     val account by vm.account.collectAsStateWithLifecycle()
     val totalBytes = remember(media) { media.sumOf { it.size } }
 
+    val listState = rememberPersistentLazyListState(vm.scrollPositions, "tab:phone:root")
+
     Column(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.weight(1f).fillMaxWidth().testTag("phone-root-list"),
+    ) {
         item(key = "header") {
             PhoneCommandHeader(
                 totalBytes = totalBytes,
@@ -822,7 +827,7 @@ fun FolderScreen(
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
     }
 
-    val gridState = rememberLazyGridState()
+    val gridState = rememberPersistentLazyGridState(vm.scrollPositions, "tab:phone:folder:$bucketId")
     val autoScroll = remember { mutableFloatStateOf(0f) }
     val pinchActive = remember { booleanArrayOf(false) }
     LaunchedEffect(autoScroll.floatValue) {
@@ -1039,7 +1044,9 @@ fun FolderScreen(
                     vm = vm,
                     item = item,
                     onClose = { viewingId = NOT_VIEWING },
-                    onDelete = { deleting = longArrayOf(item.id) },
+                    onDelete = { deleting = longArrayOf(viewingId) },
+                    folderItems = shown,
+                    onItemChanged = { viewingId = it.id },
                 )
             }
         }

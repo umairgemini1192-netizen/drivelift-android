@@ -236,8 +236,6 @@ fun DriveBrowser(
     LaunchedEffect(viewerFile != null || selecting) {
         onViewingFileChange?.invoke(viewerFile != null || selecting)
     }
-    val gridState = rememberLazyGridState()
-    val listState = rememberLazyListState()
     val thumbCache = remember { LruCache<String, ImageBitmap>(120) }
     val accountKey = account?.email.orEmpty()
     val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
@@ -563,6 +561,10 @@ fun DriveBrowser(
                         modifier = Modifier.padding(Tokens.Edge),
                     )
                     !pickMode && gridView -> {
+                        val gridState = rememberPersistentLazyGridState(
+                            store = vm.scrollPositions,
+                            key = "tab:drive:browse:grid:${here.id}",
+                        )
                         LazyVerticalGrid(
                             columns = GridCells.Adaptive(minSize = gridDensity.driveMinCell),
                             state = gridState,
@@ -614,7 +616,15 @@ fun DriveBrowser(
                             }
                         }
                     }
-                    else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    else -> {
+                        val listState = rememberPersistentLazyListState(
+                            store = vm.scrollPositions,
+                            key = "tab:drive:${if (pickMode) "pick" else "browse"}:list:${here.id}",
+                        )
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().testTag("drive-media-list"),
+                        ) {
                         items(list, key = { it.id }) { file ->
                             val thumb = if (!file.isFolder && !pickMode) {
                                 rememberDriveThumb(
@@ -646,6 +656,7 @@ fun DriveBrowser(
                                 favorite = if (file.isFolder) folderStar(file) else null,
                                 onToggleFavorite = { vm.toggleDriveFavorite(file, path) },
                             )
+                        }
                         }
                     }
                 }
@@ -780,10 +791,18 @@ fun DriveBrowser(
                     cachedThumb = thumbCache.get(driveMemoryCacheKey(accountKey, openFile)),
                     onClose = { viewerFile = null },
                     onOpenExternally = {
-                        openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
+                        val active = viewerFile ?: openFile
+                        openInDrive(context, active.id)?.let { scope.launch { vm.messages.emit(it) } }
                     },
-                    onDelete = { askTrash(listOf(openFile)) },
+                    onDelete = { askTrash(listOf(viewerFile ?: openFile)) },
                     location = path,
+                    folderFiles = shown.orEmpty(),
+                    thumbProvider = { target -> thumbCache.get(driveMemoryCacheKey(accountKey, target)) },
+                    onFileChanged = { active -> viewerFile = active },
+                    onDeleteFile = { target -> askTrash(listOf(target)) },
+                    onOpenFileExternally = { target ->
+                        openInDrive(context, target.id)?.let { scope.launch { vm.messages.emit(it) } }
+                    },
                 )
             }
         }

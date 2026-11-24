@@ -24,6 +24,7 @@ import android.net.NetworkCapabilities
 import android.net.wifi.WifiInfo
 import android.net.wifi.WifiManager
 import android.os.Build
+import android.os.PowerManager
 import android.os.Process
 import android.provider.Settings
 import androidx.core.content.ContextCompat
@@ -97,6 +98,9 @@ class CockpitQuickControlsController(
     private val clock: () -> Long = System::currentTimeMillis,
     private val scope: CoroutineScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate),
     private val onDefaultNetworkChanged: ((NetworkCapabilities?) -> Unit)? = null,
+    private val isScreenInteractive: () -> Boolean = {
+        context.getSystemService(PowerManager::class.java)?.isInteractive != false
+    },
 ) {
     private val appContext = context.applicationContext
     private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
@@ -115,12 +119,17 @@ class CockpitQuickControlsController(
     private val activeProxies = LinkedHashMap<Int, BluetoothProfile>()
 
     private var started = false
+    private var screenPaused = false
     private var wifiCallback: ConnectivityManager.NetworkCallback? = null
     private var receiver: BroadcastReceiver? = null
     private var refreshJob: Job? = null
     private var statusClearJob: Job? = null
     private var hasLoadedUsageOnce = false
     private var cachedUsageBytes: Long = 0L
+
+    /** True while the periodic monthly mobile data polling loop is actively running. */
+    val isUsagePollingActive: Boolean
+        get() = refreshJob?.isActive == true
 
     @Volatile
     private var latestWifiInfoSsid: String? = null
@@ -130,27 +139,27 @@ class CockpitQuickControlsController(
 
     fun start() {
         if (started) {
-            refreshAll()
+            if (!screenPaused && isScreenInteractive()) {
+                refreshAll()
+                startUsageRefreshTicker()
+            }
             return
         }
         started = true
+        screenPaused = !isScreenInteractive()
         registerWifiCallback()
         registerSystemReceivers()
         bindBluetoothProfiles()
-        refreshAll()
-        refreshJob = scope.launch {
-            while (isActive) {
-                delay(USAGE_REFRESH_INTERVAL_MS)
-                refreshMonthlyMobileData()
-            }
+        if (!screenPaused) {
+            refreshAll()
+            startUsageRefreshTicker()
         }
     }
 
     fun stop() {
         if (!started) return
         started = false
-        refreshJob?.cancel()
-        refreshJob = null
+        stopUsageRefreshTicker()
         statusClearJob?.cancel()
         statusClearJob = null
         wifiCallback?.let { cb ->
@@ -162,6 +171,39 @@ class CockpitQuickControlsController(
         }
         receiver = null
         unbindBluetoothProfiles()
+    }
+
+    /** Immediately pauses periodic NetworkStatsManager polling when the screen turns off. */
+    fun onScreenOff() {
+        screenPaused = true
+        stopUsageRefreshTicker()
+    }
+
+    /** Cleanly resumes periodic polling when the screen wakes if this controller is started. */
+    fun onScreenOn() {
+        screenPaused = false
+        if (!started || !isScreenInteractive()) return
+        refreshAll()
+        startUsageRefreshTicker()
+    }
+
+    private fun startUsageRefreshTicker() {
+        if (!started || screenPaused || !isScreenInteractive() || refreshJob?.isActive == true) return
+        refreshJob = scope.launch {
+            while (isActive) {
+                delay(USAGE_REFRESH_INTERVAL_MS)
+                if (screenPaused || !isScreenInteractive()) {
+                    stopUsageRefreshTicker()
+                    break
+                }
+                refreshMonthlyMobileData()
+            }
+        }
+    }
+
+    private fun stopUsageRefreshTicker() {
+        refreshJob?.cancel()
+        refreshJob = null
     }
 
     fun refreshAll() {
@@ -344,6 +386,9 @@ class CockpitQuickControlsController(
             addAction(BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED)
             addAction(AudioManager.RINGER_MODE_CHANGED_ACTION)
             addAction(NotificationManager.ACTION_NOTIFICATION_POLICY_ACCESS_GRANTED_CHANGED)
+            addAction(Intent.ACTION_SCREEN_OFF)
+            addAction(Intent.ACTION_SCREEN_ON)
+            addAction(Intent.ACTION_USER_PRESENT)
         }
         val sysReceiver = object : BroadcastReceiver() {
             override fun onReceive(ctx: Context?, intent: Intent?) {
@@ -397,6 +442,10 @@ class CockpitQuickControlsController(
                     AudioManager.RINGER_MODE_CHANGED_ACTION,
                     NotificationManager.ACTION_NOTIFICATION_POLICY_ACCESS_GRANTED_CHANGED,
                     -> refreshRingerState()
+                    Intent.ACTION_SCREEN_OFF -> onScreenOff()
+                    Intent.ACTION_SCREEN_ON,
+                    Intent.ACTION_USER_PRESENT,
+                    -> onScreenOn()
                 }
             }
         }

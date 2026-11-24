@@ -1,5 +1,8 @@
 package com.drivelift.app.ui
 
+import android.content.ActivityNotFoundException
+import android.content.Context
+import android.content.Intent
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.Matrix
@@ -9,8 +12,11 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.foundation.pager.HorizontalPager
+import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -41,6 +47,7 @@ import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Download
 import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.PictureAsPdf
+import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
@@ -58,6 +65,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -67,10 +75,12 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalConfiguration
@@ -79,6 +89,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.zIndex
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.LocalFileOpener
 import com.drivelift.app.drive.AuthRequiredException
@@ -94,6 +105,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayInputStream
+import kotlin.math.abs
 import kotlin.math.max
 
 internal const val MAX_IMAGE_VIEWER_BYTES = 32L * 1024L * 1024L
@@ -220,6 +232,16 @@ fun DriveFileViewer(
     onDelete: (() -> Unit)? = null,
     /** The Drive path the file is shown in, recorded when it is starred. */
     location: String = "",
+    /** Current folder listing for swipeable image paging; defaults to just [file]. */
+    folderFiles: List<DriveFile> = listOf(file),
+    /** Resolves cached thumbnails for adjacent pages in the swipeable image viewer. */
+    thumbProvider: (DriveFile) -> ImageBitmap? = { if (it.id == file.id) cachedThumb else null },
+    /** Notifies the caller when swiping changes the active image page. */
+    onFileChanged: ((DriveFile) -> Unit)? = null,
+    /** Optional per-file delete callback when paging through multiple Drive images. */
+    onDeleteFile: ((DriveFile) -> Unit)? = null,
+    /** Optional per-file external-open callback when paging through multiple Drive images. */
+    onOpenFileExternally: ((DriveFile) -> Unit)? = null,
 ) {
     val context = LocalContext.current
     val conn by vm.driveConn.collectAsStateWithLifecycle()
@@ -229,71 +251,190 @@ fun DriveFileViewer(
 
     BackHandler(onBack = onClose)
 
-    val transform = remember(file.id) { ImageTransformState() }
     // For videos the top bar hides together with the player controls, for a clear picture.
-    var chromeVisible by remember(file.id) { mutableStateOf(true) }
+    var chromeVisible by remember(kind) { mutableStateOf(true) }
 
-    // Draw a dedicated backdrop so the underlying Drive grid does not bleed through the viewer.
-    GlassBackdrop {
-        Box(Modifier.fillMaxSize()) {
-        // Place the background pointer barrier as a sibling behind viewer content and controls so
-        // empty-backdrop taps/drags never reach DriveBrowser beneath while child button taps stay
-        // tolerant of small finger jitter.
-        Box(Modifier.fillMaxSize().viewerPointerBarrier())
-        when (kind) {
-            DrivePreviewKind.VIDEO -> VideoPreviewContent(
-                vm = vm,
-                file = file,
-                conn = conn,
-                cachedThumb = cachedThumb,
-                onOpenExternally = onOpenExternally,
-                onChromeVisibleChange = { chromeVisible = it },
-            )
-
-            DrivePreviewKind.IMAGE -> ImagePreviewContent(
-                vm = vm,
-                file = file,
-                conn = conn,
-                cachedThumb = cachedThumb,
-                transform = transform,
-                onClose = onClose,
-                onOpenExternally = onOpenExternally,
-            )
-
-            else -> FileDetailsPreview(
-                vm = vm,
-                file = file,
-                kind = kind,
-                cachedThumb = cachedThumb,
-                onOpenExternally = onOpenExternally,
-            )
+    when (kind) {
+        DrivePreviewKind.VIDEO -> {
+            // Pure #000000 OLED black fills edge-to-edge so no purple/navy bars frame the video.
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(GlassPalette.OledBlack)
+                    .testTag("drive-video-viewer"),
+            ) {
+                Box(Modifier.fillMaxSize().viewerPointerBarrier())
+                VideoPreviewContent(
+                    vm = vm,
+                    file = file,
+                    conn = conn,
+                    cachedThumb = cachedThumb,
+                    onOpenExternally = onOpenExternally,
+                    onChromeVisibleChange = { chromeVisible = it },
+                )
+                if (chromeVisible) {
+                    ViewerTopBar(
+                        title = file.name,
+                        subtitle = buildString {
+                            append(drivePreviewTypeLabel(file))
+                            if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
+                        },
+                        showResetZoom = false,
+                        onResetZoom = {},
+                        onClose = onClose,
+                        externalLabel = "Open in Google Drive",
+                        onOpenExternally = onOpenExternally,
+                        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
+                        onShare = { shareDriveLink(context, file)?.let { vm.messages.tryEmit(it) } },
+                        onDelete = onDelete,
+                        deleteLabel = "Move to Google Drive's trash",
+                        favorite = favoriteAccount?.let { vm.isDriveFavorite(favoriteIds, it, file.id) },
+                        onToggleFavorite = { vm.toggleDriveFavorite(file, location) },
+                        showTopScrim = true,
+                    )
+                }
+            }
         }
 
-        if (chromeVisible) ViewerTopBar(
-            title = file.name,
-            subtitle = buildString {
-                append(drivePreviewTypeLabel(file))
-                if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
-            },
-            showResetZoom = kind == DrivePreviewKind.IMAGE && transform.scale > 1.05f,
-            onResetZoom = { transform.reset() },
-            onClose = onClose,
-            externalLabel = "Open in Google Drive",
-            onOpenExternally = onOpenExternally,
-            modifier = Modifier.align(Alignment.TopCenter),
-            onDelete = onDelete,
-            deleteLabel = "Move to Google Drive's trash",
-            // Favorites belong to the connected account; without one there is nothing to star.
-            favorite = favoriteAccount?.let { vm.isDriveFavorite(favoriteIds, it, file.id) },
-            onToggleFavorite = { vm.toggleDriveFavorite(file, location) },
-        )
+        DrivePreviewKind.IMAGE -> {
+            val folderImages = remember(folderFiles) {
+                folderFiles.filter { classifyDriveFile(it.mimeType) == DrivePreviewKind.IMAGE }
+            }
+            val imageFiles = remember(folderImages, file.id) {
+                if (folderImages.any { it.id == file.id }) folderImages else listOf(file)
+            }
+            val initialPage = remember(folderImages) {
+                imageFiles.indexOfFirst { it.id == file.id }.coerceAtLeast(0)
+            }
+            val pagerState = rememberPagerState(initialPage = initialPage, pageCount = { imageFiles.size })
+            val transforms = remember { mutableStateMapOf<String, ImageTransformState>() }
+            var dismissDragY by remember { mutableFloatStateOf(0f) }
+
+            val activeFile = imageFiles.getOrElse(pagerState.currentPage) { file }
+            val activeTransform = transforms.getOrPut(activeFile.id) { ImageTransformState() }
+            val currentOnFileChanged by rememberUpdatedState(onFileChanged)
+
+            LaunchedEffect(pagerState.currentPage, imageFiles) {
+                imageFiles.getOrNull(pagerState.currentPage)?.let { currentOnFileChanged?.invoke(it) }
+            }
+
+            val openActiveExternally: () -> Unit = {
+                if (onOpenFileExternally != null) onOpenFileExternally(activeFile) else onOpenExternally()
+            }
+            val deleteActive: (() -> Unit)? = when {
+                onDeleteFile != null -> { { onDeleteFile(activeFile) } }
+                onDelete != null -> onDelete
+                else -> null
+            }
+            val backdropAlpha = (1f - (dismissDragY / 900f)).coerceIn(0.35f, 1f)
+
+            Box(
+                Modifier
+                    .fillMaxSize()
+                    .background(GlassPalette.OledBlack.copy(alpha = backdropAlpha)),
+            ) {
+                Box(Modifier.fillMaxSize().viewerPointerBarrier())
+                HorizontalPager(
+                    state = pagerState,
+                    userScrollEnabled = activeTransform.scale <= 1.05f,
+                    key = { imageFiles[it].id },
+                    modifier = Modifier.fillMaxSize().testTag("drive-image-pager"),
+                ) { page ->
+                    val pageFile = imageFiles[page]
+                    val pageTransform = transforms.getOrPut(pageFile.id) { ImageTransformState() }
+                    val pageOpenExternally: () -> Unit = {
+                        if (onOpenFileExternally != null) onOpenFileExternally(pageFile) else onOpenExternally()
+                    }
+                    ImagePreviewContent(
+                        vm = vm,
+                        file = pageFile,
+                        conn = conn,
+                        cachedThumb = thumbProvider(pageFile),
+                        transform = pageTransform,
+                        onClose = onClose,
+                        onOpenExternally = pageOpenExternally,
+                        onDismissDragChange = { dismissDragY = it },
+                    )
+                }
+                ViewerTopBar(
+                    title = activeFile.name,
+                    subtitle = buildString {
+                        append(drivePreviewTypeLabel(activeFile))
+                        if (imageFiles.size > 1) append("  ·  ${pagerState.currentPage + 1} of ${imageFiles.size}")
+                        if (activeFile.size > 0) append("  ·  ${formatBytes(context, activeFile.size)}")
+                    },
+                    showResetZoom = activeTransform.scale > 1.05f,
+                    onResetZoom = { activeTransform.reset() },
+                    onClose = onClose,
+                    externalLabel = "Open in Google Drive",
+                    onOpenExternally = openActiveExternally,
+                    modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
+                    onShare = { shareDriveLink(context, activeFile)?.let { vm.messages.tryEmit(it) } },
+                    onDelete = deleteActive,
+                    deleteLabel = "Move to Google Drive's trash",
+                    favorite = favoriteAccount?.let { vm.isDriveFavorite(favoriteIds, it, activeFile.id) },
+                    onToggleFavorite = { vm.toggleDriveFavorite(activeFile, location) },
+                    showTopScrim = true,
+                )
+            }
         }
+
+        else -> {
+            // Draw a dedicated backdrop so the underlying Drive grid does not bleed through the viewer.
+            GlassBackdrop {
+                Box(Modifier.fillMaxSize()) {
+                    Box(Modifier.fillMaxSize().viewerPointerBarrier())
+                    FileDetailsPreview(
+                        vm = vm,
+                        file = file,
+                        kind = kind,
+                        cachedThumb = cachedThumb,
+                        onOpenExternally = onOpenExternally,
+                    )
+                    ViewerTopBar(
+                        title = file.name,
+                        subtitle = buildString {
+                            append(drivePreviewTypeLabel(file))
+                            if (file.size > 0) append("  ·  ${formatBytes(context, file.size)}")
+                        },
+                        showResetZoom = false,
+                        onResetZoom = {},
+                        onClose = onClose,
+                        externalLabel = "Open in Google Drive",
+                        onOpenExternally = onOpenExternally,
+                        modifier = Modifier.align(Alignment.TopCenter).zIndex(2f),
+                        onShare = { shareDriveLink(context, file)?.let { vm.messages.tryEmit(it) } },
+                        onDelete = onDelete,
+                        deleteLabel = "Move to Google Drive's trash",
+                        favorite = favoriteAccount?.let { vm.isDriveFavorite(favoriteIds, it, file.id) },
+                        onToggleFavorite = { vm.toggleDriveFavorite(file, location) },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Shares a Drive file's view link via Android's standard `ACTION_SEND` chooser. */
+internal fun shareDriveLink(context: Context, file: DriveFile): String? {
+    val send = Intent(Intent.ACTION_SEND)
+        .setType("text/plain")
+        .putExtra(Intent.EXTRA_SUBJECT, file.name)
+        .putExtra(Intent.EXTRA_TEXT, driveViewUrl(file.id))
+    val chooser = Intent.createChooser(send, "Share ${file.name}")
+    return try {
+        context.startActivity(chooser)
+        null
+    } catch (_: ActivityNotFoundException) {
+        "No app on this phone can share this link."
     }
 }
 
 /**
  * The viewer's top bar, shared by the Drive and Phone viewers: close, name and details, reset
- * zoom while zoomed, and opening the file in another app. Touch targets are at least 48 dp.
+ * zoom while zoomed, share, favorite, delete, and opening the file in another app. Touch targets
+ * are at least 48 dp. When [showTopScrim] is true a dark top gradient scrim runs behind the bar
+ * so icons stay readable over bright/white videos and photos.
  */
 @Composable
 internal fun ViewerTopBar(
@@ -305,60 +446,99 @@ internal fun ViewerTopBar(
     externalLabel: String,
     onOpenExternally: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Shares this item via Android's standard ACTION_SEND chooser. */
+    onShare: (() -> Unit)? = null,
     /** Moves this file to the trash after confirmation (the phone's or Google Drive's). */
     onDelete: (() -> Unit)? = null,
     deleteLabel: String = "Move to this phone's trash",
     /** Null hides the star; otherwise whether this file is a favorite. */
     favorite: Boolean? = null,
     onToggleFavorite: () -> Unit = {},
+    /** Draws a dark top gradient scrim behind the header bar for legibility over bright frames. */
+    showTopScrim: Boolean = false,
 ) {
-    GlassPanel(
+    val compact = LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
+    val outerHorizontalPad = if (compact) Tokens.Small else Tokens.Edge
+    val scrimModifier = if (showTopScrim) {
+        Modifier
+            .background(
+                Brush.verticalGradient(
+                    colors = listOf(
+                        GlassPalette.VideoHeaderScrimTop,
+                        GlassPalette.VideoHeaderScrimMid,
+                        GlassPalette.VideoHeaderScrimBottom,
+                    ),
+                ),
+            )
+            .testTag("video-header-scrim")
+    } else {
+        Modifier
+    }
+    Box(
         modifier = modifier
             .fillMaxWidth()
-            // The viewer fills the screen behind the status bar; the bar stays below it.
-            .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
-            .padding(Tokens.Edge),
-        shape = Tokens.PanelShape,
+            .then(scrimModifier)
+            .pointerInput(Unit) {
+                detectTapGestures { /* Keep taps on header chrome isolated from tap-to-hide. */ }
+            }
+            .padding(bottom = if (showTopScrim) Tokens.VideoHeaderScrimPadding else Tokens.NoInset),
     ) {
-        Row(
-            Modifier
+        GlassPanel(
+            modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
-            verticalAlignment = Alignment.CenterVertically,
+                // The viewer fills the screen behind the status bar; the bar stays below it.
+                .windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))
+                .padding(horizontal = outerHorizontalPad, vertical = Tokens.Medium),
+            shape = Tokens.PanelShape,
         ) {
-            IconButton(onClick = onClose, modifier = Modifier.size(Tokens.ViewerControl)) {
-                Icon(Icons.Outlined.Close, contentDescription = "Close viewer")
-            }
-            Column(Modifier.weight(1f).padding(horizontal = Tokens.Small)) {
-                Text(
-                    title,
-                    style = MaterialTheme.typography.titleSmall,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (showResetZoom) {
-                IconButton(onClick = onResetZoom, modifier = Modifier.size(Tokens.ViewerControl)) {
-                    Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                IconButton(onClick = onClose, modifier = Modifier.size(Tokens.ViewerControl)) {
+                    Icon(Icons.Outlined.Close, contentDescription = "Close viewer")
                 }
-            }
-            if (favorite != null) {
-                FavoriteStar(favorite = favorite, name = title, onToggle = onToggleFavorite)
-            }
-            if (onDelete != null) {
-                IconButton(onClick = onDelete, modifier = Modifier.size(Tokens.ViewerControl)) {
-                    Icon(Icons.Outlined.DeleteOutline, contentDescription = deleteLabel)
+                Column(Modifier.weight(1f).padding(horizontal = Tokens.Tiny)) {
+                    Text(
+                        title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
                 }
-            }
-            IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {
-                Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = externalLabel)
+                if (showResetZoom) {
+                    IconButton(onClick = onResetZoom, modifier = Modifier.size(Tokens.ViewerControl)) {
+                        Icon(Icons.Outlined.CenterFocusWeak, contentDescription = "Reset zoom")
+                    }
+                }
+                if (onShare != null) {
+                    IconButton(
+                        onClick = onShare,
+                        modifier = Modifier.size(Tokens.ViewerControl).testTag("viewer-share"),
+                    ) {
+                        Icon(Icons.Outlined.Share, contentDescription = "Share")
+                    }
+                }
+                if (favorite != null) {
+                    FavoriteStar(favorite = favorite, name = title, onToggle = onToggleFavorite)
+                }
+                if (onDelete != null) {
+                    IconButton(onClick = onDelete, modifier = Modifier.size(Tokens.ViewerControl)) {
+                        Icon(Icons.Outlined.DeleteOutline, contentDescription = deleteLabel)
+                    }
+                }
+                IconButton(onClick = onOpenExternally, modifier = Modifier.size(Tokens.ViewerControl)) {
+                    Icon(Icons.AutoMirrored.Outlined.OpenInNew, contentDescription = externalLabel)
+                }
             }
         }
     }
@@ -376,15 +556,30 @@ internal fun Modifier.viewerPointerBarrier(): Modifier = pointerInput(Unit) {
     }
 }
 
-/** A picture fitted to the screen with pinch zoom, pan and double-tap zoom. */
+/**
+ * A picture fitted to the screen with pinch zoom, zoomed pan, double-tap zoom, unzoomed horizontal
+ * passthrough for [HorizontalPager], and vertical swipe-down to dismiss.
+ */
 @Composable
 internal fun ZoomableImage(
     bitmap: ImageBitmap,
     contentDescription: String,
     key: Any,
     transform: ImageTransformState,
+    onDismiss: (() -> Unit)? = null,
+    onDismissDragChange: ((Float) -> Unit)? = null,
     bounds: () -> IntSize,
 ) {
+    var dismissOffsetY by remember(key) { mutableFloatStateOf(0f) }
+    val dismissThresholdPx = with(LocalDensity.current) { Tokens.SwipeDismissThreshold.toPx() }
+    val currentOnDismiss by rememberUpdatedState(onDismiss)
+    val currentOnDismissDrag by rememberUpdatedState(onDismissDragChange)
+    val dismissScale = if (dismissOffsetY > 0f) {
+        (1f - (dismissOffsetY / 1600f)).coerceIn(0.85f, 1f)
+    } else {
+        1f
+    }
+
     Image(
         bitmap = bitmap,
         contentDescription = contentDescription,
@@ -395,16 +590,69 @@ internal fun ZoomableImage(
             .pointerInput(key, transform) {
                 detectTapGestures(onDoubleTap = { transform.toggleDoubleTap() })
             }
-            .pointerInput(key, transform) {
-                detectTransformGestures { _, pan, zoom, _ ->
-                    transform.applyGesture(pan = pan, zoom = zoom, bounds = bounds())
+            .pointerInput(key, transform, dismissThresholdPx) {
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var verticalDismissActive = false
+                    var cumulativePan = Offset.Zero
+                    val touchSlop = viewConfiguration.touchSlop
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        val pressed = event.changes.filter { it.pressed }
+                        if (pressed.isEmpty()) {
+                            if (verticalDismissActive) {
+                                val shouldDismiss = dismissOffsetY >= dismissThresholdPx
+                                dismissOffsetY = 0f
+                                currentOnDismissDrag?.invoke(0f)
+                                if (shouldDismiss) currentOnDismiss?.invoke()
+                            }
+                            break
+                        }
+                        if (pressed.size >= 2) {
+                            if (verticalDismissActive) {
+                                verticalDismissActive = false
+                                dismissOffsetY = 0f
+                                currentOnDismissDrag?.invoke(0f)
+                            }
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            if (zoom != 1f || pan != Offset.Zero) {
+                                transform.applyGesture(pan = pan, zoom = zoom, bounds = bounds())
+                                event.changes.forEach { if (it.positionChanged()) it.consume() }
+                            }
+                        } else {
+                            val change = pressed.first()
+                            val delta = change.position - change.previousPosition
+                            if (transform.scale > 1.05f) {
+                                if (delta != Offset.Zero) {
+                                    transform.applyGesture(pan = delta, zoom = 1f, bounds = bounds())
+                                    if (change.positionChanged()) change.consume()
+                                }
+                            } else if (currentOnDismiss != null) {
+                                cumulativePan += delta
+                                if (!verticalDismissActive) {
+                                    if (
+                                        cumulativePan.y > touchSlop &&
+                                        abs(cumulativePan.y) > abs(cumulativePan.x) * 1.2f
+                                    ) {
+                                        verticalDismissActive = true
+                                    }
+                                }
+                                if (verticalDismissActive) {
+                                    dismissOffsetY = (dismissOffsetY + delta.y).coerceAtLeast(0f)
+                                    currentOnDismissDrag?.invoke(dismissOffsetY)
+                                    if (change.positionChanged()) change.consume()
+                                }
+                            }
+                        }
+                    }
                 }
             }
             .graphicsLayer(
-                scaleX = transform.scale,
-                scaleY = transform.scale,
+                scaleX = transform.scale * dismissScale,
+                scaleY = transform.scale * dismissScale,
                 translationX = transform.offset.x,
-                translationY = transform.offset.y,
+                translationY = transform.offset.y + dismissOffsetY,
             ),
     )
 }
@@ -418,6 +666,7 @@ private fun ImagePreviewContent(
     transform: ImageTransformState,
     onClose: () -> Unit,
     onOpenExternally: () -> Unit,
+    onDismissDragChange: (Float) -> Unit = {},
 ) {
     var state by remember(file.id) { mutableStateOf<ImageViewerState>(ImageViewerState.Loading) }
     var reload by remember(file.id) { mutableIntStateOf(0) }
@@ -467,7 +716,14 @@ private fun ImagePreviewContent(
         }
 
         if (displayBitmap != null) {
-            ZoomableImage(displayBitmap, file.name, file.id, transform) { currentBoxSize }
+            ZoomableImage(
+                bitmap = displayBitmap,
+                contentDescription = file.name,
+                key = file.id,
+                transform = transform,
+                onDismiss = onClose,
+                onDismissDragChange = onDismissDragChange,
+            ) { currentBoxSize }
         }
 
         // Until the full image is ready the cached thumbnail is only context. Dim it with the shared

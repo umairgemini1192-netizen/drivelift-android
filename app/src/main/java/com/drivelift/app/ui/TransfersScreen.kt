@@ -53,6 +53,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.data.TransferEntity
@@ -91,10 +92,11 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
     val fraction = if (totalBytes > 0) doneBytes.toFloat() / totalBytes else 0f
     val idle = live.phase == LiveProgress.Phase.IDLE && pending == 0 && uploaded == 0
 
-    val now by produceState(System.currentTimeMillis()) {
-        while (true) {
-            value = System.currentTimeMillis()
+    val now by produceState(System.currentTimeMillis(), live.phase) {
+        value = System.currentTimeMillis()
+        while (live.phase == LiveProgress.Phase.RETRY_WAIT) {
             delay(1000)
+            value = System.currentTimeMillis()
         }
     }
 
@@ -201,7 +203,8 @@ fun TransfersScreen(vm: AppViewModel, onOpenSettings: () -> Unit) {
         else -> "Done. Everything was moved and removed from this phone."
     }
 
-    LazyColumn(Modifier.fillMaxSize()) {
+    val listState = rememberPersistentLazyListState(vm.scrollPositions, "tab:transfers:root")
+    LazyColumn(state = listState, modifier = Modifier.fillMaxSize().testTag("transfers-list")) {
         item(key = "lead") {
             // The gear sits in the empty top corner beside the gauge, so moving the preferences
             // out adds no height and the rest of Transfers keeps its place.

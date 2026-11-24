@@ -51,6 +51,8 @@ object Tokens {
     val ViewerControl = 48.dp
     val ViewerProgressWidth = 220.dp
     val ViewerTopClearance = 92.dp
+    val SwipeDismissThreshold = 120.dp
+    val VideoHeaderScrimPadding = 24.dp
     val ReadableWidth = 480.dp
     val GaugeWidth = 320.dp
     val GaugeHeight = 172.dp
