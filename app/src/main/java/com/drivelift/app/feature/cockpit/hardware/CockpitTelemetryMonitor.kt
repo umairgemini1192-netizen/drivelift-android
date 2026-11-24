@@ -42,9 +42,11 @@ data class TelemetryHudSnapshot(
  * - Dynamically registers `ACTION_BATTERY_CHANGED`, `ACTION_POWER_CONNECTED`,
  *   `ACTION_POWER_DISCONNECTED`, `ACTION_SCREEN_ON`, `ACTION_SCREEN_OFF`, and `ACTION_USER_PRESENT`
  *   for instant battery %, charging, and wake updates with zero polling.
- * - Runs a screen-on-only coroutine ticker every 20 seconds (`PowerManager.isInteractive == true`)
- *   that updates `CockpitGlanceWidget` ONLY when battery %, charging state, battery current (`>= 50 mA`
- *   change) or RAM (`>= 0.1 GB`) changed.
+ * - Runs a screen-on-only coroutine ticker every 2 seconds (`PowerManager.isInteractive == true`)
+ *   that updates `CockpitGlanceWidget` via lightweight `partiallyUpdateAppWidget()` ONLY when
+ *   battery %, charging state, battery current (`>= 10 mA` change over a 3-sample rolling window),
+ *   charge counter (`>= 1 mAh`), or RAM (`>= 0.1 GB`) changed. Stops sampling completely while the
+ *   screen is off.
  * - Feeds the idle Dynamic Island pill: the active connection (event driven, no polling) and a 1 Hz
  *   `TrafficStats` upload and download rate. The rate ticker runs only while at least one idle pill
  *   is on screen AND the screen is on; `ACTION_SCREEN_OFF` stops it at once, so standby costs nothing.
@@ -62,9 +64,7 @@ class CockpitTelemetryMonitor(
             isLoadingInitial = false,
         )
     },
-    private val widgetPusher: suspend () -> Unit = {
-        CockpitGlanceWidget.pushTelemetryUpdate(context)
-    },
+    private val widgetPusher: (suspend () -> Unit)? = null,
     private val trafficReader: () -> Pair<Long, Long> = {
         TrafficStats.getTotalTxBytes() to TrafficStats.getTotalRxBytes()
     },
@@ -85,7 +85,13 @@ class CockpitTelemetryMonitor(
     /** Live interactive screen state driven by ACTION_SCREEN_OFF / ACTION_SCREEN_ON broadcasts. */
     val isScreenOn: StateFlow<Boolean> = _isScreenOn.asStateFlow()
 
+    private val _screenWakeCount = MutableStateFlow(0L)
+
+    /** Monotonic counter incremented on every ACTION_SCREEN_ON / ACTION_USER_PRESENT wake event. */
+    val screenWakeCount: StateFlow<Long> = _screenWakeCount.asStateFlow()
+
     private var activeClients = 0
+    private var widgetBound = false
     private var idleConsumers = 0
     private var screenPaused = false
     private var receiver: BroadcastReceiver? = null
@@ -95,6 +101,8 @@ class CockpitTelemetryMonitor(
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastPushedSnapshot: TelemetryHudSnapshot? = null
     private var lastWidgetPushElapsedMs: Long = Long.MIN_VALUE
+    internal var lastPushWasBatteryCurrentOnly: Boolean = false
+        private set
     private val speedLock = Any()
     private var lastTxBytes = -1L
     private var lastRxBytes = -1L
@@ -107,6 +115,18 @@ class CockpitTelemetryMonitor(
     /** True while the 1 Hz network speed polling loop is actively running. */
     val isSpeedTickerActive: Boolean
         get() = speedJob?.isActive == true
+
+    /** Tracks whether at least one Home Screen Master Widget instance is currently bound. */
+    @Synchronized
+    fun setWidgetBound(bound: Boolean) {
+        if (bound == widgetBound) return
+        widgetBound = bound
+        if (bound) {
+            acquire()
+        } else {
+            release()
+        }
+    }
 
     @Synchronized
     fun acquire() {
@@ -179,8 +199,9 @@ class CockpitTelemetryMonitor(
             -> {
                 screenPaused = false
                 _isScreenOn.value = true
+                _screenWakeCount.value = _screenWakeCount.value + 1L
                 if (activeClients > 0) {
-                    evaluateNow(batteryIntent = null, pushWidget = true)
+                    evaluateNow(batteryIntent = null, pushWidget = true, bypassDebounce = true)
                     startScreenOnTicker()
                 }
                 if (idleConsumers > 0) {
@@ -195,11 +216,15 @@ class CockpitTelemetryMonitor(
             }
             Intent.ACTION_POWER_CONNECTED,
             Intent.ACTION_POWER_DISCONNECTED,
-            -> evaluateNow(batteryIntent = intent, pushWidget = true)
+            -> evaluateNow(batteryIntent = intent, pushWidget = true, bypassDebounce = true)
         }
     }
 
-    fun evaluateNow(batteryIntent: Intent? = null, pushWidget: Boolean = true): Boolean {
+    fun evaluateNow(
+        batteryIntent: Intent? = null,
+        pushWidget: Boolean = true,
+        bypassDebounce: Boolean = false,
+    ): Boolean {
         val current = snapshotReader(batteryIntent).copy(isLoadingInitial = false)
         _snapshot.value = current
         val previous = lastPushedSnapshot
@@ -207,15 +232,32 @@ class CockpitTelemetryMonitor(
         if (changed && pushWidget) {
             val nowMs = elapsedClock()
             val urgent = isUrgentWidgetChange(previous, current)
+            val batteryCurrentOnly = isBatteryCurrentOnlyChange(previous, current)
             val withinDebounce = lastWidgetPushElapsedMs != Long.MIN_VALUE &&
                 (nowMs - lastWidgetPushElapsedMs) in 0L until Tokens.Cockpit.WIDGET_PUSH_DEBOUNCE_MS
-            if (!urgent && withinDebounce) {
+            if (!urgent && !bypassDebounce && withinDebounce) {
                 return false
             }
-            lastPushedSnapshot = current
+            lastPushedSnapshot = nextPushedSnapshotBaseline(
+                previous = previous,
+                current = current,
+                batteryCurrentOnly = batteryCurrentOnly,
+            )
+            lastPushWasBatteryCurrentOnly = batteryCurrentOnly
             lastWidgetPushElapsedMs = nowMs
             widgetPushJob?.cancel()
-            widgetPushJob = scope.launch { widgetPusher() }
+            widgetPushJob = scope.launch {
+                val customPusher = widgetPusher
+                if (customPusher != null) {
+                    customPusher()
+                } else {
+                    CockpitGlanceWidget.pushTelemetryUpdate(
+                        context = context,
+                        snapshot = current,
+                        batteryCurrentOnly = batteryCurrentOnly,
+                    )
+                }
+            }
         }
         return changed
     }
@@ -366,7 +408,7 @@ class CockpitTelemetryMonitor(
                     stopScreenOnTicker()
                     break
                 }
-                evaluateNow(batteryIntent = null, pushWidget = true)
+                evaluateNow(batteryIntent = null, pushWidget = true, bypassDebounce = true)
             }
         }
     }
@@ -464,6 +506,36 @@ class CockpitTelemetryMonitor(
             if (previous.battery.isCharging != current.battery.isCharging) return true
             if (abs(previous.ram.usedGb - current.ram.usedGb) >= Tokens.Cockpit.RAM_DELTA_THRESHOLD_GB) return true
             return false
+        }
+
+        internal fun isBatteryCurrentOnlyChange(
+            previous: TelemetryHudSnapshot?,
+            current: TelemetryHudSnapshot,
+        ): Boolean {
+            if (previous == null) return false
+            if (isUrgentWidgetChange(previous, current)) return false
+            return CockpitWidgetModel.currentChangedEnough(
+                previous.battery.current.milliAmps,
+                current.battery.current.milliAmps,
+            ) || CockpitWidgetModel.chargeChangedEnough(
+                previous.battery.charge.milliAmpHours,
+                current.battery.charge.milliAmpHours,
+            )
+        }
+
+        internal fun nextPushedSnapshotBaseline(
+            previous: TelemetryHudSnapshot?,
+            current: TelemetryHudSnapshot,
+            batteryCurrentOnly: Boolean,
+        ): TelemetryHudSnapshot = if (batteryCurrentOnly && previous != null) {
+            previous.copy(
+                battery = previous.battery.copy(
+                    current = current.battery.current,
+                    charge = current.battery.charge,
+                ),
+            )
+        } else {
+            current
         }
 
         fun extractBatteryChargingFromIntent(intent: Intent?): Boolean? {

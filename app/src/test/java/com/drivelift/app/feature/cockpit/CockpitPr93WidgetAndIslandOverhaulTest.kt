@@ -112,28 +112,32 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
     }
 
     @Test
-    fun rollingFiveSampleCurrentAverageMatchesAmpereAndFallsBackToCurrentAverage() {
-        val avg = BatteryCurrentRollingAverage(windowSize = 5)
+    fun rollingThreeSampleCurrentAverageMatchesAmpereAndFallsBackToCurrentAverage() {
+        assertEquals(3, CockpitWidgetModel.CURRENT_AVERAGE_WINDOW)
+        assertEquals(10, CockpitWidgetModel.CURRENT_DELTA_THRESHOLD_MA)
+        assertEquals(1, CockpitWidgetModel.CHARGE_DELTA_THRESHOLD_MAH)
+        assertEquals(2_000L, Tokens.Cockpit.TELEMETRY_TICK_INTERVAL_MS)
+        assertEquals(2_000L, Tokens.Cockpit.WIDGET_PUSH_DEBOUNCE_MS)
 
-        // 5 discharging samples: 400, 500, 600, 500, 500 mA -> mean 500 mA.
+        val avg = BatteryCurrentRollingAverage()
+
+        // 3 discharging samples: 400, 500, 600 mA -> mean 500 mA.
         avg.record(currentNowMicroAmps = -400_000L, isCharging = false)
         avg.record(currentNowMicroAmps = -500_000L, isCharging = false)
-        avg.record(currentNowMicroAmps = -600_000L, isCharging = false)
-        avg.record(currentNowMicroAmps = -500_000L, isCharging = false)
-        val fifth = avg.record(currentNowMicroAmps = -500_000L, isCharging = false)
-        assertEquals(5, avg.sampleCount)
-        assertEquals(-500, fifth.milliAmps)
-        assertEquals("-500 mA", fifth.text)
-        assertEquals(BatteryCurrentTone.DISCHARGING, fifth.tone)
+        val third = avg.record(currentNowMicroAmps = -600_000L, isCharging = false)
+        assertEquals(3, avg.sampleCount)
+        assertEquals(-500, third.milliAmps)
+        assertEquals("-500 mA", third.text)
+        assertEquals(BatteryCurrentTone.DISCHARGING, third.tone)
 
-        // 6th sample evicts the oldest (400): window [500, 600, 500, 500, 900] -> mean 600 mA.
-        val sixth = avg.record(currentNowMicroAmps = -900_000L, isCharging = false)
-        assertEquals(5, avg.sampleCount)
-        assertEquals(-600, sixth.milliAmps)
-        assertEquals("-600 mA", sixth.text)
+        // 4th sample evicts the oldest (400): window [500, 600, 700] -> mean 600 mA.
+        val fourth = avg.record(currentNowMicroAmps = -700_000L, isCharging = false)
+        assertEquals(3, avg.sampleCount)
+        assertEquals(-600, fourth.milliAmps)
+        assertEquals("-600 mA", fourth.text)
 
         // Fallback to BATTERY_PROPERTY_CURRENT_AVERAGE when CURRENT_NOW is unsupported or zero.
-        val fallbackAvg = BatteryCurrentRollingAverage(windowSize = 5)
+        val fallbackAvg = BatteryCurrentRollingAverage()
         val fromFallback = fallbackAvg.record(
             currentNowMicroAmps = Long.MIN_VALUE,
             currentAverageMicroAmps = 1_850_000L,

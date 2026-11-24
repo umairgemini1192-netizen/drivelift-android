@@ -31,6 +31,7 @@ import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
+import com.drivelift.app.feature.cockpit.hardware.TelemetryHudSnapshot
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.desktopdrop.model.ConnectivityMode
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
@@ -222,6 +223,15 @@ class CockpitGlanceWidget {
             runCatching { appWidgetManager.updateAppWidget(appWidgetId, views) }
         }
 
+        fun hasBoundWidgets(context: Context): Boolean {
+            val appContext = context.applicationContext ?: context
+            val manager = runCatching { AppWidgetManager.getInstance(appContext) }.getOrNull() ?: return false
+            val ids = runCatching {
+                manager.getAppWidgetIds(ComponentName(appContext, CockpitGlanceWidgetReceiver::class.java))
+            }.getOrDefault(IntArray(0))
+            return ids.isNotEmpty()
+        }
+
         /**
          * Decoupled lightweight telemetry refresh: patches ONLY the Battery ring, live mA/mAh
          * readouts, and RAM ring + used/free readouts via `partiallyUpdateAppWidget()`.
@@ -230,19 +240,44 @@ class CockpitGlanceWidget {
          */
         suspend fun pushTelemetryUpdate(context: Context) {
             val appContext = context.applicationContext ?: context
+            if (!hasBoundWidgets(appContext)) return
+            val snapshot = TelemetryHudSnapshot(
+                battery = readBatteryMetric(appContext),
+                ram = readRamMetric(appContext),
+                isLoadingInitial = false,
+            )
+            pushTelemetryUpdate(appContext, snapshot, batteryCurrentOnly = false)
+        }
+
+        /**
+         * Pushes an already-sampled [TelemetryHudSnapshot] without re-sampling the rolling current
+         * averager. When [batteryCurrentOnly] is true, patches only the mA and mAh TextViews via
+         * `partiallyUpdateAppWidget()` with zero bitmap redraws.
+         */
+        suspend fun pushTelemetryUpdate(
+            context: Context,
+            snapshot: TelemetryHudSnapshot,
+            batteryCurrentOnly: Boolean = false,
+        ) {
+            val appContext = context.applicationContext ?: context
             val manager = runCatching { AppWidgetManager.getInstance(appContext) }.getOrNull() ?: return
             val ids = runCatching {
                 manager.getAppWidgetIds(ComponentName(appContext, CockpitGlanceWidgetReceiver::class.java))
             }.getOrDefault(IntArray(0))
             if (ids.isEmpty()) return
 
-            val battery = readBatteryMetric(appContext)
-            val ram = readRamMetric(appContext)
-            val partial = buildTelemetryPartialRemoteViews(
-                context = appContext,
-                battery = battery,
-                ram = ram,
-            )
+            val partial = if (batteryCurrentOnly) {
+                buildBatteryCurrentPartialRemoteViews(
+                    context = appContext,
+                    battery = snapshot.battery,
+                )
+            } else {
+                buildTelemetryPartialRemoteViews(
+                    context = appContext,
+                    battery = snapshot.battery,
+                    ram = snapshot.ram,
+                )
+            }
             runCatching { manager.partiallyUpdateAppWidget(ids, partial) }
         }
 
@@ -391,6 +426,38 @@ class CockpitGlanceWidget {
             return views
         }
 
+        /**
+         * Ultra-lightweight partial RemoteViews patching only the live mA current and mAh charge
+         * TextViews, skipping arc gauge bitmap rendering on 2-second battery-current-only ticks.
+         */
+        fun buildBatteryCurrentPartialRemoteViews(
+            context: Context,
+            battery: BatteryHudMetric,
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, R.layout.cockpit_widget_master)
+            applyBatteryCurrentToRemoteViews(views, context, battery)
+            return views
+        }
+
+        private fun applyBatteryCurrentToRemoteViews(
+            views: RemoteViews,
+            context: Context,
+            battery: BatteryHudMetric,
+        ) {
+            views.setTextViewText(R.id.cockpit_widget_battery_current, battery.current.text)
+            val currentColor = when (battery.current.tone) {
+                BatteryCurrentTone.CHARGING -> GlassPalette.SuccessGreen.toArgb()
+                BatteryCurrentTone.DISCHARGING -> GlassPalette.SecondaryViolet.toArgb()
+                BatteryCurrentTone.UNKNOWN -> ContextCompat.getColor(context, R.color.cockpit_on_surface_variant)
+            }
+            views.setTextColor(R.id.cockpit_widget_battery_current, currentColor)
+            views.setContentDescription(R.id.cockpit_widget_battery_current, "Battery current ${battery.current.text}")
+
+            views.setViewVisibility(R.id.cockpit_widget_battery_charge, View.VISIBLE)
+            views.setTextViewText(R.id.cockpit_widget_battery_charge, battery.charge.text)
+            views.setContentDescription(R.id.cockpit_widget_battery_charge, "Battery charge ${battery.charge.text}")
+        }
+
         private fun applyTelemetryToRemoteViews(
             views: RemoteViews,
             context: Context,
@@ -419,18 +486,7 @@ class CockpitGlanceWidget {
 
             views.setImageViewBitmap(R.id.cockpit_widget_battery_gauge, batteryBmp)
             views.setContentDescription(R.id.cockpit_widget_battery_gauge, "Battery ${battery.valueText}")
-            views.setTextViewText(R.id.cockpit_widget_battery_current, battery.current.text)
-            val currentColor = when (battery.current.tone) {
-                BatteryCurrentTone.CHARGING -> GlassPalette.SuccessGreen.toArgb()
-                BatteryCurrentTone.DISCHARGING -> GlassPalette.SecondaryViolet.toArgb()
-                BatteryCurrentTone.UNKNOWN -> ContextCompat.getColor(context, R.color.cockpit_on_surface_variant)
-            }
-            views.setTextColor(R.id.cockpit_widget_battery_current, currentColor)
-            views.setContentDescription(R.id.cockpit_widget_battery_current, "Battery current ${battery.current.text}")
-
-            views.setViewVisibility(R.id.cockpit_widget_battery_charge, View.VISIBLE)
-            views.setTextViewText(R.id.cockpit_widget_battery_charge, battery.charge.text)
-            views.setContentDescription(R.id.cockpit_widget_battery_charge, "Battery charge ${battery.charge.text}")
+            applyBatteryCurrentToRemoteViews(views, context, battery)
 
             views.setImageViewBitmap(R.id.cockpit_widget_ram_gauge, ramBmp)
             views.setContentDescription(R.id.cockpit_widget_ram_gauge, "RAM ${ram.valueText}")

@@ -21,11 +21,24 @@ import com.drivelift.app.ui.MainActivity
  */
 class CockpitGlanceWidgetReceiver : AppWidgetProvider() {
 
+    override fun onEnabled(context: Context) {
+        super.onEnabled(context)
+        runCatching { Graph.get(context).cockpit.telemetryMonitor.setWidgetBound(true) }
+    }
+
+    override fun onDisabled(context: Context) {
+        super.onDisabled(context)
+        runCatching { Graph.get(context).cockpit.telemetryMonitor.setWidgetBound(false) }
+    }
+
     override fun onUpdate(
         context: Context,
         appWidgetManager: AppWidgetManager,
         appWidgetIds: IntArray,
     ) {
+        if (appWidgetIds.isNotEmpty()) {
+            runCatching { Graph.get(context).cockpit.telemetryMonitor.setWidgetBound(true) }
+        }
         for (appWidgetId in appWidgetIds) {
             CockpitGlanceWidget.updateWidget(
                 context = context,
@@ -53,6 +66,9 @@ class CockpitGlanceWidgetReceiver : AppWidgetProvider() {
         super.onDeleted(context, appWidgetIds)
         for (appWidgetId in appWidgetIds) {
             CockpitGlanceWidget.clearWidgetState(context, appWidgetId)
+        }
+        if (!CockpitGlanceWidget.hasBoundWidgets(context)) {
+            runCatching { Graph.get(context).cockpit.telemetryMonitor.setWidgetBound(false) }
         }
     }
 

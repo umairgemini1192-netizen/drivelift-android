@@ -125,6 +125,7 @@ import androidx.compose.ui.semantics.setProgress
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
@@ -208,6 +209,7 @@ fun DynamicIslandOverlay(
     torchState: TorchUiState,
     pinnedApps: List<PinnedAppInfo>,
     widthDeltaDp: Int = 0,
+    cutoutWidthDp: Int = 0,
     onTapPrimary: (CockpitLiveActivity) -> Unit,
     onTapSecondary: (CockpitLiveActivity) -> Unit,
     onExpand: () -> Unit,
@@ -278,6 +280,7 @@ fun DynamicIslandOverlay(
         CollapsedSplitIslandRow(
             slotState = slotState,
             widthDeltaDp = widthDeltaDp,
+            cutoutWidthDp = cutoutWidthDp,
             onTapPrimary = { onExpand() },
             onTapSecondary = onTapSecondary,
             onLongPressExpand = onExpand,
@@ -369,6 +372,10 @@ fun DynamicIslandOverlay(
                 CollapsedPillSurfaceContent(
                     primary = primary,
                     primaryAccent = accent,
+                    cutoutWidthDp = cutoutWidthDp,
+                    widthDeltaDp = widthDeltaDp,
+                    minContentWidth = (minPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
+                    maxContentWidth = (currentWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
                 )
             }
         }
@@ -445,6 +452,10 @@ fun DynamicIslandOverlay(
 private fun CollapsedPillSurfaceContent(
     primary: CockpitLiveActivity,
     primaryAccent: Color,
+    cutoutWidthDp: Int = 0,
+    widthDeltaDp: Int = 0,
+    minContentWidth: Dp = Tokens.Cockpit.PillMinWidth - (Tokens.Medium * 2),
+    maxContentWidth: Dp = Tokens.Cockpit.PillMaxWidth - (Tokens.Medium * 2),
 ) {
     Row(
         modifier = Modifier
@@ -454,7 +465,14 @@ private fun CollapsedPillSurfaceContent(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.SpaceBetween,
     ) {
-        CollapsedPillBody(primary = primary, accent = primaryAccent)
+        CollapsedPillBody(
+            primary = primary,
+            accent = primaryAccent,
+            cutoutWidthDp = cutoutWidthDp,
+            widthDeltaDp = widthDeltaDp,
+            minContentWidth = minContentWidth,
+            maxContentWidth = maxContentWidth,
+        )
     }
 }
 
@@ -463,12 +481,24 @@ private fun CollapsedPillSurfaceContent(
  * every other activity shows its icon and label on the left and one metric on the right.
  */
 @Composable
-private fun RowScope.CollapsedPillBody(primary: CockpitLiveActivity, accent: Color) {
+private fun RowScope.CollapsedPillBody(
+    primary: CockpitLiveActivity,
+    accent: Color,
+    cutoutWidthDp: Int = 0,
+    widthDeltaDp: Int = 0,
+    minContentWidth: Dp = Tokens.Cockpit.PillMinWidth - (Tokens.Medium * 2),
+    maxContentWidth: Dp = Tokens.Cockpit.PillMaxWidth - (Tokens.Medium * 2),
+) {
     when (primary) {
         is CockpitLiveActivity.CallActivity -> CollapsedCallContent(primary)
         is CockpitLiveActivity.ScreenRecordingActivity -> CollapsedRecordingContent(primary)
         is CockpitLiveActivity.MapsNavActivity -> CollapsedNavigationContent(primary, accent)
-        is CockpitLiveActivity.IdleQuickDockActivity -> CollapsedIdleNetworkContent()
+        is CockpitLiveActivity.IdleQuickDockActivity -> CollapsedIdleNetworkContent(
+            cutoutWidthDp = cutoutWidthDp,
+            widthDeltaDp = widthDeltaDp,
+            minContentWidth = minContentWidth,
+            maxContentWidth = maxContentWidth,
+        )
         else -> {
             Row(
                 modifier = Modifier.weight(1f, fill = false),
@@ -512,6 +542,7 @@ fun CollapsedSplitIslandRow(
     onCyclePrevious: () -> Unit,
     modifier: Modifier = Modifier,
     onSwipeUpDismiss: (String) -> Unit = {},
+    cutoutWidthDp: Int = 0,
 ) {
     val haptics = LocalHapticFeedback.current
     val context = LocalContext.current
@@ -612,7 +643,14 @@ fun CollapsedSplitIslandRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        CollapsedPillBody(primary = primary, accent = primaryAccent)
+                        CollapsedPillBody(
+                            primary = primary,
+                            accent = primaryAccent,
+                            cutoutWidthDp = cutoutWidthDp,
+                            widthDeltaDp = widthDeltaDp,
+                            minContentWidth = (minPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
+                            maxContentWidth = (maxPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
+                        )
                     }
                 }
             }
