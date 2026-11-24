@@ -46,18 +46,32 @@ class UsageStatsForegroundFallbackMonitor(
 ) {
     private var pollJob: Job? = null
     private var lastQueryMs: Long = 0L
+    @Volatile
+    private var screenPaused: Boolean = false
 
     val isRunning: Boolean
         get() = pollJob?.isActive == true
 
     fun hasUsageAccess(): Boolean = hasUsageAccessProvider()
 
+    /** Immediately pauses fallback UsageStats polling while the screen is off. */
+    fun onScreenOff() {
+        screenPaused = true
+        stop()
+    }
+
+    /** Cleanly resumes fallback UsageStats polling on screen wake if still needed. */
+    fun onScreenOn(appLockEnabled: Boolean) {
+        screenPaused = false
+        sync(appLockEnabled)
+    }
+
     /**
      * Starts or stops fallback polling based on current App Lock enabled state, Accessibility
-     * connectivity, and Usage Access grant.
+     * connectivity, Usage Access grant, and interactive screen state.
      */
     fun sync(appLockEnabled: Boolean) {
-        val shouldPoll = appLockEnabled && !isAccessibilityConnected() && hasUsageAccessProvider()
+        val shouldPoll = appLockEnabled && !screenPaused && !isAccessibilityConnected() && hasUsageAccessProvider()
         if (!shouldPoll) {
             stop()
             return
@@ -67,7 +81,7 @@ class UsageStatsForegroundFallbackMonitor(
         lastQueryMs = (clockMs() - INITIAL_LOOKBACK_MS).coerceAtLeast(0L)
         pollJob = scope.launch {
             while (isActive) {
-                if (isAccessibilityConnected() || !hasUsageAccessProvider()) {
+                if (screenPaused || isAccessibilityConnected() || !hasUsageAccessProvider()) {
                     break
                 }
                 pollOnce()

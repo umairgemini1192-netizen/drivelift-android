@@ -231,7 +231,7 @@ class AppLockModule(
     }
 
     /**
-     * Immediately revokes all per-app grace grants when the screen turns off.
+     * Immediately revokes all per-app grace grants and pauses fallback polling when the screen turns off.
      */
     fun onScreenOff() {
         synchronized(unlockLock) {
@@ -239,6 +239,15 @@ class AppLockModule(
         }
         engine.onScreenOff()
         monitorFilter.reset()
+        fallbackMonitor.onScreenOff()
+        refreshUiState()
+    }
+
+    /**
+     * Resumes fallback foreground polling cleanly on screen wake when App Lock is enabled.
+     */
+    fun onScreenOn() {
+        fallbackMonitor.onScreenOn(appLockEnabled = prefs.config.value.enabled)
         refreshUiState()
     }
 

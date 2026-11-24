@@ -3,56 +3,62 @@ package com.drivelift.app.ui
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.PaddingValues
-import androidx.compose.foundation.layout.RowScope
-import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.shape.CircleShape
-import androidx.compose.material3.Button
-import androidx.compose.material3.ButtonDefaults
-import androidx.compose.material3.SliderDefaults
-import androidx.compose.ui.unit.DpSize
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.FlowRowScope
-import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.sizeIn
+import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
-import androidx.compose.material.icons.outlined.Forward10
+import androidx.compose.material.icons.outlined.AspectRatio
 import androidx.compose.material.icons.outlined.FitScreen
+import androidx.compose.material.icons.outlined.Forward10
 import androidx.compose.material.icons.outlined.Pause
 import androidx.compose.material.icons.outlined.PhotoCamera
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.Replay10
 import androidx.compose.material.icons.outlined.RotateRight
 import androidx.compose.material.icons.outlined.ScreenRotation
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.DpSize
+import androidx.compose.ui.zIndex
 import java.util.Locale
 
 /**
@@ -289,19 +295,19 @@ internal data class VideoUiState(
     val speed: Float,
     val quality: String,
     val capturing: Boolean = false,
-    /** The picture is zoomed in; a Fit button brings it back to the whole frame. */
+    /** The picture is zoomed in; tapping Fit brings it back to the whole frame. */
     val zoomed: Boolean = false,
+    /** True when the video fills the viewport edge-to-edge (center crop), false when fitted. */
+    val fillMode: Boolean = false,
 )
 
 /**
- * DriveLift's own player controls on a glass panel (owner decision #32), in labelled groups so
- * each control is easy to find (issue #14): the original quality on its own line; Speed, Step and
- * Picture groups that wrap onto more lines on a narrow phone or with large text; the scrubber; and
- * the playback row with Play/Pause as the one lead element. Every control keeps a 48 dp touch
- * target.
+ * DriveLift's custom player controls on a unified glass panel: original quality metadata, a clean
+ * icon-only utility transport bar (no 'Speed', 'Step', or 'Picture' text labels) including a
+ * Fit/Fill aspect-ratio toggle, an [isSeeking]-locked scrubber that never fights playback ticks,
+ * and centered -10s / Play-Pause / +10s playback controls. Every button enforces a 48 dp minimum
+ * touch target with ripple and haptic feedback, isolated above the tap-to-hide overlay.
  */
-// The custom scrubber thumb and track (SliderDefaults.Track with sliderState) are marked
-// experimental in Material 3 1.3; the API used is pinned by the Compose BOM in app/build.gradle.kts.
 @OptIn(
     androidx.compose.material3.ExperimentalMaterial3Api::class,
     androidx.compose.foundation.layout.ExperimentalLayoutApi::class,
@@ -311,107 +317,134 @@ internal fun VideoControls(
     state: VideoUiState,
     onPlayPause: () -> Unit,
     onSeek: (Long) -> Unit,
-    /** The speed the user picked from the Speed group. */
+    /** The speed the user picked from the speed toggle pills. */
     onSpeed: (Float) -> Unit,
     onCapture: () -> Unit,
     modifier: Modifier = Modifier,
+    /** Direct relative skip (e.g. -10s / +10s); falls back to [onSeek] when null. */
+    onSkip: ((Long) -> Unit)? = null,
     onFit: () -> Unit = {},
+    /** Toggles between Fit (contain) and Fill (center-crop edge-to-edge) aspect ratio. */
+    onToggleFillMode: () -> Unit = {},
     /** Turns the screen between portrait and landscape. */
     onRotate: () -> Unit = {},
     /** The video picture's quarter turns clockwise so far (0 to 3), for the Turn control. */
     turns: Int = 0,
     /** Turns the video picture 90 degrees clockwise. */
     onTurn: () -> Unit = {},
-    /** True while a finger is dragging the scrubber, false when it lifts. */
+    /** True while a finger is dragging/tapping the scrubber, false when it lifts. */
     onScrubbingChange: (Boolean) -> Unit = {},
     /** About one frame back (false) or forward (true). The player pauses first if it is playing. */
     onStepFrame: (Boolean) -> Unit = {},
 ) {
-    // While dragging, the bar and the time show the target, and the seek happens on release.
-    var dragTarget by remember { mutableStateOf<Long?>(null) }
-    val shown = dragTarget ?: state.position
+    val haptics = LocalHapticFeedback.current
+    // Explicit isSeeking lock prevents incoming position ticks from fighting finger drag/tap.
+    var isSeeking by remember { mutableStateOf(false) }
+    var seekPositionMs by remember { mutableLongStateOf(0L) }
+    val shown = if (isSeeking) seekPositionMs else state.position
     val duration = state.duration.coerceAtLeast(0)
     val scrubberInteraction = remember { MutableInteractionSource() }
 
-    GlassPanel(modifier.fillMaxWidth().testTag("video-controls")) {
+    GlassPanel(
+        modifier
+            .fillMaxWidth()
+            .zIndex(2f)
+            .pointerInput(Unit) {
+                detectTapGestures { /* Isolate control bar surface from tap-to-hide overlay. */ }
+            }
+            .testTag("video-controls"),
+    ) {
         Column(Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Small)) {
             // Never cut short: it wraps instead (owner decision #32).
             Text(
                 state.quality,
                 style = MaterialTheme.typography.labelMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                modifier = Modifier.fillMaxWidth().padding(top = Tokens.Small).testTag("video-quality"),
+                modifier = Modifier.fillMaxWidth().padding(top = Tokens.Tiny).testTag("video-quality"),
             )
-            // Tool groups, each with its name beside it: Speed (0.5x, and 1x that steps up to 1.5x
-            // and 2x), then Step and Picture, which share a line where they fit. Kept compact so
-            // the panel does not cover more of the picture than it must.
-            ControlGroup("Speed", "video-speed", Modifier.fillMaxWidth().padding(top = Tokens.Small)) {
+            // Consolidated icon-only utility transport bar (zero 'Speed', 'Step', or 'Picture'
+            // text labels) with Fit/Fill aspect-ratio toggle and full 48 dp touch targets.
+            FlowRow(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(top = Tokens.Small)
+                    .testTag("video-toolbar"),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small, Alignment.CenterHorizontally),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
                 SpeedChoice(
                     label = speedLabel(SLOW_SPEED),
                     description = "Speed ${speedLabel(SLOW_SPEED)}",
                     selected = state.speed == SLOW_SPEED,
                     tag = "video-speed-slow",
-                    onClick = { onSpeed(SLOW_SPEED) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSpeed(SLOW_SPEED)
+                    },
                 )
                 SpeedChoice(
                     label = speedLabel(steppedSpeedShown(state.speed)),
                     description = steppedSpeedDescription(state.speed),
                     selected = state.speed in STEPPED_SPEEDS,
                     tag = "video-speed-step",
-                    onClick = { onSpeed(nextSteppedSpeed(state.speed)) },
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onSpeed(nextSteppedSpeed(state.speed))
+                    },
                 )
-            }
-            FlowRow(
-                Modifier.fillMaxWidth().padding(top = Tokens.Small),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Section),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-            ) {
-                // Small steps of about one frame. Shown while playing too: a step pauses the video
-                // first (issue #29). Exact for constant frame rate; variable-rate or unknown-rate
-                // files can occasionally repeat or skip a frame, so the group says "step", not
-                // "frame" (docs/HOW_IT_WORKS.md).
-                ControlGroup("Step", "frame-step") {
-                    PlayerWell(
-                        onClick = { onStepFrame(false) },
-                        icon = Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
-                        description = "Step back about one frame",
-                    )
-                    PlayerWell(
-                        onClick = { onStepFrame(true) },
-                        icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
-                        description = "Step forward about one frame",
-                    )
-                }
-                WrappingControlGroup("Picture", "video-picture") {
-                    PlayerWell(onClick = onRotate, icon = Icons.Outlined.ScreenRotation, description = "Rotate the screen")
-                    PlayerWell(
-                        onClick = onTurn,
-                        icon = Icons.Outlined.RotateRight,
-                        description = turnDescription(turns),
-                        // The arrow turns with the picture, so the well shows the turn it is at.
-                        iconRotation = quarterTurnDegrees(turns).toFloat(),
-                    )
-                    PlayerWell(
-                        onClick = onCapture,
-                        icon = Icons.Outlined.PhotoCamera,
-                        description = "Save this frame as a photo",
-                        enabled = !state.capturing,
-                    )
-                    if (state.zoomed) {
-                        PlayerWell(onClick = onFit, icon = Icons.Outlined.FitScreen, description = "Fit the whole picture")
-                    }
-                }
+                PlayerWell(
+                    onClick = { onStepFrame(false) },
+                    icon = Icons.AutoMirrored.Outlined.KeyboardArrowLeft,
+                    description = "Step back about one frame",
+                )
+                PlayerWell(
+                    onClick = { onStepFrame(true) },
+                    icon = Icons.AutoMirrored.Outlined.KeyboardArrowRight,
+                    description = "Step forward about one frame",
+                )
+                val showFit = state.zoomed || state.fillMode
+                PlayerWell(
+                    onClick = {
+                        if (state.zoomed) onFit() else onToggleFillMode()
+                    },
+                    icon = if (showFit) Icons.Outlined.FitScreen else Icons.Outlined.AspectRatio,
+                    description = if (showFit) "Fit the whole picture" else "Fill screen",
+                    active = showFit,
+                    tag = "video-aspect-toggle",
+                )
+                PlayerWell(
+                    onClick = onRotate,
+                    icon = Icons.Outlined.ScreenRotation,
+                    description = "Rotate the screen",
+                )
+                PlayerWell(
+                    onClick = onTurn,
+                    icon = Icons.Outlined.RotateRight,
+                    description = turnDescription(turns),
+                    iconRotation = quarterTurnDegrees(turns).toFloat(),
+                )
+                PlayerWell(
+                    onClick = onCapture,
+                    icon = Icons.Outlined.PhotoCamera,
+                    description = "Save this frame as a photo",
+                    enabled = !state.capturing,
+                )
             }
             Slider(
                 value = if (duration > 0) (shown.toFloat() / duration).coerceIn(0f, 1f) else 0f,
-                onValueChange = {
-                    if (dragTarget == null) onScrubbingChange(true)
-                    dragTarget = (it * duration).toLong()
+                onValueChange = { fraction ->
+                    val target = (fraction.coerceIn(0f, 1f) * duration).toLong()
+                    if (!isSeeking) {
+                        isSeeking = true
+                        onScrubbingChange(true)
+                    }
+                    seekPositionMs = target
                 },
                 onValueChangeFinished = {
-                    dragTarget?.let(onSeek)
-                    dragTarget = null
+                    val target = seekPositionMs
+                    isSeeking = false
                     onScrubbingChange(false)
+                    onSeek(target)
                 },
                 enabled = duration > 0,
                 interactionSource = scrubberInteraction,
@@ -447,26 +480,35 @@ internal fun VideoControls(
                     modifier = Modifier.testTag("video-elapsed"),
                 )
                 Text(
-                    "-" + formatPlaybackTime(duration - shown),
+                    "-" + formatPlaybackTime((duration - shown).coerceAtLeast(0L)),
                     style = MaterialTheme.typography.labelLarge,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f).padding(start = Tokens.Small),
                     textAlign = androidx.compose.ui.text.style.TextAlign.End,
                 )
             }
-            // Playback: skip back, Play/Pause, skip forward.
+            // Playback: skip back 10s, Play/Pause, skip forward 10s.
             Row(
                 Modifier.fillMaxWidth().padding(vertical = Tokens.Small).testTag("video-playback"),
                 horizontalArrangement = Arrangement.spacedBy(Tokens.Section, Alignment.CenterHorizontally),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 PlayerWell(
-                    onClick = { onSeek(skipTarget(state.position, duration, -SKIP_MS)) },
+                    onClick = {
+                        if (onSkip != null) onSkip(-SKIP_MS)
+                        else onSeek(skipTarget(shown, duration, -SKIP_MS))
+                    },
                     icon = Icons.Outlined.Replay10,
                     description = "Back 10 seconds",
                 )
-                // The one lead element on the player (rule 6): a solid coral disc.
-                IconButton(onClick = onPlayPause, modifier = Modifier.size(Tokens.PlayerLead)) {
+                // The one lead element on the player (rule 6): solid electric cyan disc.
+                IconButton(
+                    onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+                        onPlayPause()
+                    },
+                    modifier = Modifier.sizeIn(minWidth = Tokens.PlayerLead, minHeight = Tokens.PlayerLead),
+                ) {
                     Box(
                         Modifier
                             .size(Tokens.PlayerLead)
@@ -482,7 +524,10 @@ internal fun VideoControls(
                     }
                 }
                 PlayerWell(
-                    onClick = { onSeek(skipTarget(state.position, duration, SKIP_MS)) },
+                    onClick = {
+                        if (onSkip != null) onSkip(SKIP_MS)
+                        else onSeek(skipTarget(shown, duration, SKIP_MS))
+                    },
                     icon = Icons.Outlined.Forward10,
                     description = "Forward 10 seconds",
                 )
@@ -491,57 +536,9 @@ internal fun VideoControls(
     }
 }
 
-/** A named group of controls: its name, then its buttons on the same line. */
-@Composable
-private fun ControlGroup(
-    label: String,
-    tag: String,
-    modifier: Modifier = Modifier,
-    content: @Composable RowScope.() -> Unit,
-) {
-    Row(
-        modifier.testTag(tag),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        content()
-    }
-}
-
 /**
- * A tool group whose buttons wrap onto a second line when a large text size leaves no room for
- * them all side by side. Each button keeps its full touch target (rule 7, issue #32).
- */
-@OptIn(androidx.compose.foundation.layout.ExperimentalLayoutApi::class)
-@Composable
-private fun WrappingControlGroup(
-    label: String,
-    tag: String,
-    modifier: Modifier = Modifier,
-    content: @Composable FlowRowScope.() -> Unit,
-) {
-    FlowRow(
-        modifier.testTag(tag),
-        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
-    ) {
-        Text(
-            label,
-            style = MaterialTheme.typography.labelMedium,
-            color = MaterialTheme.colorScheme.onSurfaceVariant,
-        )
-        content()
-    }
-}
-
-/**
- * One Speed button. The one playing now has a coral edge and coral text; the other is plain, so
- * the current speed is visible at a glance without competing with Play/Pause.
+ * One compact Speed toggle pill with full 48 dp touch target. Active speed uses primary cyan
+ * outline and text so current speed is legible at a glance without competing with Play/Pause.
  */
 @Composable
 private fun SpeedChoice(label: String, description: String, selected: Boolean, tag: String, onClick: () -> Unit) {
@@ -568,25 +565,47 @@ private fun SpeedChoice(label: String, description: String, selected: Boolean, t
     }
 }
 
-/** A secondary transport action: a 44 dp flat well inside a 48 dp touch target (rule 7). */
+/**
+ * A secondary icon-only transport action: a 44 dp flat well centered inside a 48 dp touch target
+ * with Material ripple and immediate haptic feedback (rule 7).
+ */
 @Composable
 private fun PlayerWell(
     onClick: () -> Unit,
     icon: androidx.compose.ui.graphics.vector.ImageVector,
     description: String,
     enabled: Boolean = true,
+    active: Boolean = false,
+    tag: String? = null,
     /** Degrees the icon is turned clockwise, for a well that shows a state (the Turn control). */
     iconRotation: Float = 0f,
 ) {
-    IconButton(onClick = onClick, enabled = enabled, modifier = Modifier.size(Tokens.TouchTarget)) {
+    val haptics = LocalHapticFeedback.current
+    val edgeColor = if (active) MaterialTheme.colorScheme.primary else GlassPalette.WellEdge
+    val iconTint = if (active) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+    IconButton(
+        onClick = {
+            haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
+            onClick()
+        },
+        enabled = enabled,
+        modifier = Modifier
+            .sizeIn(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
+            .then(if (tag != null) Modifier.testTag(tag) else Modifier),
+    ) {
         Box(
             Modifier
                 .size(Tokens.PlayerWell)
                 .background(GlassPalette.Well, CircleShape)
-                .border(Tokens.Hairline, GlassPalette.WellEdge, CircleShape),
+                .border(Tokens.Hairline, edgeColor, CircleShape),
             contentAlignment = Alignment.Center,
         ) {
-            Icon(icon, contentDescription = description, modifier = Modifier.graphicsLayer(rotationZ = iconRotation))
+            Icon(
+                icon,
+                contentDescription = description,
+                tint = iconTint,
+                modifier = Modifier.graphicsLayer(rotationZ = iconRotation),
+            )
         }
     }
 }

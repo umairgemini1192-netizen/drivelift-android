@@ -75,7 +75,7 @@ class CockpitModule(
         CockpitTorchController(AndroidTorchHardwareBackend(app))
     }
 
-    val quickControlsController: CockpitQuickControlsController by lazy {
+    private val quickControlsLazy = lazy {
         CockpitQuickControlsController(
             context = app,
             clock = graph.clock,
@@ -84,9 +84,31 @@ class CockpitModule(
             },
         )
     }
+    val quickControlsController: CockpitQuickControlsController by quickControlsLazy
 
-    val telemetryMonitor: CockpitTelemetryMonitor by lazy {
+    private val telemetryMonitorLazy = lazy {
         CockpitTelemetryMonitor(context = app)
+    }
+    val telemetryMonitor: CockpitTelemetryMonitor by telemetryMonitorLazy
+
+    /** Immediately pauses all Cockpit background polling loops when the screen turns off. */
+    fun onScreenOff() {
+        if (telemetryMonitorLazy.isInitialized()) {
+            telemetryMonitor.onBatteryOrScreenEvent(Intent(Intent.ACTION_SCREEN_OFF))
+        }
+        if (quickControlsLazy.isInitialized()) {
+            quickControlsController.onScreenOff()
+        }
+    }
+
+    /** Cleanly resumes active Cockpit polling loops when the screen wakes. */
+    fun onScreenOn() {
+        if (telemetryMonitorLazy.isInitialized()) {
+            telemetryMonitor.onBatteryOrScreenEvent(Intent(Intent.ACTION_SCREEN_ON))
+        }
+        if (quickControlsLazy.isInitialized()) {
+            quickControlsController.onScreenOn()
+        }
     }
 
     val telemetryAdapter: DriveLiftTelemetryAdapter by lazy {

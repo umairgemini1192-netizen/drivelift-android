@@ -79,15 +79,16 @@ class CockpitWidgetModelTest {
 
     @Test
     fun smallCurrentWobbleDoesNotRedrawTheWidgetButARealChangeDoes() {
-        assertFalse(CockpitWidgetModel.currentChangedEnough(-510, -530))
+        assertFalse(CockpitWidgetModel.currentChangedEnough(-510, -515))
+        assertTrue(CockpitWidgetModel.currentChangedEnough(-510, -520))
         assertTrue(CockpitWidgetModel.currentChangedEnough(-510, -620))
-        assertTrue("sign flip is a real change", CockpitWidgetModel.currentChangedEnough(-20, 30))
+        assertTrue("sign flip is a real change", CockpitWidgetModel.currentChangedEnough(-5, 5))
         assertTrue(CockpitWidgetModel.currentChangedEnough(null, -300))
         assertFalse(CockpitWidgetModel.currentChangedEnough(null, null))
     }
 
     @Test
-    fun chargeCounterConvertsMicroAmpHoursToMilliAmpHoursAndFiltersSmallDrift() {
+    fun chargeCounterConvertsMicroAmpHoursToMilliAmpHoursAndRedrawsOnOneMahChange() {
         val reading = CockpitWidgetModel.formatBatteryCharge(4_210_000L)
         assertEquals(4210, reading.milliAmpHours)
         assertEquals("4,210 mAh", reading.text)
@@ -100,8 +101,8 @@ class CockpitWidgetModelTest {
         assertNull(zero.milliAmpHours)
         assertEquals("-- mAh", zero.text)
 
-        assertFalse(CockpitWidgetModel.chargeChangedEnough(4210, 4213))
-        assertTrue(CockpitWidgetModel.chargeChangedEnough(4210, 4216))
+        assertFalse(CockpitWidgetModel.chargeChangedEnough(4210, 4210))
+        assertTrue(CockpitWidgetModel.chargeChangedEnough(4210, 4211))
         assertTrue(CockpitWidgetModel.chargeChangedEnough(null, 4210))
         assertFalse(CockpitWidgetModel.chargeChangedEnough(null, null))
     }

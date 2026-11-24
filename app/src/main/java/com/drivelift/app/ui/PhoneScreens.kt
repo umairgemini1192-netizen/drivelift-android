@@ -12,10 +12,13 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
+import androidx.compose.foundation.layout.IntrinsicSize
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -23,6 +26,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
 import androidx.compose.foundation.lazy.grid.LazyGridState
@@ -37,11 +41,16 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.DriveFileMove
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.Send
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.CheckCircle
+import androidx.compose.material.icons.outlined.CleaningServices
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.CloudDone
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Layers
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.PieChart
 import androidx.compose.material.icons.automirrored.outlined.KeyboardArrowRight
@@ -76,6 +85,7 @@ import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -94,12 +104,14 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.drivelift.app.data.LocalFileCategory
 import com.drivelift.app.data.MediaAccess
 import com.drivelift.app.data.MediaFolder
 import com.drivelift.app.data.MediaItem
 import com.drivelift.app.data.SortField
 import com.drivelift.app.data.matchesQuery
 import com.drivelift.app.data.sortedFiles
+import com.drivelift.app.drive.DriveAbout
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -119,6 +131,11 @@ fun PhoneScreen(
     onMoveFolder: (Long) -> Unit,
     onOpenFavorites: () -> Unit = {},
     onOpenStorage: () -> Unit = {},
+    onOpenAppLock: () -> Unit = {},
+    onOpenCockpit: () -> Unit = {},
+    onOpenCleaner: () -> Unit = {},
+    onOpenExplorer: (LocalFileCategory) -> Unit = {},
+    onOpenDrive: () -> Unit = {},
     onOpenWhatsAppQuickSender: () -> Unit = {},
     onSendFolderToWhatsApp: (Long) -> Unit = {},
     /** Offline OCR search and Smart rules; the row is hidden when null. */
@@ -134,45 +151,66 @@ fun PhoneScreen(
     val account by vm.account.collectAsStateWithLifecycle()
     val totalBytes = remember(media) { media.sumOf { it.size } }
 
+    val listState = rememberPersistentLazyListState(vm.scrollPositions, "tab:phone:root")
+
     Column(Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.weight(1f).fillMaxWidth()) {
-        item(key = "lead") {
-            Column(Modifier.padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Header, bottom = Tokens.Small)) {
-                Text(
-                    formatBytes(context, totalBytes),
-                    style = MaterialTheme.typography.displayLarge,
-                )
-                Text(
-                    "on this phone, in ${media.size} photos and videos across ${folders.size} folders",
-                    style = MaterialTheme.typography.bodyLarge,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-        item(key = "drive") {
-            DriveStatusRow(
+    LazyColumn(
+        state = listState,
+        modifier = Modifier.weight(1f).fillMaxWidth().testTag("phone-root-list"),
+    ) {
+        item(key = "header") {
+            PhoneCommandHeader(
+                totalBytes = totalBytes,
+                mediaCount = media.size,
+                folderCount = folders.size,
                 conn = conn,
-                label = account?.let { a ->
-                    val quota = if (a.limitBytes > 0)
-                        "${formatBytes(context, a.limitBytes - a.usedBytes)} free"
-                    else "${formatBytes(context, a.usedBytes)} used"
-                    "${a.email}  ·  $quota"
+                account = account,
+                onDrivePillClick = {
+                    if (conn == DriveConn.CONNECTED) onOpenDrive() else vm.connectDrive(interactive = true)
                 },
-                onConnect = { vm.connectDrive(interactive = true) },
-                modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Medium),
             )
         }
-        if (favoriteCounts.any) {
-            item(key = "favorites") {
-                FavoritesEntryRow(
-                    counts = favoriteCounts,
-                    onClick = onOpenFavorites,
-                    modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
-                )
-            }
+        item(key = "bento") {
+            PhoneCommandBentoGrid(
+                favoriteSubtitle = when {
+                    favoriteCounts.shown == 1 -> "1 folder or file"
+                    favoriteCounts.shown > 1 -> "${favoriteCounts.shown} saved"
+                    favoriteCounts.hidden > 0 -> "Another account"
+                    else -> "Starred items"
+                },
+                onOpenAppLock = onOpenAppLock,
+                onOpenCockpit = onOpenCockpit,
+                onOpenCleaner = onOpenCleaner,
+                onOpenStorage = onOpenStorage,
+                onOpenFavorites = onOpenFavorites,
+                onOpenAllFiles = { onOpenExplorer(LocalFileCategory.ALL) },
+                modifier = Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+            )
         }
-        item(key = "storage") {
-            StorageEntryRow(onOpenStorage, Modifier.padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny))
+        item(key = "categories") {
+            LazyRow(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("phone-category-filters"),
+                contentPadding = PaddingValues(horizontal = Tokens.Edge, vertical = Tokens.Tiny),
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                val quickCategories = listOf(
+                    LocalFileCategory.DOCUMENTS,
+                    LocalFileCategory.DOWNLOADS,
+                    LocalFileCategory.APKS_ZIPS,
+                    LocalFileCategory.PHOTOS,
+                    LocalFileCategory.VIDEOS,
+                )
+                items(quickCategories, key = { it.name }) { category ->
+                    ExplorerCategoryChip(
+                        label = category.label,
+                        selected = false,
+                        onClick = { onOpenExplorer(category) },
+                        modifier = Modifier.testTag("phone-cat-${category.name.lowercase()}"),
+                    )
+                }
+            }
         }
         if (MediaAccess.isPartial(context)) {
             item(key = "partial") {
@@ -188,7 +226,7 @@ fun PhoneScreen(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .padding(start = Tokens.Edge, end = Tokens.Small, top = Tokens.Small),
+                    .padding(start = Tokens.Edge, end = Tokens.Small, top = Tokens.Tiny),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 Text(
@@ -250,6 +288,275 @@ fun PhoneScreen(
     }
 }
 
+@Composable
+private fun PhoneCommandHeader(
+    totalBytes: Long,
+    mediaCount: Int,
+    folderCount: Int,
+    conn: DriveConn,
+    account: DriveAbout?,
+    onDrivePillClick: () -> Unit,
+) {
+    val context = LocalContext.current
+    val stacked = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .padding(start = Tokens.Edge, end = Tokens.Edge, top = Tokens.Medium, bottom = Tokens.Small),
+    ) {
+        if (stacked) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    formatBytes(context, totalBytes),
+                    style = MaterialTheme.typography.displaySmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+            Text(
+                "$mediaCount items  \u00B7  $folderCount folders",
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.height(Tokens.Small))
+            DriveStatusPill(conn = conn, account = account, onClick = onDrivePillClick)
+        } else {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Column(Modifier.weight(1f).padding(end = Tokens.Small)) {
+                    Text(
+                        formatBytes(context, totalBytes),
+                        style = MaterialTheme.typography.displaySmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "$mediaCount items  \u00B7  $folderCount folders",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                DriveStatusPill(conn = conn, account = account, onClick = onDrivePillClick)
+            }
+        }
+    }
+}
+
+/**
+ * Compact Drive status pill in the Phone top header, replacing the oversized status banner.
+ */
+@Composable
+fun DriveStatusPill(
+    conn: DriveConn,
+    account: DriveAbout?,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val context = LocalContext.current
+    val label = when (conn) {
+        DriveConn.CONNECTED -> {
+            val free = account?.takeIf { it.limitBytes > 0 }?.let {
+                formatBytes(context, (it.limitBytes - it.usedBytes).coerceAtLeast(0L))
+            }
+            if (free != null) "Drive \u00B7 $free" else "Drive connected"
+        }
+        DriveConn.CONNECTING, DriveConn.UNKNOWN -> "Connecting"
+        DriveConn.DISCONNECTED -> "Connect Drive"
+    }
+    val dotColor = when (conn) {
+        DriveConn.CONNECTED -> MaterialTheme.colorScheme.tertiary
+        DriveConn.CONNECTING, DriveConn.UNKNOWN -> MaterialTheme.colorScheme.primary
+        DriveConn.DISCONNECTED -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    val clickDesc = when (conn) {
+        DriveConn.CONNECTED -> "Google Drive connected. Open My Drive"
+        DriveConn.CONNECTING, DriveConn.UNKNOWN -> "Connecting to Google Drive"
+        DriveConn.DISCONNECTED -> "Connect Google Drive"
+    }
+    GlassSurface(
+        level = GlassLevel.Island,
+        shape = Tokens.PillShape,
+        modifier = modifier
+            .defaultMinSize(minHeight = Tokens.TouchTarget)
+            .testTag("phone-drive-status-pill"),
+        onClick = onClick,
+        onClickLabel = clickDesc,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            if (conn == DriveConn.CONNECTING || conn == DriveConn.UNKNOWN) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(Tokens.IconSmall),
+                    strokeWidth = Tokens.Stroke,
+                )
+            } else {
+                Box(
+                    Modifier
+                        .size(Tokens.StatusDot)
+                        .clip(CircleShape)
+                        .background(dotColor),
+                )
+            }
+            Text(
+                label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (conn == DriveConn.DISCONNECTED) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun PhoneCommandBentoGrid(
+    favoriteSubtitle: String,
+    onOpenAppLock: () -> Unit,
+    onOpenCockpit: () -> Unit,
+    onOpenCleaner: () -> Unit,
+    onOpenStorage: () -> Unit,
+    onOpenFavorites: () -> Unit,
+    onOpenAllFiles: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("phone-bento-grid"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            CommandBentoTile(
+                title = "App Lock",
+                subtitle = "Biometric & PIN",
+                icon = Icons.Outlined.Lock,
+                iconTint = MaterialTheme.colorScheme.primary,
+                onClick = onOpenAppLock,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-applock-tile"),
+            )
+            CommandBentoTile(
+                title = "Cockpit",
+                subtitle = "Island & Widget",
+                icon = Icons.Outlined.Layers,
+                iconTint = MaterialTheme.colorScheme.secondary,
+                onClick = onOpenCockpit,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-cockpit-tile"),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            CommandBentoTile(
+                title = "Cleaner & Sleep",
+                subtitle = "Junk & Sleep Mode",
+                icon = Icons.Outlined.CleaningServices,
+                iconTint = MaterialTheme.colorScheme.tertiary,
+                onClick = onOpenCleaner,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-cleaner-tile"),
+            )
+            CommandBentoTile(
+                title = "Storage",
+                subtitle = "Sizes & duplicates",
+                icon = Icons.Outlined.PieChart,
+                iconTint = MaterialTheme.colorScheme.primary,
+                onClick = onOpenStorage,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("storage-entry"),
+            )
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth().height(IntrinsicSize.Max),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+        ) {
+            CommandBentoTile(
+                title = "Favorites",
+                subtitle = favoriteSubtitle,
+                icon = Icons.Filled.Star,
+                iconTint = MaterialTheme.colorScheme.secondary,
+                onClick = onOpenFavorites,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-favorites-tile"),
+            )
+            CommandBentoTile(
+                title = "All Files",
+                subtitle = "Device storage",
+                icon = Icons.Outlined.FolderOpen,
+                iconTint = MaterialTheme.colorScheme.tertiary,
+                onClick = onOpenAllFiles,
+                modifier = Modifier.weight(1f).fillMaxHeight().testTag("bento-explorer-tile"),
+            )
+        }
+    }
+}
+
+@Composable
+private fun CommandBentoTile(
+    title: String,
+    subtitle: String,
+    icon: ImageVector,
+    iconTint: Color,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier,
+) {
+    val wellShape = Tokens.concentricShape(Tokens.PanelRadius, Tokens.Small)
+    GlassSurface(
+        level = GlassLevel.Panel,
+        shape = Tokens.PanelShape,
+        modifier = modifier.defaultMinSize(minHeight = Tokens.TouchTarget),
+        onClick = onClick,
+        onClickLabel = "Open $title",
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(horizontal = Tokens.Medium, vertical = Tokens.Small),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Box(
+                modifier = Modifier
+                    .size(Tokens.BentoIconWell)
+                    .clip(wellShape)
+                    .background(GlassPalette.Well)
+                    .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape),
+                contentAlignment = Alignment.Center,
+            ) {
+                Icon(icon, contentDescription = null, tint = iconTint, modifier = Modifier.size(Tokens.IconSmall))
+            }
+            Column(Modifier.weight(1f).padding(start = Tokens.Small)) {
+                Text(
+                    title,
+                    style = MaterialTheme.typography.titleSmall,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
 /**
  * The move pill for phone files at the bottom of a Phone screen, rising in while files wait and
  * sinking away once they are moved or let go. [hereBucketId] is the folder shown, or null on the
@@ -281,28 +588,6 @@ private fun ColumnScope.PhoneMovePillBar(
             onCancel = vm::cancelPhoneMoveClip,
             modifier = Modifier.padding(horizontal = Tokens.Small, vertical = Tokens.Small),
         )
-    }
-}
-
-/** Opens Storage insights (issue #42). */
-@Composable
-private fun StorageEntryRow(onOpen: () -> Unit, modifier: Modifier = Modifier) {
-    GlassPanel(modifier = modifier.fillMaxWidth().testTag("storage-entry"), onClick = onOpen, onClickLabel = "Open storage") {
-        Row(
-            Modifier.padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(Icons.Outlined.PieChart, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-            Column(Modifier.weight(1f).padding(start = Tokens.Medium)) {
-                Text("Storage", style = MaterialTheme.typography.titleSmall)
-                Text(
-                    "Sizes, largest files, duplicates",
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            Icon(Icons.AutoMirrored.Outlined.KeyboardArrowRight, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-        }
     }
 }
 
@@ -542,7 +827,7 @@ fun FolderScreen(
         if (vm.selection.value.isEmpty()) viewingId = item.id else vm.toggle(item.id)
     }
 
-    val gridState = rememberLazyGridState()
+    val gridState = rememberPersistentLazyGridState(vm.scrollPositions, "tab:phone:folder:$bucketId")
     val autoScroll = remember { mutableFloatStateOf(0f) }
     val pinchActive = remember { booleanArrayOf(false) }
     LaunchedEffect(autoScroll.floatValue) {
@@ -759,7 +1044,9 @@ fun FolderScreen(
                     vm = vm,
                     item = item,
                     onClose = { viewingId = NOT_VIEWING },
-                    onDelete = { deleting = longArrayOf(item.id) },
+                    onDelete = { deleting = longArrayOf(viewingId) },
+                    folderItems = shown,
+                    onItemChanged = { viewingId = it.id },
                 )
             }
         }

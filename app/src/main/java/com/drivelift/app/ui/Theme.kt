@@ -136,6 +136,14 @@ object GlassPalette {
     /** Bottom gradient scrim over media tiles so white captions remain legible. */
     val ThumbScrim = Color(0xCC070A1E)
 
+    /** Pure OLED black surface for immersive video playback with zero purple/navy bars. */
+    val OledBlack = Color(0xFF000000)
+
+    /** Dark top gradient scrim over full-screen video so header icons stay readable on bright frames. */
+    val VideoHeaderScrimTop = Color(0xE6000000)
+    val VideoHeaderScrimMid = Color(0x99000000)
+    val VideoHeaderScrimBottom = Color(0x00000000)
+
     // Futuristic Cyber-Glass Bento HUD tokens (shared between GlassWidgetStyle and in-app parity preview).
     val HudShellFill = PanelFillTop
     val HudShellDeep = IslandFillBottom

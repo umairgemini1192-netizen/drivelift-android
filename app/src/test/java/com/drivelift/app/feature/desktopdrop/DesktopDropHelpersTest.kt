@@ -1,25 +1,41 @@
 package com.drivelift.app.feature.desktopdrop
 
 import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.Color
 import androidx.test.core.app.ApplicationProvider
+import com.drivelift.app.data.LocalFileType
+import com.drivelift.app.feature.desktopdrop.data.AndroidDropThumbnailProvider
 import com.drivelift.app.feature.desktopdrop.data.DropPathSanitizer
+import com.drivelift.app.feature.desktopdrop.data.DropThumbnailSupport
+import com.drivelift.app.feature.desktopdrop.data.FileSharedItemSource
 import com.drivelift.app.feature.desktopdrop.model.DropJson
+import com.drivelift.app.feature.desktopdrop.model.SharedDropItem
 import com.drivelift.app.feature.desktopdrop.network.LanNetworkMonitor
 import com.drivelift.app.feature.desktopdrop.network.LocalHotspotController
 import com.drivelift.app.feature.desktopdrop.qr.QrBitmapGenerator
 import com.drivelift.app.feature.desktopdrop.server.ResumableUploadStore
 import com.drivelift.app.feature.desktopdrop.server.SessionAuthManager
 import com.drivelift.app.feature.desktopdrop.service.TransferPowerLockHolder
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import org.robolectric.annotation.GraphicsMode
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.file.Files
 
 @RunWith(RobolectricTestRunner::class)
+@GraphicsMode(GraphicsMode.Mode.NATIVE)
 @Config(sdk = [34])
 class DesktopDropHelpersTest {
 
@@ -95,5 +111,84 @@ class DesktopDropHelpersTest {
         assertTrue(html.contains("16 * 1024 * 1024"))
         assertTrue(html.contains("64 * 1024 * 1024"))
         assertTrue(html.contains("5000"))
+        assertTrue(html.contains("/thumb/"))
+        assertTrue(html.contains("badge-latest"))
+        assertTrue(html.contains("addedAtMs"))
+        assertFalse("Browser HTML must not contain em-dashes", html.contains('\u2014'))
+    }
+
+    @Test
+    fun thumbnailSupportClassifiesAllTypesAndAndroidProviderDownscalesAndCachesImages() = runBlocking {
+        assertEquals(
+            LocalFileType.IMAGE,
+            DropThumbnailSupport.classifyItem(SharedDropItem("1", "photo", "", 100L, "image/jpeg")),
+        )
+        assertEquals(
+            LocalFileType.VIDEO,
+            DropThumbnailSupport.classifyItem(SharedDropItem("2", "clip.mp4", "", 100L, "application/octet-stream")),
+        )
+        assertEquals(
+            LocalFileType.PDF,
+            DropThumbnailSupport.classifyItem(SharedDropItem("3", "report.pdf", "", 100L, "application/pdf")),
+        )
+        assertEquals(
+            LocalFileType.APK,
+            DropThumbnailSupport.classifyItem(SharedDropItem("4", "app.apk", "", 100L, "application/vnd.android.package-archive")),
+        )
+        assertEquals(
+            LocalFileType.DOCUMENT,
+            DropThumbnailSupport.classifyItem(SharedDropItem("5", "notes.docx", "", 100L, "application/octet-stream")),
+        )
+        assertEquals(1, DropThumbnailSupport.computeInSampleSize(200, 150, 256))
+        assertEquals(8, DropThumbnailSupport.computeInSampleSize(2048, 1536, 256))
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val tempDir = Files.createTempDirectory("drop-thumb-test").toFile()
+        try {
+            val bigPng = File(tempDir, "SYNTH_BIG.png")
+            val bmp = Bitmap.createBitmap(640, 480, Bitmap.Config.ARGB_8888)
+            bmp.eraseColor(Color.CYAN)
+            FileOutputStream(bigPng).use { out -> bmp.compress(Bitmap.CompressFormat.PNG, 100, out) }
+            bmp.recycle()
+
+            val pdfFile = File(tempDir, "SYNTH_DOC.pdf").apply { writeText("%PDF-1.4") }
+
+            val provider = AndroidDropThumbnailProvider(context, FileSharedItemSource())
+            val imageItem = SharedDropItem(
+                id = "img-big",
+                name = "SYNTH_BIG.png",
+                sizeBytes = bigPng.length(),
+                mimeType = "image/png",
+                localFilePath = bigPng.absolutePath,
+                addedAtMs = 1000L,
+            )
+            val first = provider.loadThumbnail(imageItem, maxEdgePx = 256)
+            assertNotNull(first)
+            assertEquals("image/jpeg", first!!.contentType)
+            assertTrue(first.bytes.isNotEmpty())
+
+            val decoded = BitmapFactory.decodeByteArray(first.bytes, 0, first.bytes.size)
+            assertNotNull(decoded)
+            assertTrue("Scaled width should be <= 256, got ${decoded.width}", decoded.width <= 256)
+            assertTrue("Scaled height should be <= 256, got ${decoded.height}", decoded.height <= 256)
+            decoded.recycle()
+
+            // Repeat request hits in-memory LRU cache.
+            val second = provider.loadThumbnail(imageItem, maxEdgePx = 256)
+            assertSame(first, second)
+
+            // Non-visual file returns null cleanly.
+            val pdfItem = SharedDropItem(
+                id = "pdf-1",
+                name = "SYNTH_DOC.pdf",
+                sizeBytes = pdfFile.length(),
+                mimeType = "application/pdf",
+                localFilePath = pdfFile.absolutePath,
+                addedAtMs = 900L,
+            )
+            assertNull(provider.loadThumbnail(pdfItem))
+        } finally {
+            tempDir.deleteRecursively()
+        }
     }
 }

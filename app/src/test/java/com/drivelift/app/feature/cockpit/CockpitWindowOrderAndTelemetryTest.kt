@@ -143,7 +143,7 @@ class CockpitWindowOrderAndTelemetryTest {
             ),
         )
 
-        // Charge counter (mAh) delta >= 5 mAh triggers push; smaller drift does not.
+        // Charge counter (mAh) delta >= 1 mAh triggers push; unchanged mAh does not.
         val withCharge = base.copy(
             battery = base.battery.copy(charge = CockpitWidgetModel.formatBatteryCharge(4_000_000L)),
         )
@@ -152,7 +152,7 @@ class CockpitWindowOrderAndTelemetryTest {
                 withCharge,
                 withCharge.copy(
                     battery = withCharge.battery.copy(
-                        charge = CockpitWidgetModel.formatBatteryCharge(4_002_000L),
+                        charge = CockpitWidgetModel.formatBatteryCharge(4_000_500L),
                     ),
                 ),
             ),
@@ -162,7 +162,7 @@ class CockpitWindowOrderAndTelemetryTest {
                 withCharge,
                 withCharge.copy(
                     battery = withCharge.battery.copy(
-                        charge = CockpitWidgetModel.formatBatteryCharge(4_010_000L),
+                        charge = CockpitWidgetModel.formatBatteryCharge(4_001_000L),
                     ),
                 ),
             ),

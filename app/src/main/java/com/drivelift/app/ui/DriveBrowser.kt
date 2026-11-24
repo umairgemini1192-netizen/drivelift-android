@@ -29,8 +29,10 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.aspectRatio
+import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
@@ -48,17 +50,22 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.outlined.ArrowBack
 import androidx.compose.material.icons.automirrored.outlined.InsertDriveFile
 import androidx.compose.material.icons.automirrored.outlined.ViewList
+import androidx.compose.material.icons.outlined.Android
 import androidx.compose.material.icons.outlined.BrokenImage
 import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CreateNewFolder
 import androidx.compose.material.icons.outlined.Description
 import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderZip
 import androidx.compose.material.icons.outlined.GridView
 import androidx.compose.material.icons.outlined.Image
+import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.PhotoSizeSelectLarge
 import androidx.compose.material.icons.outlined.PictureAsPdf
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.Slideshow
+import androidx.compose.material.icons.outlined.TableChart
 import androidx.compose.material.icons.outlined.Videocam
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -93,6 +100,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
@@ -107,8 +115,10 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.drive.AuthRequiredException
 import com.drivelift.app.drive.DriveClient
 import com.drivelift.app.drive.DriveFile
+import com.drivelift.app.drive.DriveFileVisualKind
 import com.drivelift.app.drive.DrivePreviewKind
 import com.drivelift.app.drive.classifyDriveFile
+import com.drivelift.app.drive.classifyDriveVisualKind
 import com.drivelift.app.drive.driveMemoryCacheKey
 import com.drivelift.app.drive.drivePreviewTypeLabel
 import com.drivelift.app.transfer.Destination
@@ -226,8 +236,6 @@ fun DriveBrowser(
     LaunchedEffect(viewerFile != null || selecting) {
         onViewingFileChange?.invoke(viewerFile != null || selecting)
     }
-    val gridState = rememberLazyGridState()
-    val listState = rememberLazyListState()
     val thumbCache = remember { LruCache<String, ImageBitmap>(120) }
     val accountKey = account?.email.orEmpty()
     val lastLoggedMetrics = remember { arrayOf<PickerWindowMetrics?>(null) }
@@ -553,6 +561,10 @@ fun DriveBrowser(
                         modifier = Modifier.padding(Tokens.Edge),
                     )
                     !pickMode && gridView -> {
+                        val gridState = rememberPersistentLazyGridState(
+                            store = vm.scrollPositions,
+                            key = "tab:drive:browse:grid:${here.id}",
+                        )
                         LazyVerticalGrid(
                             columns = GridCells.Adaptive(minSize = gridDensity.driveMinCell),
                             state = gridState,
@@ -571,15 +583,14 @@ fun DriveBrowser(
                             items(
                                 list,
                                 key = { it.id },
-                                span = { file -> if (file.isFolder) GridItemSpan(maxLineSpan) else GridItemSpan(1) },
+                                span = { file ->
+                                    if (file.isFolder && maxLineSpan >= 4) GridItemSpan(2) else GridItemSpan(1)
+                                },
                                 contentType = { file -> if (file.isFolder) 0 else 1 },
                             ) { file ->
                                 if (file.isFolder) {
-                                    DriveRow(
+                                    DriveFolderGridTile(
                                         file = file,
-                                        sizeLabel = null,
-                                        thumb = null,
-                                        padded = false,
                                         onClick = { openFolder(file) },
                                         favorite = folderStar(file),
                                         onToggleFavorite = { vm.toggleDriveFavorite(file, path) },
@@ -605,7 +616,15 @@ fun DriveBrowser(
                             }
                         }
                     }
-                    else -> LazyColumn(state = listState, modifier = Modifier.fillMaxSize()) {
+                    else -> {
+                        val listState = rememberPersistentLazyListState(
+                            store = vm.scrollPositions,
+                            key = "tab:drive:${if (pickMode) "pick" else "browse"}:list:${here.id}",
+                        )
+                        LazyColumn(
+                            state = listState,
+                            modifier = Modifier.fillMaxSize().testTag("drive-media-list"),
+                        ) {
                         items(list, key = { it.id }) { file ->
                             val thumb = if (!file.isFolder && !pickMode) {
                                 rememberDriveThumb(
@@ -637,6 +656,7 @@ fun DriveBrowser(
                                 favorite = if (file.isFolder) folderStar(file) else null,
                                 onToggleFavorite = { vm.toggleDriveFavorite(file, path) },
                             )
+                        }
                         }
                     }
                 }
@@ -771,10 +791,18 @@ fun DriveBrowser(
                     cachedThumb = thumbCache.get(driveMemoryCacheKey(accountKey, openFile)),
                     onClose = { viewerFile = null },
                     onOpenExternally = {
-                        openInDrive(context, openFile.id)?.let { scope.launch { vm.messages.emit(it) } }
+                        val active = viewerFile ?: openFile
+                        openInDrive(context, active.id)?.let { scope.launch { vm.messages.emit(it) } }
                     },
-                    onDelete = { askTrash(listOf(openFile)) },
+                    onDelete = { askTrash(listOf(viewerFile ?: openFile)) },
                     location = path,
+                    folderFiles = shown.orEmpty(),
+                    thumbProvider = { target -> thumbCache.get(driveMemoryCacheKey(accountKey, target)) },
+                    onFileChanged = { active -> viewerFile = active },
+                    onDeleteFile = { target -> askTrash(listOf(target)) },
+                    onOpenFileExternally = { target ->
+                        openInDrive(context, target.id)?.let { scope.launch { vm.messages.emit(it) } }
+                    },
                 )
             }
         }
@@ -926,6 +954,84 @@ private fun rememberDriveThumb(
     return state
 }
 
+/**
+ * Futuristic 2-column GlassSurface folder tile for My Drive (replaces repetitive full-width rows
+ * in grid view while preserving the 48 dp favorite star and folder navigation).
+ */
+@Composable
+private fun DriveFolderGridTile(
+    file: DriveFile,
+    onClick: () -> Unit,
+    favorite: Boolean? = null,
+    onToggleFavorite: () -> Unit = {},
+) {
+    val wellShape = Tokens.concentricShape(Tokens.PanelRadius, Tokens.Medium)
+    GlassSurface(
+        level = GlassLevel.Panel,
+        shape = Tokens.PanelShape,
+        modifier = Modifier
+            .fillMaxWidth()
+            .defaultMinSize(minHeight = Tokens.TouchTarget)
+            .testTag("drive-folder-tile-${file.id}"),
+        onClick = onClick,
+        onClickLabel = "Open folder ${file.name}",
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = Tokens.Medium, end = Tokens.Tiny, top = Tokens.Medium, bottom = Tokens.Medium),
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(Tokens.DriveFolderIconWell)
+                        .clip(wellShape)
+                        .background(GlassPalette.Well)
+                        .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        Icons.Outlined.Folder,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(Tokens.Icon),
+                    )
+                }
+                Spacer(Modifier.weight(1f))
+                if (favorite != null) {
+                    FavoriteStar(favorite = favorite, name = file.name, onToggle = onToggleFavorite)
+                } else {
+                    Icon(
+                        Icons.Outlined.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.padding(end = Tokens.Small).size(Tokens.IconSmall),
+                    )
+                }
+            }
+            Spacer(Modifier.height(Tokens.Small))
+            Text(
+                file.name,
+                style = MaterialTheme.typography.titleSmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(end = Tokens.Small),
+            )
+            Text(
+                "Drive folder",
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.padding(top = Tokens.Tiny, end = Tokens.Small),
+            )
+        }
+    }
+}
+
 @Composable
 private fun DriveMediaGridCard(
     file: DriveFile,
@@ -937,14 +1043,19 @@ private fun DriveMediaGridCard(
     onLongClick: (() -> Unit)? = null,
 ) {
     val kind = classifyDriveFile(file.mimeType)
-    val icon = fileTypeIcon(kind)
+    val visualKind = classifyDriveVisualKind(file)
+    val icon = driveVisualIcon(visualKind)
+    val iconTint = driveVisualIconTint(visualKind)
+    val typeLabel = drivePreviewTypeLabel(file)
+    val wellShape = Tokens.concentricShape(Tokens.PanelRadius, Tokens.Medium)
     // A picture fetched while the card was on screen fades in; one already cached just shows.
     val fetched = remember(file.id) { thumb !is ThumbState.Ready }
-    GlassPanel(
+    GlassSurface(
+        level = GlassLevel.Panel,
         modifier = Modifier.fillMaxWidth().aspectRatio(1f)
             .selectedShrink(selected == true)
-            .selectionGlow(selected == true, Tokens.ThumbShape),
-        shape = Tokens.ThumbShape,
+            .selectionGlow(selected == true, Tokens.PanelShape),
+        shape = Tokens.PanelShape,
         onClick = onClick,
         onClickLabel = when (selected) {
             null -> "Open ${file.name}"
@@ -959,7 +1070,7 @@ private fun DriveMediaGridCard(
             if (selected == true) {
                 Box(
                     Modifier.fillMaxSize().zIndex(1f)
-                        .border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary, Tokens.ThumbShape),
+                        .border(Tokens.SelectionStroke, MaterialTheme.colorScheme.primary, Tokens.PanelShape),
                 )
                 Icon(
                     Icons.Outlined.CheckCircle,
@@ -982,12 +1093,23 @@ private fun DriveMediaGridCard(
                     tint = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.align(Alignment.Center).size(Tokens.Section),
                 )
-                ThumbState.Loading, ThumbState.Unavailable -> Icon(
-                    icon,
-                    contentDescription = file.name,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.align(Alignment.Center).size(Tokens.Section),
-                )
+                ThumbState.Loading, ThumbState.Unavailable -> Box(
+                    modifier = Modifier
+                        .align(Alignment.Center)
+                        .padding(bottom = Tokens.Section)
+                        .size(Tokens.FolderThumb)
+                        .clip(wellShape)
+                        .background(GlassPalette.Well)
+                        .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape),
+                    contentAlignment = Alignment.Center,
+                ) {
+                    Icon(
+                        icon,
+                        contentDescription = file.name,
+                        tint = iconTint,
+                        modifier = Modifier.size(Tokens.Header),
+                    )
+                }
             }
 
             if (kind == DrivePreviewKind.VIDEO) {
@@ -1000,6 +1122,19 @@ private fun DriveMediaGridCard(
                         .align(Alignment.TopEnd)
                         .padding(Tokens.Snug)
                         .background(MaterialTheme.colorScheme.inverseSurface.copy(alpha = 0.85f), Tokens.TagShape)
+                        .padding(horizontal = Tokens.TagPaddingHorizontal, vertical = Tokens.Hairline),
+                )
+            } else if (thumb !is ThumbState.Ready && kind != DrivePreviewKind.IMAGE) {
+                Text(
+                    typeLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = iconTint,
+                    modifier = Modifier
+                        .align(Alignment.TopEnd)
+                        .padding(Tokens.Small)
+                        .clip(Tokens.TagShape)
+                        .background(GlassPalette.Well)
+                        .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.TagShape)
                         .padding(horizontal = Tokens.TagPaddingHorizontal, vertical = Tokens.Hairline),
                 )
             }
@@ -1018,7 +1153,7 @@ private fun DriveMediaGridCard(
                     overflow = TextOverflow.Ellipsis,
                 )
                 Text(
-                    "${drivePreviewTypeLabel(file)}  ·  $sizeLabel",
+                    if (file.size > 0) "$typeLabel  \u00B7  $sizeLabel" else typeLabel,
                     style = MaterialTheme.typography.labelSmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
@@ -1042,7 +1177,9 @@ private fun DriveRow(
     favorite: Boolean? = null,
     onToggleFavorite: () -> Unit = {},
 ) {
-    val icon = if (file.isFolder) Icons.Outlined.Folder else fileTypeIcon(classifyDriveFile(file.mimeType))
+    val visualKind = classifyDriveVisualKind(file)
+    val icon = driveVisualIcon(visualKind)
+    val iconTint = driveVisualIconTint(visualKind)
     val rowPadding = if (padded) {
         Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Tiny)
     } else {
@@ -1087,7 +1224,7 @@ private fun DriveRow(
                     icon,
                     contentDescription = null,
                     modifier = Modifier.size(Tokens.Icon),
-                    tint = if (file.isFolder) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                    tint = iconTint,
                 )
             }
             Spacer(Modifier.width(Tokens.Gutter))
@@ -1109,12 +1246,33 @@ private fun DriveRow(
     }
 }
 
-private fun fileTypeIcon(kind: DrivePreviewKind) = when (kind) {
-    DrivePreviewKind.IMAGE -> Icons.Outlined.Image
-    DrivePreviewKind.VIDEO -> Icons.Outlined.Videocam
-    DrivePreviewKind.PDF -> Icons.Outlined.PictureAsPdf
-    DrivePreviewKind.WORKSPACE_PDF_EXPORT -> Icons.Outlined.Description
-    DrivePreviewKind.UNSUPPORTED -> Icons.AutoMirrored.Outlined.InsertDriveFile
+internal fun driveVisualIcon(kind: DriveFileVisualKind): ImageVector = when (kind) {
+    DriveFileVisualKind.FOLDER -> Icons.Outlined.Folder
+    DriveFileVisualKind.IMAGE -> Icons.Outlined.Image
+    DriveFileVisualKind.VIDEO -> Icons.Outlined.Videocam
+    DriveFileVisualKind.PDF -> Icons.Outlined.PictureAsPdf
+    DriveFileVisualKind.GOOGLE_DOC, DriveFileVisualKind.WORD -> Icons.Outlined.Description
+    DriveFileVisualKind.GOOGLE_SHEET, DriveFileVisualKind.EXCEL -> Icons.Outlined.TableChart
+    DriveFileVisualKind.GOOGLE_SLIDES, DriveFileVisualKind.POWERPOINT -> Icons.Outlined.Slideshow
+    DriveFileVisualKind.ARCHIVE -> Icons.Outlined.FolderZip
+    DriveFileVisualKind.APK -> Icons.Outlined.Android
+    DriveFileVisualKind.AUDIO -> Icons.Outlined.MusicNote
+    DriveFileVisualKind.TEXT -> Icons.Outlined.Description
+    DriveFileVisualKind.OTHER -> Icons.AutoMirrored.Outlined.InsertDriveFile
+}
+
+@Composable
+internal fun driveVisualIconTint(kind: DriveFileVisualKind): Color = when (kind) {
+    DriveFileVisualKind.FOLDER, DriveFileVisualKind.GOOGLE_DOC, DriveFileVisualKind.WORD, DriveFileVisualKind.IMAGE ->
+        MaterialTheme.colorScheme.primary
+    DriveFileVisualKind.GOOGLE_SHEET, DriveFileVisualKind.EXCEL, DriveFileVisualKind.APK, DriveFileVisualKind.AUDIO ->
+        MaterialTheme.colorScheme.tertiary
+    DriveFileVisualKind.GOOGLE_SLIDES, DriveFileVisualKind.POWERPOINT ->
+        GlassPalette.HudAmber
+    DriveFileVisualKind.PDF, DriveFileVisualKind.ARCHIVE, DriveFileVisualKind.VIDEO ->
+        MaterialTheme.colorScheme.secondary
+    DriveFileVisualKind.TEXT, DriveFileVisualKind.OTHER ->
+        MaterialTheme.colorScheme.onSurfaceVariant
 }
 
 /**

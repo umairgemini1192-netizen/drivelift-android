@@ -39,6 +39,11 @@ object Tokens {
     val Badge = 20.dp
     val BadgePadding = 3.dp
     val FolderThumb = 60.dp
+    val BentoIconWell = 38.dp
+    val DriveFolderIconWell = 40.dp
+    val DropGridIconWell = 44.dp
+    val DropRemoveBadge = 28.dp
+    val StatusDot = 8.dp
     val GridCell = 104.dp
     val DriveGridCell = 132.dp
     val GridGap = 2.dp
@@ -46,6 +51,8 @@ object Tokens {
     val ViewerControl = 48.dp
     val ViewerProgressWidth = 220.dp
     val ViewerTopClearance = 92.dp
+    val SwipeDismissThreshold = 120.dp
+    val VideoHeaderScrimPadding = 24.dp
     val ReadableWidth = 480.dp
     val GaugeWidth = 320.dp
     val GaugeHeight = 172.dp
@@ -113,6 +120,9 @@ object Tokens {
 
     /** Below this screen width in dp, the same stacking applies. */
     const val COMPACT_WIDTH_DP = 360
+
+    /** At or above this screen width in dp (when not at large font scale), Desktop Drop's Share Queue grid uses 3 columns. */
+    const val DROP_GRID_THREE_COL_WIDTH_DP = 420
 
     /** Durations in milliseconds. */
     object Motion {
@@ -182,6 +192,9 @@ object Tokens {
         val HudPagerArrowWidth = 26.dp
         val HudPagerDotGap = 3.dp
         val IdleSpeedArrow = 12.dp
+        val IdleRateCharWidth = 7.dp
+        val IdleCompactLabelWidth = 29.dp
+        val IdleLabelWidth = 42.dp
         val NavProgressHairline = 2.dp
         val NavTripTextSize = 11.sp
         val WidgetClockTextSize = 34.sp
@@ -217,8 +230,8 @@ object Tokens {
         const val OVERLAY_BLUR_RADIUS_PX = 32
         const val MORPH_SPRING_DAMPING = 0.80f
         const val MORPH_SPRING_STIFFNESS = 420f
-        const val TELEMETRY_TICK_INTERVAL_MS = 8_000L
-        const val WIDGET_PUSH_DEBOUNCE_MS = 5_000L
+        const val TELEMETRY_TICK_INTERVAL_MS = 2_000L
+        const val WIDGET_PUSH_DEBOUNCE_MS = 2_000L
         const val RAM_DELTA_THRESHOLD_GB = 0.1
         const val SHIMMER_DURATION_MS = 1_100
         const val WAVEFORM_PERIOD_MS = 1_800
