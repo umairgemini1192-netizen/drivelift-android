@@ -90,6 +90,32 @@ internal object CutoutAnchorCalculator {
         pillHeightPx = pillHeightPx,
     )
 
+    /**
+     * Converts a [DisplayCutout] delivered to a view's [WindowInsets] (offset by Android relative
+     * to that view's window frame) back into display coordinates using the view's on-screen origin
+     * before computing the horizontal and vertical anchor.
+     */
+    fun fromViewWindowInsets(
+        windowInsets: WindowInsets?,
+        windowLeftPx: Int,
+        windowTopPx: Int,
+        displayWidthPx: Int,
+        pillHeightPx: Int,
+    ): CutoutAnchor {
+        val cutout = windowInsets?.displayCutout ?: return CutoutAnchor()
+        val relativeRect = cutout.boundingRectTop.takeIf { !it.isEmpty }
+            ?: cutout.boundingRects.firstOrNull { !it.isEmpty }
+            ?: return CutoutAnchor()
+        val displayRect = Rect(relativeRect).apply {
+            offset(windowLeftPx, windowTopPx)
+        }
+        return fromCutoutBounds(
+            cutoutTopRect = displayRect,
+            displayWidthPx = displayWidthPx,
+            pillHeightPx = pillHeightPx,
+        )
+    }
+
     fun fromDisplayCutout(
         cutout: DisplayCutout?,
         displayWidthPx: Int,
@@ -410,23 +436,8 @@ internal class CockpitOverlayWindowController(
         cutoutWidthPx.intValue = resolved.cutoutWidthPx
     }
 
-    private fun readCutoutAnchorFromInsets(insets: WindowInsets?): CutoutAnchor {
+    private fun readDisplayCutoutAnchor(view: View?, viewInsets: WindowInsets?): CutoutAnchor {
         val wm = windowManager ?: return CutoutAnchor()
-        val density = serviceContext.resources.displayMetrics.density
-        val pillHeightPx = (Tokens.Cockpit.PillHeight.value * density).toInt()
-        val displayWidthPx = runCatching { wm.currentWindowMetrics.bounds.width() }
-            .getOrDefault(serviceContext.resources.displayMetrics.widthPixels)
-        return CutoutAnchorCalculator.fromWindowInsets(
-            windowInsets = insets,
-            displayWidthPx = displayWidthPx,
-            pillHeightPx = pillHeightPx,
-        )
-    }
-
-    fun updateMetrics() {
-        isLandscapeFullscreen.value =
-            serviceContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
-        val wm = windowManager ?: return
         val density = serviceContext.resources.displayMetrics.density
         val pillHeightPx = (Tokens.Cockpit.PillHeight.value * density).toInt()
         val metricsAnchor = runCatching {
@@ -437,14 +448,34 @@ internal class CockpitOverlayWindowController(
                 pillHeightPx = pillHeightPx,
             )
         }.getOrDefault(CutoutAnchor())
-        val anchor = if (metricsAnchor.hasCutout) {
-            metricsAnchor
-        } else {
-            val viewInsetsAnchor = runCatching {
-                readCutoutAnchorFromInsets(overlayView?.rootWindowInsets)
-            }.getOrDefault(CutoutAnchor())
-            if (viewInsetsAnchor.hasCutout) viewInsetsAnchor else metricsAnchor
+        if (metricsAnchor.hasCutout) {
+            return metricsAnchor
         }
+        if (view != null && view.isAttachedToWindow && view.isLaidOut && view.width > 0 && viewInsets != null) {
+            val displayWidthPx = runCatching { wm.currentWindowMetrics.bounds.width() }
+                .getOrDefault(serviceContext.resources.displayMetrics.widthPixels)
+            val locationOnScreen = IntArray(2)
+            view.getLocationOnScreen(locationOnScreen)
+            val viewAnchor = CutoutAnchorCalculator.fromViewWindowInsets(
+                windowInsets = viewInsets,
+                windowLeftPx = locationOnScreen[0],
+                windowTopPx = locationOnScreen[1],
+                displayWidthPx = displayWidthPx,
+                pillHeightPx = pillHeightPx,
+            )
+            if (viewAnchor.hasCutout) {
+                return viewAnchor
+            }
+        }
+        return metricsAnchor
+    }
+
+    fun updateMetrics() {
+        isLandscapeFullscreen.value =
+            serviceContext.resources.configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
+        val anchor = runCatching {
+            readDisplayCutoutAnchor(view = overlayView, viewInsets = overlayView?.rootWindowInsets)
+        }.getOrDefault(CutoutAnchor())
         applyCutoutAnchor(anchor)
         syncOverlayVisibility()
     }
@@ -472,9 +503,9 @@ internal class CockpitOverlayWindowController(
             setViewTreeSavedStateRegistryOwner(savedStateRegistryOwner)
             setViewTreeViewModelStoreOwner(viewModelStoreOwner)
             setOnApplyWindowInsetsListener { v, insets ->
-                val insetAnchor = runCatching { readCutoutAnchorFromInsets(insets) }
+                val anchor = runCatching { readDisplayCutoutAnchor(view = v, viewInsets = insets) }
                     .getOrDefault(CutoutAnchor())
-                applyCutoutAnchor(insetAnchor)
+                applyCutoutAnchor(anchor)
                 v.onApplyWindowInsets(insets)
             }
             setOnTouchListener { _, event ->

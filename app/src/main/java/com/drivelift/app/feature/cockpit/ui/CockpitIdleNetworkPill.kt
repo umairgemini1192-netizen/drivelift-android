@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
@@ -366,6 +367,7 @@ internal fun RowScope.CollapsedIdleNetworkContent(
     Spacer(
         modifier = Modifier
             .width(layout.centerGapDp.dp)
+            .height(Tokens.IconSmall)
             .testTag("cockpit-idle-cutout-gap"),
     )
 

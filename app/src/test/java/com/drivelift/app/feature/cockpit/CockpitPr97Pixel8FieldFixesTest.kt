@@ -229,9 +229,18 @@ class CockpitPr97Pixel8FieldFixesTest {
             val gapBounds = compose.onNodeWithTag("cockpit-idle-cutout-gap", useUnmergedTree = true).getBoundsInRoot()
             val speedBounds = compose.onNodeWithTag("cockpit-idle-speed").assertIsDisplayed().getBoundsInRoot()
 
-            assertTrue("Cutout gap must be at least 50dp (34 + 2*8)", (gapBounds.right - gapBounds.left).value >= 49.5f)
-            assertTrue("Connection label must end before cutout gap", netBounds.right <= gapBounds.left)
-            assertTrue("Speed readout must start after cutout gap", speedBounds.left >= gapBounds.right)
+            assertTrue(
+                "Cutout gap must be at least 50dp (34 + 2*8), was ${gapBounds.right - gapBounds.left}",
+                (gapBounds.right - gapBounds.left).value >= 49.5f,
+            )
+            assertTrue(
+                "Connection label must end before cutout gap (net.right=${netBounds.right}, gap.left=${gapBounds.left})",
+                netBounds.right <= gapBounds.left,
+            )
+            assertTrue(
+                "Speed readout must start after cutout gap (speed.left=${speedBounds.left}, gap.right=${gapBounds.right})",
+                speedBounds.left >= gapBounds.right,
+            )
 
             // Download (1.4M) is larger than upload (12K); only larger direction renders when both do not fit.
             compose.onNodeWithText("1.4M").assertIsDisplayed()
@@ -540,6 +549,33 @@ class CockpitPr97Pixel8FieldFixesTest {
             CutoutAnchor(),
             CutoutAnchorCalculator.resolveWithFallback(emptyLockScreenAnchor, null),
         )
+    }
+
+    @Test
+    fun viewRelativeCutoutInsetsTranslateBackToDisplaySpaceWithoutHorizontalDrift() {
+        // Real display cutout on Pixel 8 Pro (1344px wide) is Rect(622, 26, 722, 126).
+        // For a centered WRAP_CONTENT overlay window located at (447, 22), Android delivers
+        // cutout bounds offset by (-447, -22) -> Rect(175, 4, 275, 104).
+        val windowRelativeCutout = DisplayCutout(
+            Insets.of(0, 104, 0, 0),
+            null,
+            Rect(175, 4, 275, 104),
+            null,
+            null,
+        )
+        val viewInsets = WindowInsets.Builder().setDisplayCutout(windowRelativeCutout).build()
+
+        val translated = CutoutAnchorCalculator.fromViewWindowInsets(
+            windowInsets = viewInsets,
+            windowLeftPx = 447,
+            windowTopPx = 22,
+            displayWidthPx = 1344,
+            pillHeightPx = 108,
+        )
+        assertTrue(translated.hasCutout)
+        assertEquals(0, translated.centerOffsetXPx)
+        assertEquals(22, translated.topPx)
+        assertEquals(100, translated.cutoutWidthPx)
     }
 
     @OptIn(ExperimentalCoroutinesApi::class)
