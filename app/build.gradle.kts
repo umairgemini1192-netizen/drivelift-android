@@ -153,3 +153,9 @@ dependencies {
     testImplementation("io.github.takahirom.roborazzi:roborazzi:1.32.2")
     testImplementation("io.github.takahirom.roborazzi:roborazzi-compose:1.32.2")
 }
+
+configurations.matching { it.name.contains("UnitTest", ignoreCase = true) }.configureEach {
+    // Android APKs bundle conscrypt-android for on-device TLSv1.3 ADB pairing, while JVM
+    // Robolectric unit tests must keep Robolectric's conscrypt-openjdk-uber native binaries.
+    exclude(group = "org.conscrypt", module = "conscrypt-android")
+}
