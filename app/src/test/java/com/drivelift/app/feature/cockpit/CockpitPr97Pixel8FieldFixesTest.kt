@@ -226,7 +226,7 @@ class CockpitPr97Pixel8FieldFixesTest {
             compose.waitForIdle()
 
             val netBounds = compose.onNodeWithTag("cockpit-idle-network").assertIsDisplayed().getBoundsInRoot()
-            val gapBounds = compose.onNodeWithTag("cockpit-idle-cutout-gap").getBoundsInRoot()
+            val gapBounds = compose.onNodeWithTag("cockpit-idle-cutout-gap", useUnmergedTree = true).getBoundsInRoot()
             val speedBounds = compose.onNodeWithTag("cockpit-idle-speed").assertIsDisplayed().getBoundsInRoot()
 
             assertTrue("Cutout gap must be at least 50dp (34 + 2*8)", (gapBounds.right - gapBounds.left).value >= 49.5f)
@@ -347,6 +347,71 @@ class CockpitPr97Pixel8FieldFixesTest {
         monitor.setWidgetBound(false)
         scope.runCurrent()
         assertFalse(monitor.isTelemetryTickerActive)
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun batteryCurrentOnlyUpdatesPreserveRenderedRamBaselineUntilCumulativeDeltaTriggersFullPush() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        var nowMs = 1_000L
+        var usedRamGb = 8.00
+        var currentMagnitudeMa = 500L
+        var pushCount = 0
+
+        val monitor = CockpitTelemetryMonitor(
+            context = app,
+            scope = scope,
+            isScreenInteractive = { true },
+            snapshotReader = {
+                TelemetryHudSnapshot(
+                    battery = BatteryHudMetric(
+                        percent = 80,
+                        fraction = 0.80f,
+                        valueText = "80%",
+                        isCharging = false,
+                        current = CockpitWidgetModel.formatBatteryCurrentMilliAmps(
+                            magnitudeMa = currentMagnitudeMa,
+                            isCharging = false,
+                        ),
+                        charge = CockpitWidgetModel.formatBatteryCharge(4_000_000L),
+                    ),
+                    ram = CockpitHudBitmapRenderer.formatRamHudMetric(
+                        availBytes = ((12.0 - usedRamGb) * 1024 * 1024 * 1024).toLong(),
+                        totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+                    ),
+                    isLoadingInitial = false,
+                )
+            },
+            widgetPusher = { pushCount++ },
+            elapsedClock = { nowMs },
+        )
+
+        // Initial push renders full telemetry (RAM = 8.00 GB).
+        assertTrue(monitor.evaluateNow(pushWidget = true, bypassDebounce = true))
+        scope.runCurrent()
+        assertEquals(1, pushCount)
+        assertFalse(monitor.lastPushWasBatteryCurrentOnly)
+
+        // Tick 1: +0.06 GB RAM (< 0.1 GB) alongside -50 mA current change uses current-only partial push
+        // and preserves the 8.00 GB last-rendered RAM baseline.
+        nowMs += 2_000L
+        usedRamGb = 8.06
+        currentMagnitudeMa = 550L
+        assertTrue(monitor.evaluateNow(pushWidget = true, bypassDebounce = true))
+        scope.runCurrent()
+        assertEquals(2, pushCount)
+        assertTrue(monitor.lastPushWasBatteryCurrentOnly)
+
+        // Tick 2: another +0.06 GB RAM (8.12 GB total, +0.12 GB vs last rendered 8.00 GB) alongside
+        // -50 mA current change escalates to a full telemetry update.
+        nowMs += 2_000L
+        usedRamGb = 8.12
+        currentMagnitudeMa = 600L
+        assertTrue(monitor.evaluateNow(pushWidget = true, bypassDebounce = true))
+        scope.runCurrent()
+        assertEquals(3, pushCount)
+        assertFalse(monitor.lastPushWasBatteryCurrentOnly)
     }
 
     // ------------------------------------------------------------------ 3. Lock-screen relayout

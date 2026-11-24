@@ -101,6 +101,8 @@ class CockpitTelemetryMonitor(
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastPushedSnapshot: TelemetryHudSnapshot? = null
     private var lastWidgetPushElapsedMs: Long = Long.MIN_VALUE
+    internal var lastPushWasBatteryCurrentOnly: Boolean = false
+        private set
     private val speedLock = Any()
     private var lastTxBytes = -1L
     private var lastRxBytes = -1L
@@ -236,7 +238,12 @@ class CockpitTelemetryMonitor(
             if (!urgent && !bypassDebounce && withinDebounce) {
                 return false
             }
-            lastPushedSnapshot = current
+            lastPushedSnapshot = nextPushedSnapshotBaseline(
+                previous = previous,
+                current = current,
+                batteryCurrentOnly = batteryCurrentOnly,
+            )
+            lastPushWasBatteryCurrentOnly = batteryCurrentOnly
             lastWidgetPushElapsedMs = nowMs
             widgetPushJob?.cancel()
             widgetPushJob = scope.launch {
@@ -514,6 +521,21 @@ class CockpitTelemetryMonitor(
                 previous.battery.charge.milliAmpHours,
                 current.battery.charge.milliAmpHours,
             )
+        }
+
+        internal fun nextPushedSnapshotBaseline(
+            previous: TelemetryHudSnapshot?,
+            current: TelemetryHudSnapshot,
+            batteryCurrentOnly: Boolean,
+        ): TelemetryHudSnapshot = if (batteryCurrentOnly && previous != null) {
+            previous.copy(
+                battery = previous.battery.copy(
+                    current = current.battery.current,
+                    charge = current.battery.charge,
+                ),
+            )
+        } else {
+            current
         }
 
         fun extractBatteryChargingFromIntent(intent: Intent?): Boolean? {

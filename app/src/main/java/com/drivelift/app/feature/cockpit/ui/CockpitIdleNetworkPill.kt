@@ -77,15 +77,6 @@ internal object IdlePillLayoutMath {
     /** Compact rate formatting (`0K`, `999K`, `1.4M`, `999M`) never exceeds 4 characters. */
     const val MAX_RATE_CHARS = 4
 
-    /** Conservative tabular glyph width (in dp at fontScale 1.0) for `labelSmall` SemiBold digits/units. */
-    private const val RATE_CHAR_WIDTH_DP = 7.0f
-
-    /** Minimum text budget for short labels (`Wi-Fi`, `5G`) at fontScale 1.0. */
-    private const val COMPACT_LABEL_TEXT_DP = 29.0f
-
-    /** Preferred text budget for `Offline` / connection labels when idle at fontScale 1.0. */
-    private const val IDLE_LABEL_TEXT_DP = 42.0f
-
     /** Computes the centre cutout gap: `max(0, measuredCutoutWidthDp + cutoutWidthDeltaDp) + 2 * sidePaddingDp`. */
     fun computeCenterGapDp(
         measuredCutoutWidthDp: Float,
@@ -104,7 +95,7 @@ internal object IdlePillLayoutMath {
     ): Float {
         val safeScale = fontScale.coerceAtLeast(0.5f)
         val chars = rateChars.coerceIn(1, MAX_RATE_CHARS)
-        val textWidth = chars * RATE_CHAR_WIDTH_DP * safeScale
+        val textWidth = chars * Tokens.Cockpit.IdleRateCharWidth.value * safeScale
         return textWidth + Tokens.GridGap.value + Tokens.Cockpit.IdleSpeedArrow.value
     }
 
@@ -151,8 +142,8 @@ internal object IdlePillLayoutMath {
 
         val singleFigureWidth = singleSpeedFigureWidthDp(safeScale)
         val twoFiguresWidth = twoSpeedFiguresWidthDp(safeScale)
-        val minLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (COMPACT_LABEL_TEXT_DP * safeScale)
-        val idleLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (IDLE_LABEL_TEXT_DP * safeScale)
+        val minLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (Tokens.Cockpit.IdleCompactLabelWidth.value * safeScale)
+        val idleLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (Tokens.Cockpit.IdleLabelWidth.value * safeScale)
 
         val activeCount = (if (hasUploadTraffic) 1 else 0) + (if (hasDownloadTraffic) 1 else 0)
         val largerSingleMode = when {
