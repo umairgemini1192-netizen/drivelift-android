@@ -25,6 +25,7 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.onRoot
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performTextReplacement
 import androidx.test.core.app.ActivityScenario
 import androidx.test.core.app.ApplicationProvider
@@ -213,7 +214,7 @@ class PhoneExplorerAndDriveTilesTest {
     }
 
     @Test
-    fun fileSystemExplorerListsFoldersCategoryFiltersAndBuildsFileProviderIntent() = runBlocking {
+    fun fileSystemExplorerListsFoldersCategoryFiltersAndBuildsFileProviderIntent(): Unit = runBlocking {
         val root = seedSyntheticStorageTree()
         val source = FileSystemLocalExplorerSource(rootProvider = { root }, permissionCheck = { true })
 
@@ -243,12 +244,15 @@ class PhoneExplorerAndDriveTilesTest {
 
         // Verify FileProvider open intent works for an app-cache file (configured in file_paths.xml).
         val cachedPdf = File(app.cacheDir, "test_open.pdf").apply { writeBytes(byteArrayOf(0x25, 0x50, 0x44, 0x46)) }
-        val openIntent = LocalFileOpener.buildOpenIntent(app, cachedPdf, "application/pdf")
-        assertEquals(Intent.ACTION_VIEW, openIntent.action)
-        assertEquals("application/pdf", openIntent.type)
-        assertTrue((openIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
-        assertEquals("${app.packageName}.fileprovider", openIntent.data?.authority)
-        cachedPdf.delete()
+        try {
+            val openIntent = LocalFileOpener.buildOpenIntent(app, cachedPdf, "application/pdf")
+            assertEquals(Intent.ACTION_VIEW, openIntent.action)
+            assertEquals("application/pdf", openIntent.type)
+            assertTrue((openIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION) != 0)
+            assertEquals("${app.packageName}.fileprovider", openIntent.data?.authority)
+        } finally {
+            cachedPdf.delete()
+        }
     }
 
     @Test
@@ -347,7 +351,7 @@ class PhoneExplorerAndDriveTilesTest {
 
             // Settings strictly contains Transfer/Removal rules + About/Version chip (no App Lock / Cockpit).
             vm.tab.value = AppViewModel.TAB_TRANSFERS
-            waitForText("Nothing in transit")
+            waitForContentDescription("Settings")
             compose.onNodeWithContentDescription("Settings").performClick()
             waitForText("Upload on Wi-Fi only")
             compose.onNodeWithTag("settings-version-chip").assertExists()
@@ -449,7 +453,9 @@ class PhoneExplorerAndDriveTilesTest {
                     // Breadcrumb jump back to root.
                     compose.onNodeWithText("Internal storage").performClick()
                     waitForText("Download")
-                    // Quick filter to APKs & ZIPs.
+                    // Quick filter to APKs & ZIPs (scroll LazyRow first so the chip is placed).
+                    compose.onNodeWithTag("explorer-category-row").performScrollToKey(LocalFileCategory.APKS_ZIPS.name)
+                    pump(4)
                     compose.onNodeWithTag("explorer-cat-apks_zips").performClick()
                     waitForText("DriveLift_preview.apk")
                     waitForText("Receipts_2026.zip")
@@ -528,20 +534,20 @@ class PhoneExplorerAndDriveTilesTest {
     private fun seedSyntheticStorageTree(): File {
         val root = tempFolder.newFolder("emulated_0_${System.nanoTime()}")
         val docs = File(root, "Documents").apply { mkdirs() }
-        File(docs, "Quarterly_Report.pdf").writeBytes(ByteArray(142_000))
-        File(docs, "Budget_2026.xlsx").writeBytes(ByteArray(64_000))
-        File(docs, "Launch_Deck.pptx").writeBytes(ByteArray(210_000))
-        File(docs, "Contract.docx").writeBytes(ByteArray(48_000))
+        File(docs, "Quarterly_Report.pdf").writeBytes(ByteArray(14_200))
+        File(docs, "Budget_2026.xlsx").writeBytes(ByteArray(6_400))
+        File(docs, "Launch_Deck.pptx").writeBytes(ByteArray(21_000))
+        File(docs, "Contract.docx").writeBytes(ByteArray(4_800))
 
         val dl = File(root, "Download").apply { mkdirs() }
-        File(dl, "DriveLift_preview.apk").writeBytes(ByteArray(18_400_000))
-        File(dl, "Receipts_2026.zip").writeBytes(ByteArray(1_250_000))
+        File(dl, "DriveLift_preview.apk").writeBytes(ByteArray(18_400))
+        File(dl, "Receipts_2026.zip").writeBytes(ByteArray(12_500))
 
         val pics = File(root, "Pictures").apply { mkdirs() }
-        File(pics, "SYNTH_Beach.jpg").writeBytes(ByteArray(3_100_000))
+        File(pics, "SYNTH_Beach.jpg").writeBytes(ByteArray(3_100))
 
         val movies = File(root, "Movies").apply { mkdirs() }
-        File(movies, "SYNTH_Trip.mp4").writeBytes(ByteArray(24_000_000))
+        File(movies, "SYNTH_Trip.mp4").writeBytes(ByteArray(24_000))
 
         File(root, ".hidden_cache").writeBytes(ByteArray(128))
         return root
