@@ -7,8 +7,18 @@ import com.drivelift.app.feature.hibernation.engine.AppDrainCandidate
 import com.drivelift.app.feature.hibernation.engine.HibernationCommandBuilder
 import com.drivelift.app.feature.hibernation.engine.HibernationMode
 import com.drivelift.app.feature.hibernation.engine.SleepCommandExecutor
+import com.drivelift.app.feature.hibernation.engine.SleepCommandTimeoutException
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
+import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Runtime readiness of DriveLift's Built-in Auto Mode.
@@ -68,7 +78,29 @@ class AdbSilentExecutor(
     private val protectedPackagesProvider: () -> Set<String> = { emptySet() },
     private val discoveryRetryDelayMs: Long = DEFAULT_DISCOVERY_RETRY_DELAY_MS,
     private val maxConnectDiscoveryAttempts: Int = DEFAULT_CONNECT_DISCOVERY_ATTEMPTS,
+    private val commandTimeoutMs: Long = DEFAULT_COMMAND_TIMEOUT_MS,
+    private val pairingDiscoveryTimeoutMs: Long = AdbTransport.PAIRING_DISCOVERY_TIMEOUT_MS,
 ) : SleepCommandExecutor {
+
+    private val activeAutoSession = AtomicBoolean(false)
+    private val sessionReconnectCount = AtomicInteger(0)
+
+    @Volatile
+    var lastSessionTurnedOffWirelessDebugging: Boolean = false
+        private set
+
+    var keepWirelessDebuggingOn: Boolean
+        get() = preferences.keepWirelessDebuggingOn
+        set(value) {
+            preferences.keepWirelessDebuggingOn = value
+        }
+
+    /**
+     * Startup crash-recovery check: if a previous Auto Mode run crashed before its finally block
+     * could close the debug port, turn Wireless debugging off and clear the persisted session flag.
+     */
+    fun recoverInterruptedSessionIfNeeded(): Boolean =
+        recoverInterruptedSession(preferences, systemGateway)
 
     /**
      * Evaluates Built-in Auto Mode readiness without throwing.
@@ -105,10 +137,15 @@ class AdbSilentExecutor(
             )
         }
 
+        val readyDetail = if (preferences.keepWirelessDebuggingOn) {
+            "Auto Mode is on. Runs silently on Wi-Fi and leaves Wireless debugging on after runs."
+        } else {
+            "Auto Mode is on. Runs silently on Wi-Fi and turns Wireless debugging back off when done."
+        }
         return AutoModeStatusSnapshot(
             availability = AutoModeAvailability.READY,
             effectiveMode = HibernationMode.AUTO_SILENT,
-            detail = "Auto Mode is on. Runs silently on Wi-Fi and turns Wireless debugging back off when done.",
+            detail = readyDetail,
             isConfigured = true,
         )
     }
@@ -121,7 +158,26 @@ class AdbSilentExecutor(
         hasWriteSecureSettings = runCatching { systemGateway.hasWriteSecureSettings() }.getOrDefault(false),
         isBootstrapComplete = preferences.isBootstrapComplete,
         isAutoModeEnabled = preferences.isEnabled,
+        notificationAccess = runCatching { systemGateway.notificationAccessState() }
+            .getOrDefault(NotificationAccessState.ALLOWED),
+        keepWirelessDebuggingOn = preferences.keepWirelessDebuggingOn,
     )
+
+    /**
+     * Discovers `_adb-tls-pairing._tcp` on this phone with a 60 s default timeout and returns a
+     * plain-English error if nothing is found.
+     */
+    suspend fun discoverPairingPortWithTimeout(
+        timeoutMs: Long = pairingDiscoveryTimeoutMs,
+    ): Result<Int> {
+        if (!systemGateway.isOnWifi()) {
+            return Result.failure(IllegalStateException("Connect to Wi-Fi before pairing Wireless debugging."))
+        }
+        return transport.discoverPairingPort(timeoutMs).fold(
+            onSuccess = { port -> Result.success(port) },
+            onFailure = { err -> Result.failure(IOException(PAIRING_DISCOVERY_TIMEOUT_MESSAGE, err)) },
+        )
+    }
 
     /**
      * Step 2: Pair with Android's Wireless debugging service on `127.0.0.1` using a 6-digit code.
@@ -135,15 +191,16 @@ class AdbSilentExecutor(
         if (normalized.length != AutoModeWizardStateMachine.PAIRING_CODE_LENGTH) {
             return Result.failure(IllegalArgumentException("Enter the 6-digit pairing code shown in Wireless debugging."))
         }
+        if (explicitPort != null && explicitPort !in 1..65535) {
+            return Result.failure(IllegalArgumentException("Enter a valid pairing port between 1 and 65535."))
+        }
 
         // Ensure DriveLift's RSA key pair exists before pairing.
         runCatching { keyStorage.loadOrCreateKeyPair() }
             .onFailure { return Result.failure(it) }
 
-        val port = explicitPort ?: transport.discoverPairingPort().getOrElse { err ->
-            return Result.failure(
-                IOException("Could not find the Wireless debugging pairing screen. Keep 'Pair device with pairing code' open and try again.", err),
-            )
+        val port = explicitPort ?: transport.discoverPairingPort(pairingDiscoveryTimeoutMs).getOrElse { err ->
+            return Result.failure(IOException(PAIRING_DISCOVERY_TIMEOUT_MESSAGE, err))
         }
 
         return transport.pair(port, normalized).onSuccess {
@@ -154,7 +211,8 @@ class AdbSilentExecutor(
 
     /**
      * Step 3: After first pairing, connect once to `127.0.0.1`, grant `WRITE_SECURE_SETTINGS`,
-     * and set `adb_allowed_connection_time = 0` so authorization never silently expires.
+     * set `adb_allowed_connection_time = 0` so authorization never silently expires, and
+     * automatically turn Wireless debugging OFF once setup completes (unless keep-on is enabled).
      */
     suspend fun runOneTimeBootstrap(): Result<Unit> {
         if (!systemGateway.isOnWifi()) {
@@ -172,6 +230,7 @@ class AdbSilentExecutor(
             )
         }
 
+        var bootstrapSucceeded = false
         return try {
             val grantCmd = buildGrantWriteSecureSettingsCommand(appId)
             executeCheckedShell(grantCmd).getOrThrow()
@@ -183,11 +242,19 @@ class AdbSilentExecutor(
             preferences.isBootstrapComplete = true
             preferences.isEnabled = true
             preferences.storedHibernationMode = HibernationMode.AUTO_SILENT
+            bootstrapSucceeded = true
             Result.success(Unit)
+        } catch (ce: CancellationException) {
+            throw ce
         } catch (t: Throwable) {
             Result.failure(t)
         } finally {
-            runCatching { transport.disconnect() }
+            withContext(NonCancellable) {
+                runCatching { transport.disconnect() }
+                if (bootstrapSucceeded && !preferences.keepWirelessDebuggingOn) {
+                    runCatching { systemGateway.setAdbWifiEnabled(false) }
+                }
+            }
         }
     }
 
@@ -208,11 +275,12 @@ class AdbSilentExecutor(
      *
      * Lifecycle:
      * 1. Verifies Auto Mode is configured and device is on Wi-Fi.
-     * 2. Reads prior `adb_wifi_enabled`, enables it if it was off.
+     * 2. Persists `isSessionOpen = true` synchronously for crash recovery, then enables
+     *    `adb_wifi_enabled = 1` if it was off.
      * 3. Discovers `_adb-tls-connect._tcp` and connects strictly to `127.0.0.1`.
      * 4. Executes [block] against the live session.
-     * 5. In `finally`, disconnects AND restores `adb_wifi_enabled` to its prior value so the
-     *    Wireless debugging port is never left open when DriveLift turned it on.
+     * 5. In `finally` (inside [NonCancellable]), disconnects, ALWAYS turns `adb_wifi_enabled = 0`
+     *    unless `preferences.keepWirelessDebuggingOn` is enabled, and clears `isSessionOpen`.
      */
     suspend fun <T> runWithAutoSession(
         block: suspend (AdbSilentExecutor) -> T,
@@ -226,18 +294,21 @@ class AdbSilentExecutor(
         }
 
         val previousAdbWifiEnabled = runCatching { systemGateway.isAdbWifiEnabled() }.getOrDefault(false)
-        var toggledOnByDriveLift = false
+        lastSessionTurnedOffWirelessDebugging = false
+        preferences.isSessionOpen = true
 
         if (!previousAdbWifiEnabled) {
             val turnedOn = runCatching { systemGateway.setAdbWifiEnabled(true) }.getOrDefault(false)
             if (!turnedOn) {
+                preferences.isSessionOpen = false
                 return AutoSessionOutcome.FallbackToGuided(
                     "Could not turn on Wireless debugging automatically - using guided steps this time",
                 )
             }
-            toggledOnByDriveLift = true
         }
 
+        activeAutoSession.set(true)
+        sessionReconnectCount.set(0)
         try {
             val connectResult = connectWithDiscoveryRetries()
             if (connectResult.isFailure) {
@@ -252,19 +323,26 @@ class AdbSilentExecutor(
             val value = block(this)
             return AutoSessionOutcome.Completed(value)
         } finally {
-            runCatching { transport.disconnect() }
-            if (toggledOnByDriveLift) {
-                runCatching { systemGateway.setAdbWifiEnabled(previousAdbWifiEnabled) }
+            withContext(NonCancellable) {
+                activeAutoSession.set(false)
+                runCatching { transport.disconnect() }
+                if (!preferences.keepWirelessDebuggingOn) {
+                    val turnedOff = runCatching { systemGateway.setAdbWifiEnabled(false) }.getOrDefault(false)
+                    lastSessionTurnedOffWirelessDebugging = turnedOff ||
+                        !runCatching { systemGateway.isAdbWifiEnabled() }.getOrDefault(true)
+                } else {
+                    lastSessionTurnedOffWirelessDebugging = false
+                }
+                preferences.isSessionOpen = false
             }
         }
     }
 
     /**
      * Implements [SleepCommandExecutor] for [com.drivelift.app.feature.hibernation.engine.SleepSessionStateMachine].
-     * Validates the package name and protection rules, then executes `am force-stop <pkg>`.
-     *
-     * If called outside an active [runWithAutoSession], opens and restores a scoped session
-     * automatically.
+     * Validates the package name and protection rules, then executes `am force-stop <pkg>` with a
+     * per-command timeout. If a command times out or the ADB session drops inside an active batch,
+     * reconnects once so subsequent apps continue cleanly.
      */
     override suspend fun sleepApp(candidate: AppDrainCandidate): Result<List<String>> {
         val command = runCatching {
@@ -274,11 +352,14 @@ class AdbSilentExecutor(
             )
         }.getOrElse { return Result.failure(it) }
 
+        if (activeAutoSession.get()) {
+            return executeInsideActiveSession(command).map { listOf(command) }
+        }
         if (transport.isConnected()) {
             return executeCheckedShell(command).map { listOf(command) }
         }
 
-        return when (val outcome = runWithAutoSession { executeCheckedShell(command).map { listOf(command) } }) {
+        return when (val outcome = runWithAutoSession { executeInsideActiveSession(command).map { listOf(command) } }) {
             is AutoSessionOutcome.Completed -> outcome.value
             is AutoSessionOutcome.FallbackToGuided -> Result.failure(IllegalStateException(outcome.reason))
         }
@@ -286,22 +367,67 @@ class AdbSilentExecutor(
 
     /**
      * Trims application caches across the device via `pm trim-caches 999999999999`.
-     * Uses the active ADB session if already connected, or opens and restores a scoped session.
+     * Uses the active ADB session if already connected, or opens and closes a scoped session.
      */
     suspend fun trimCachesSilent(): Result<String> {
         val command = CMD_TRIM_CACHES
+        if (activeAutoSession.get()) {
+            return executeInsideActiveSession(command).map { command }
+        }
         if (transport.isConnected()) {
             return executeCheckedShell(command).map { command }
         }
 
-        return when (val outcome = runWithAutoSession { executeCheckedShell(command).map { command } }) {
+        return when (val outcome = runWithAutoSession { executeInsideActiveSession(command).map { command } }) {
             is AutoSessionOutcome.Completed -> outcome.value
             is AutoSessionOutcome.FallbackToGuided -> Result.failure(IllegalStateException(outcome.reason))
         }
     }
 
+    private suspend fun executeInsideActiveSession(command: String): Result<AdbCommandResult> {
+        if (!transport.isConnected()) {
+            reconnectOnceIfAllowed()
+        }
+        val result = executeCheckedShell(command)
+        if (result.isFailure) {
+            val error = result.exceptionOrNull()
+            val shouldReconnect = error is SleepCommandTimeoutException || !transport.isConnected()
+            if (shouldReconnect) {
+                reconnectOnceIfAllowed()
+            }
+        }
+        return result
+    }
+
+    private suspend fun reconnectOnceIfAllowed(): Boolean {
+        if (!sessionReconnectCount.compareAndSet(0, 1)) {
+            return false
+        }
+        runCatching { transport.disconnect() }
+        return connectWithDiscoveryRetries().isSuccess
+    }
+
     private suspend fun executeCheckedShell(command: String): Result<AdbCommandResult> {
-        val raw = transport.runShell(command)
+        val raw = try {
+            if (commandTimeoutMs > 0L) {
+                withTimeout(commandTimeoutMs) {
+                    transport.runShell(command)
+                }
+            } else {
+                transport.runShell(command)
+            }
+        } catch (timeout: TimeoutCancellationException) {
+            // Re-throw if an enclosing scope or batch watchdog cancelled us; otherwise convert
+            // our per-command timeout into a structured per-app skip error.
+            currentCoroutineContext().ensureActive()
+            val secs = (commandTimeoutMs / 1_000L).coerceAtLeast(1L)
+            return Result.failure(
+                SleepCommandTimeoutException(
+                    "ADB shell command timed out after ${secs}s: $command",
+                    timeout,
+                ),
+            )
+        }
         val result = raw.getOrElse { return Result.failure(it) }
         if (!result.isSuccess) {
             val snippet = result.stdout.lines().firstOrNull { it.isNotBlank() }?.take(120)
@@ -341,9 +467,29 @@ class AdbSilentExecutor(
         const val CMD_TRIM_CACHES = "pm trim-caches 999999999999"
         const val FALLBACK_REASON_NO_WIFI = "Auto Mode needs Wi-Fi - using guided steps this time"
         const val FALLBACK_REASON_CONNECT_FAILED = "Could not connect to Auto Mode - using guided steps this time"
+        const val PAIRING_DISCOVERY_TIMEOUT_MESSAGE =
+            "Could not find the Wireless debugging pairing service within 60 seconds. " +
+                "Turn on Wireless debugging, open Pair device with pairing code, or enter the pairing port manually."
 
         const val DEFAULT_DISCOVERY_RETRY_DELAY_MS = 600L
         const val DEFAULT_CONNECT_DISCOVERY_ATTEMPTS = 3
+        const val DEFAULT_COMMAND_TIMEOUT_MS = 15_000L
+
+        /**
+         * Lightweight startup recovery invoked in `DriveLiftApp.onCreate()` so a process crash
+         * during an active Auto Mode session never leaves Wireless debugging open.
+         */
+        fun recoverInterruptedSession(
+            preferences: AutoModePreferences,
+            systemGateway: AutoModeSystemGateway,
+        ): Boolean {
+            if (!preferences.isSessionOpen) return false
+            if (!preferences.keepWirelessDebuggingOn) {
+                runCatching { systemGateway.setAdbWifiEnabled(false) }
+            }
+            preferences.isSessionOpen = false
+            return true
+        }
 
         fun buildForceStopCommand(
             packageName: String,

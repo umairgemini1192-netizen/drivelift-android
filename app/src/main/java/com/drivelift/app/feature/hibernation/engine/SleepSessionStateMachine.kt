@@ -1,5 +1,8 @@
 package com.drivelift.app.feature.hibernation.engine
 
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.withTimeoutOrNull
+
 /**
  * Abstraction for executing hibernation commands for a single candidate during [HibernationMode.AUTO_SILENT].
  */
@@ -183,14 +186,19 @@ class SleepSessionStateMachine {
     /**
      * Executes an [HibernationMode.AUTO_SILENT] queue deterministically using [executor].
      *
-     * Cooperative interruption is supported via [shouldInterrupt]; per-app failures are recorded
-     * as [SleepItemOutcome.FAILED] so remaining candidates still run.
+     * Cooperative interruption is supported via [shouldInterrupt], cooperative user cancellation
+     * via [shouldCancel], and whole-batch stalling is bounded by [batchWatchdogMs] (defaulting to
+     * 20 s per queued app). Per-app [SleepCommandTimeoutException] results are recorded as
+     * [SleepItemOutcome.SKIPPED] with detail `"skipped (timeout)"`, while other per-app failures
+     * are recorded as [SleepItemOutcome.FAILED] so remaining candidates still run.
      */
     suspend fun runSilentBatch(
         initialState: SleepSessionState,
         executor: SleepCommandExecutor,
         clockMs: () -> Long,
         shouldInterrupt: () -> Boolean = { false },
+        shouldCancel: () -> Boolean = { false },
+        batchWatchdogMs: Long = DEFAULT_BATCH_WATCHDOG_PER_APP_MS * initialState.queue.size.coerceAtLeast(1),
         onStateChange: (SleepSessionState) -> Unit = {},
     ): SleepSessionState {
         require(initialState.mode == HibernationMode.AUTO_SILENT) {
@@ -199,35 +207,117 @@ class SleepSessionStateMachine {
         var state = initialState
         onStateChange(state)
 
-        while (state.phase == SleepSessionPhase.RUNNING && state.currentIndex < state.queue.size) {
-            if (shouldInterrupt()) {
-                state = interruptSession(state, clockMs(), "Interrupted before next candidate")
+        suspend fun executeLoop() {
+            while (state.phase == SleepSessionPhase.RUNNING && state.currentIndex < state.queue.size) {
+                if (shouldCancel()) {
+                    state = cancelSession(state, clockMs(), REASON_CANCELLED_BY_USER)
+                    onStateChange(state)
+                    return
+                }
+                if (shouldInterrupt()) {
+                    state = interruptSession(state, clockMs(), "Interrupted before next candidate")
+                    onStateChange(state)
+                    return
+                }
+                val candidate = state.queue[state.currentIndex]
+                val executionResult = try {
+                    executor.sleepApp(candidate)
+                } catch (ce: CancellationException) {
+                    throw ce
+                } catch (t: Throwable) {
+                    Result.failure(t)
+                }
+                if (shouldCancel()) {
+                    state = if (executionResult.isSuccess) {
+                        recordOutcomeAndAdvance(
+                            state = state,
+                            outcome = SleepItemOutcome.SLEPT,
+                            detail = "Hibernated via Auto Mode",
+                            commandsExecuted = executionResult.getOrDefault(emptyList()),
+                            nowMs = clockMs(),
+                        )
+                    } else {
+                        state
+                    }
+                    if (!state.isTerminal) {
+                        state = cancelSession(state, clockMs(), REASON_CANCELLED_BY_USER)
+                    }
+                    onStateChange(state)
+                    return
+                }
+                val failure = executionResult.exceptionOrNull()
+                state = when {
+                    executionResult.isSuccess -> recordOutcomeAndAdvance(
+                        state = state,
+                        outcome = SleepItemOutcome.SLEPT,
+                        detail = "Hibernated via Auto Mode",
+                        commandsExecuted = executionResult.getOrDefault(emptyList()),
+                        nowMs = clockMs(),
+                    )
+                    failure is SleepCommandTimeoutException -> recordOutcomeAndAdvance(
+                        state = state,
+                        outcome = SleepItemOutcome.SKIPPED,
+                        detail = REASON_SKIPPED_TIMEOUT,
+                        commandsExecuted = emptyList(),
+                        nowMs = clockMs(),
+                    )
+                    else -> {
+                        val errorMessage = failure?.message ?: "Execution failed"
+                        recordOutcomeAndAdvance(
+                            state = state,
+                            outcome = SleepItemOutcome.FAILED,
+                            detail = errorMessage,
+                            commandsExecuted = emptyList(),
+                            nowMs = clockMs(),
+                        )
+                    }
+                }
                 onStateChange(state)
-                return state
             }
-            val candidate = state.queue[state.currentIndex]
-            val executionResult = executor.sleepApp(candidate)
-            state = if (executionResult.isSuccess) {
-                recordOutcomeAndAdvance(
-                    state = state,
-                    outcome = SleepItemOutcome.SLEPT,
-                    detail = "Hibernated via Auto Mode",
-                    commandsExecuted = executionResult.getOrDefault(emptyList()),
-                    nowMs = clockMs(),
-                )
-            } else {
-                val errorMessage = executionResult.exceptionOrNull()?.message ?: "Execution failed"
-                recordOutcomeAndAdvance(
-                    state = state,
-                    outcome = SleepItemOutcome.FAILED,
-                    detail = errorMessage,
-                    commandsExecuted = emptyList(),
-                    nowMs = clockMs(),
-                )
-            }
+        }
+
+        val completedWithinWatchdog = if (batchWatchdogMs > 0L) {
+            withTimeoutOrNull(batchWatchdogMs) {
+                executeLoop()
+                true
+            } ?: false
+        } else {
+            executeLoop()
+            true
+        }
+
+        if (!completedWithinWatchdog && !state.isTerminal) {
+            state = skipRemainingOnWatchdog(state, clockMs(), REASON_SKIPPED_TIMEOUT)
             onStateChange(state)
         }
         return state
+    }
+
+    private fun skipRemainingOnWatchdog(
+        state: SleepSessionState,
+        nowMs: Long,
+        reason: String,
+    ): SleepSessionState {
+        if (state.isTerminal) return state
+        val remainingResults = if (state.currentIndex < state.queue.size) {
+            state.queue.subList(state.currentIndex, state.queue.size).map { candidate ->
+                SleepItemResult(
+                    packageName = candidate.packageName,
+                    appLabel = candidate.appLabel,
+                    outcome = SleepItemOutcome.SKIPPED,
+                    detail = reason,
+                )
+            }
+        } else {
+            emptyList()
+        }
+        return state.copy(
+            phase = SleepSessionPhase.COMPLETED,
+            currentIndex = state.queue.size,
+            results = state.results + remainingResults,
+            updatedAtMs = nowMs,
+            interruptionReason = "Batch watchdog cap reached",
+        )
     }
 
     /**
@@ -236,6 +326,7 @@ class SleepSessionStateMachine {
     fun buildReport(
         state: SleepSessionState,
         completedAtMs: Long = state.updatedAtMs,
+        wirelessDebuggingTurnedOff: Boolean = false,
     ): SleepExecutionReport {
         return SleepExecutionReport(
             sessionId = state.sessionId,
@@ -258,7 +349,14 @@ class SleepSessionStateMachine {
             startedAtMs = state.startedAtMs,
             completedAtMs = completedAtMs,
             interruptionReason = state.interruptionReason,
+            wirelessDebuggingTurnedOff = wirelessDebuggingTurnedOff,
         )
+    }
+
+    companion object {
+        const val DEFAULT_BATCH_WATCHDOG_PER_APP_MS = 20_000L
+        const val REASON_SKIPPED_TIMEOUT = "skipped (timeout)"
+        const val REASON_CANCELLED_BY_USER = "Cancelled by user"
     }
 
     private fun recordOutcomeAndAdvance(

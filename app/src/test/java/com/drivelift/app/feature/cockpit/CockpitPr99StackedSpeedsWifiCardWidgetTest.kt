@@ -29,8 +29,12 @@ import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.R
+import com.drivelift.app.feature.cockpit.activities.CallState
 import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
+import com.drivelift.app.feature.cockpit.ui.IdlePillLayoutMath
+import com.drivelift.app.feature.cockpit.ui.IdleSpeedDisplayMode
+import com.drivelift.app.feature.cockpit.widget.TodayMobileDataCache
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.BluetoothTileState
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsController
@@ -836,5 +840,179 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         scope.runCurrent()
         assertFalse(monitor.isTelemetryTickerActive)
         assertFalse(monitor.isSpeedTickerActive)
+    }
+
+    // ------------------------------------------------------------------ 7. PR #99 carry-over fixes
+
+    @Test
+    fun collapsedRingingCallAndActiveNavigationKeepActivityRightClusterDuringLiveTraffic() {
+        val traffic = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.WIFI,
+            label = "Wi-Fi",
+            uploadBytesPerSec = 64L * 1024L,
+            downloadBytesPerSec = (1.8 * 1024 * 1024).toLong(),
+        )
+        val incomingCall = CockpitLiveActivity.CallActivity(
+            id = "call:incoming",
+            callerName = "Alex",
+            state = CallState.INCOMING,
+            startedAtMs = 1_000L,
+        )
+        val activeNav = CockpitLiveActivity.MapsNavActivity(
+            id = "nav:active",
+            maneuverText = "Turn right onto Main St",
+            distanceText = "450 m",
+            etaText = "12 min",
+        )
+        val screenRec = CockpitLiveActivity.ScreenRecordingActivity(
+            id = "rec:active",
+            startedAtMs = 1_000L,
+        )
+
+        // Ringing call + traffic > 1K with Pixel cutout must still display "Incoming".
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CompositionLocalProvider(LocalIdleNetworkOverride provides traffic) {
+                                CollapsedSplitIslandRow(
+                                    slotState = CockpitSlotState(primary = incomingCall),
+                                    widthDeltaDp = 0,
+                                    cutoutWidthDp = 34,
+                                    onTapPrimary = {},
+                                    onTapSecondary = {},
+                                    onLongPressExpand = {},
+                                    onCycleNext = {},
+                                    onCyclePrevious = {},
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("Incoming").assertIsDisplayed()
+            assertEquals(0, compose.onAllNodesWithTag("cockpit-idle-speed").fetchSemanticsNodes().size)
+        }
+
+        // Active navigation + traffic > 1K with Pixel cutout must still display ETA ("12 min").
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CompositionLocalProvider(LocalIdleNetworkOverride provides traffic) {
+                                CollapsedSplitIslandRow(
+                                    slotState = CockpitSlotState(primary = activeNav),
+                                    widthDeltaDp = 0,
+                                    cutoutWidthDp = 34,
+                                    onTapPrimary = {},
+                                    onTapSecondary = {},
+                                    onLongPressExpand = {},
+                                    onCycleNext = {},
+                                    onCyclePrevious = {},
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("12 min").assertIsDisplayed()
+            assertEquals(0, compose.onAllNodesWithTag("cockpit-idle-speed").fetchSemanticsNodes().size)
+        }
+
+        // Screen recording + traffic > 1K must keep the screen-recording stop box.
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            CompositionLocalProvider(LocalIdleNetworkOverride provides traffic) {
+                                CollapsedSplitIslandRow(
+                                    slotState = CockpitSlotState(primary = screenRec),
+                                    widthDeltaDp = 0,
+                                    cutoutWidthDp = 34,
+                                    onTapPrimary = {},
+                                    onTapSecondary = {},
+                                    onLongPressExpand = {},
+                                    onCycleNext = {},
+                                    onCyclePrevious = {},
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithContentDescription("Screen recording in progress").assertIsDisplayed()
+            assertEquals(0, compose.onAllNodesWithTag("cockpit-idle-speed").fetchSemanticsNodes().size)
+        }
+    }
+
+    @Test
+    fun todayMobileDataCacheAvoidsRepeatedSystemQueriesWithin60SecondsAndRefreshesOnInvalidate() {
+        var nowMs = 10_000L
+        var queries = 0
+        val cache = TodayMobileDataCache(
+            ttlMs = 60_000L,
+            elapsedClock = { nowMs },
+            reader = {
+                queries++
+                "Today ${queries * 100} MB"
+            },
+        )
+
+        assertEquals("Today 100 MB", cache.get(app))
+        assertEquals(1, queries)
+
+        // Repeated 1-2 s network patches within 60 s reuse cached value with zero extra system calls.
+        nowMs += 2_000L
+        assertEquals("Today 100 MB", cache.get(app))
+        nowMs += 57_000L
+        assertEquals("Today 100 MB", cache.get(app))
+        assertEquals(1, queries)
+
+        // Past 60 s TTL refreshes once.
+        nowMs += 2_000L
+        assertEquals("Today 200 MB", cache.get(app))
+        assertEquals(2, queries)
+
+        // Screen-on invalidation forces fresh read immediately.
+        cache.invalidate()
+        assertEquals("Today 300 MB", cache.get(app))
+        assertEquals(3, queries)
+    }
+
+    @Test
+    fun cutoutWidthBudgetPreservesSpeedWidthAndAccountsForCalibrationDelta() {
+        // Positive widthDeltaDp widens the cutout gap; satellite must stay suppressed when it would starve speeds.
+        assertFalse(canShowSatelliteBubble(screenWidthDp = 412, widthDeltaDp = 12, cutoutWidthDp = 0, fontScale = 1f))
+        assertFalse(canShowSatelliteBubble(screenWidthDp = 412, widthDeltaDp = 8, cutoutWidthDp = 32, fontScale = 1f))
+
+        // Tight cutout symmetrically reclaims excess safety padding (still >= cutout + 8dp) to avoid
+        // starving compact speed figures while keeping left and right zones centered.
+        val layout = IdlePillLayoutMath.compute(
+            maxContentWidthDp = 120f,
+            minContentWidthDp = 100f,
+            measuredCutoutWidthDp = 32f,
+            cutoutWidthDeltaDp = 0f,
+            hasUploadTraffic = true,
+            hasDownloadTraffic = true,
+            uploadBytesPerSec = 48L * 1024L,
+            downloadBytesPerSec = 1_500_000L,
+            fontScale = 1f,
+        )
+        assertTrue(layout.speedDisplayMode != IdleSpeedDisplayMode.NONE)
+        assertTrue(
+            "Tight cutout must preserve >= 4dp safety margin per side (gap=${layout.centerGapDp})",
+            layout.centerGapDp >= 32f + (Tokens.Tiny.value * 2f) - 0.01f,
+        )
+        assertTrue(
+            "Right zone ${layout.rightZoneWidthDp}dp must fit compact speed figure (${IdlePillLayoutMath.stackedSpeedFigureWidthDp(1f)}dp)",
+            layout.rightZoneWidthDp >= IdlePillLayoutMath.stackedSpeedFigureWidthDp(1f) - 0.01f,
+        )
+        assertEquals(layout.leftZoneWidthDp, layout.rightZoneWidthDp, 0.01f)
     }
 }

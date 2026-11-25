@@ -1,5 +1,17 @@
 package com.drivelift.app.feature.hibernation.engine
 
+import java.io.IOException
+
+/**
+ * Thrown when a single silent sleep command exceeds its per-command timeout budget.
+ * Handled per app by [SleepSessionStateMachine.runSilentBatch] so one stalled app is marked
+ * skipped (timeout) without blocking the rest of the batch.
+ */
+class SleepCommandTimeoutException(
+    message: String,
+    cause: Throwable? = null,
+) : IOException(message, cause)
+
 /**
  * Execution mode for a sleep/hibernation session.
  */
@@ -166,7 +178,65 @@ data class SleepExecutionReport(
     val startedAtMs: Long,
     val completedAtMs: Long,
     val interruptionReason: String? = null,
+    val wirelessDebuggingTurnedOff: Boolean = false,
 ) {
     val durationMs: Long
         get() = (completedAtMs - startedAtMs).coerceAtLeast(0L)
+}
+
+/**
+ * Formats plain-English summary copy for completed, partially skipped, or cancelled sleep batches.
+ * Uses only plain ASCII hyphens (zero emojis, zero em-dashes).
+ */
+object SleepReportFormatter {
+    fun formatSummary(report: SleepExecutionReport): String {
+        val slept = report.sleptPackages.size
+        val total = report.totalCandidates
+        val appWord = if (total == 1) "app" else "apps"
+        val base = "Slept $slept of $total $appWord"
+
+        val problemItems = report.results.filter {
+            it.outcome == SleepItemOutcome.SKIPPED || it.outcome == SleepItemOutcome.FAILED
+        }
+        val problemSuffix = when {
+            problemItems.isEmpty() -> null
+            problemItems.size == 1 -> {
+                val item = problemItems.single()
+                val name = item.appLabel.ifBlank { item.packageName }
+                val reason = if (item.detail.contains("timeout", ignoreCase = true) ||
+                    item.detail.contains("timed out", ignoreCase = true) ||
+                    item.detail.contains("did not respond", ignoreCase = true)
+                ) {
+                    "did not respond"
+                } else {
+                    item.detail.ifBlank { "could not stop" }
+                }
+                "$name skipped ($reason)"
+            }
+            else -> {
+                val shown = problemItems.take(3).joinToString(", ") { it.appLabel.ifBlank { it.packageName } }
+                val extra = if (problemItems.size > 3) " +${problemItems.size - 3} more" else ""
+                val allTimedOut = problemItems.all {
+                    it.detail.contains("timeout", ignoreCase = true) ||
+                        it.detail.contains("timed out", ignoreCase = true) ||
+                        it.detail.contains("did not respond", ignoreCase = true)
+                }
+                if (allTimedOut) {
+                    "$shown$extra skipped (did not respond)"
+                } else {
+                    "$shown$extra skipped"
+                }
+            }
+        }
+
+        val cancelSuffix = if (report.finalPhase == SleepSessionPhase.CANCELLED) {
+            val remaining = report.cancelledPackages.size
+            if (remaining > 0) "cancelled ($remaining remaining)" else "cancelled"
+        } else {
+            null
+        }
+
+        val parts = listOfNotNull(base, problemSuffix, cancelSuffix)
+        return parts.joinToString(" - ")
+    }
 }

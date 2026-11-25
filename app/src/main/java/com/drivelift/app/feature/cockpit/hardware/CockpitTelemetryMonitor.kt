@@ -205,6 +205,7 @@ class CockpitTelemetryMonitor(
                 screenPaused = false
                 _isScreenOn.value = true
                 _screenWakeCount.value = _screenWakeCount.value + 1L
+                CockpitGlanceWidget.invalidateTodayMobileDataCache()
                 if (idleConsumers > 0) {
                     refreshNetworkKind()
                     startSpeedTicker()

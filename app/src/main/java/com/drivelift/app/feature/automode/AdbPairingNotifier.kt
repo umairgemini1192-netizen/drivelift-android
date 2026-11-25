@@ -1,12 +1,28 @@
 package com.drivelift.app.feature.automode
 
+import android.Manifest
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
+import android.os.Build
+import android.provider.Settings
 import androidx.core.app.NotificationCompat
+import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import androidx.core.content.ContextCompat
+
+/**
+ * Result of checking whether DriveLift can display the inline Wireless debugging pairing
+ * notification on Android 13+ (runtime permission, app-wide toggle, and channel importance).
+ */
+enum class NotificationAccessState {
+    ALLOWED,
+    NEEDS_RUNTIME_PERMISSION,
+    BLOCKED_IN_SETTINGS,
+}
 
 /**
  * Posts and updates DriveLift's Wireless debugging pairing notification with an inline
@@ -18,6 +34,8 @@ object AdbPairingNotifier {
     const val NOTIFICATION_ID = 4409
     const val ACTION_PAIRING_REPLY = "com.drivelift.app.action.ADB_PAIRING_REPLY"
     const val KEY_PAIRING_CODE = "key_adb_pairing_code"
+    const val BLOCKED_EXPLANATION =
+        "Allow DriveLift notifications so the pairing reply box can appear while you are in Wireless debugging."
 
     fun ensureChannel(context: Context) {
         val manager = context.getSystemService(NotificationManager::class.java) ?: return
@@ -32,7 +50,54 @@ object AdbPairingNotifier {
         )
     }
 
-    fun showPairingPrompt(context: Context, errorHint: String? = null) {
+    /**
+     * Checks POST_NOTIFICATIONS runtime permission (API 33+), app-level notifications enabled,
+     * and the pairing channel importance so DriveLift never silently posts into a blocked channel.
+     */
+    fun checkNotificationAccess(context: Context): NotificationAccessState {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val granted = ContextCompat.checkSelfPermission(
+                context,
+                Manifest.permission.POST_NOTIFICATIONS,
+            ) == PackageManager.PERMISSION_GRANTED
+            if (!granted) {
+                return NotificationAccessState.NEEDS_RUNTIME_PERMISSION
+            }
+        }
+        val appEnabled = runCatching {
+            NotificationManagerCompat.from(context).areNotificationsEnabled()
+        }.getOrDefault(true)
+        if (!appEnabled) {
+            return NotificationAccessState.BLOCKED_IN_SETTINGS
+        }
+        val manager = context.getSystemService(NotificationManager::class.java)
+        val existingChannel = manager?.getNotificationChannel(CHANNEL_ID)
+        val channel = if (existingChannel == null) {
+            ensureChannel(context)
+            manager?.getNotificationChannel(CHANNEL_ID)
+        } else {
+            existingChannel
+        }
+        if (channel != null && channel.importance == NotificationManager.IMPORTANCE_NONE) {
+            return NotificationAccessState.BLOCKED_IN_SETTINGS
+        }
+        return NotificationAccessState.ALLOWED
+    }
+
+    fun createNotificationSettingsIntent(context: Context): Intent =
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).apply {
+            putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+
+    /**
+     * Posts the inline RemoteInput pairing notification if notification access is allowed.
+     * Returns true when posted, false when blocked by missing permission or disabled channel.
+     */
+    fun showPairingPrompt(context: Context, errorHint: String? = null): Boolean {
+        if (checkNotificationAccess(context) != NotificationAccessState.ALLOWED) {
+            return false
+        }
         ensureChannel(context)
         val remoteInput = RemoteInput.Builder(KEY_PAIRING_CODE)
             .setLabel("Enter pairing code")
@@ -69,8 +134,9 @@ object AdbPairingNotifier {
             .addAction(replyAction)
             .build()
 
-        context.getSystemService(NotificationManager::class.java)
-            ?.notify(NOTIFICATION_ID, notification)
+        val manager = context.getSystemService(NotificationManager::class.java) ?: return false
+        manager.notify(NOTIFICATION_ID, notification)
+        return true
     }
 
     fun showProgress(context: Context, message: String) {

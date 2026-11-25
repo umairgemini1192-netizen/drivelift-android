@@ -5,11 +5,14 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.job
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
+import java.io.Closeable
 import java.io.IOException
 import java.io.InputStreamReader
 import java.net.InetAddress
@@ -21,6 +24,8 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.coroutineContext
 import kotlin.coroutines.resume
 
 /**
@@ -36,30 +41,83 @@ data class AdbCommandResult(
 
 /**
  * Wraps and parses single-command ADB shell executions so exit codes are reliably checked
- * even over ADB's legacy single-stream `shell:` service.
+ * over ADB's single-stream `shell:` (shell v1) service without waiting for a shell v2 exit packet.
+ *
+ * Recognizes both `__DRIVELIFT_EXIT__=` and `__DL_EXIT:` exit markers, stops reading as soon as
+ * an exit marker line arrives (even if the remote `adbd` delays sending `CLSE`), and treats a
+ * clean empty stream EOF as completion.
  */
 object AdbShellOutputParser {
-    private const val EXIT_MARKER = "__DRIVELIFT_EXIT__="
+    const val EXIT_MARKER = "__DRIVELIFT_EXIT__="
+    const val ALT_EXIT_MARKER = "__DL_EXIT:"
 
-    fun wrapWithExitCode(command: String): String {
+    private val SUPPORTED_MARKERS = listOf(EXIT_MARKER, ALT_EXIT_MARKER)
+
+    fun wrapWithExitCode(command: String, marker: String = EXIT_MARKER): String {
         val trimmed = command.trim()
         require(trimmed.isNotEmpty()) { "ADB shell command must not be blank." }
         require(trimmed.none { it == '\u0000' || it == '\n' || it == '\r' }) {
             "ADB shell command must be a single line without control characters."
         }
-        return "$trimmed; echo $EXIT_MARKER\$?"
+        return "$trimmed; echo $marker\$?"
     }
 
-    fun parse(rawOutput: String): Result<AdbCommandResult> {
+    /**
+     * Extracts the exit code if [line] contains a recognized exit marker prefix, or returns null
+     * if [line] is normal command stdout.
+     */
+    fun extractExitMarkerToken(line: String): String? {
+        val trimmed = line.trim()
+        for (prefix in SUPPORTED_MARKERS) {
+            if (trimmed.startsWith(prefix)) {
+                return trimmed.removePrefix(prefix).trim()
+            }
+        }
+        return null
+    }
+
+    fun isExitMarkerLine(line: String): Boolean = extractExitMarkerToken(line) != null
+
+    /**
+     * Reads lines from an ADB shell v1 [reader] until either a recognized exit marker line arrives
+     * (stopping immediately without blocking for a stalled `CLSE`/exit packet) or stream EOF is
+     * reached. A clean empty stream EOF (typical for silent commands such as `am force-stop`) is
+     * treated as exit code 0.
+     */
+    fun readStreamUntilComplete(reader: BufferedReader): Result<AdbCommandResult> {
+        val stdoutLines = mutableListOf<String>()
+        while (true) {
+            val line = reader.readLine() ?: break
+            val markerToken = extractExitMarkerToken(line)
+            if (markerToken != null) {
+                val exitCode = markerToken.toIntOrNull()
+                    ?: return Result.failure(IOException("Invalid ADB shell exit code: '$markerToken'."))
+                val cleanStdout = stdoutLines.joinToString("\n").trimEnd()
+                return Result.success(AdbCommandResult(exitCode = exitCode, stdout = cleanStdout))
+            }
+            stdoutLines.add(line)
+        }
+        // Stream reached EOF without an exit marker.
+        val raw = stdoutLines.joinToString("\n")
+        return parse(raw, treatCleanEmptyEofAsSuccess = true)
+    }
+
+    fun parse(
+        rawOutput: String,
+        treatCleanEmptyEofAsSuccess: Boolean = false,
+    ): Result<AdbCommandResult> {
         val normalized = rawOutput.replace("\r\n", "\n").replace("\r", "\n")
         val lines = normalized.split('\n')
-        val markerIdx = lines.indexOfLast { it.trim().startsWith(EXIT_MARKER) }
+        val markerIdx = lines.indexOfLast { isExitMarkerLine(it) }
         if (markerIdx < 0) {
+            if (treatCleanEmptyEofAsSuccess && normalized.isBlank()) {
+                return Result.success(AdbCommandResult(exitCode = 0, stdout = ""))
+            }
             return Result.failure(
                 IOException("ADB shell stream ended without exit status marker."),
             )
         }
-        val codeText = lines[markerIdx].trim().removePrefix(EXIT_MARKER).trim()
+        val codeText = extractExitMarkerToken(lines[markerIdx]).orEmpty()
         val exitCode = codeText.toIntOrNull()
             ?: return Result.failure(IOException("Invalid ADB shell exit code: '$codeText'."))
 
@@ -88,6 +146,7 @@ interface AdbTransport {
         const val SERVICE_TYPE_TLS_PAIRING = "_adb-tls-pairing._tcp"
         const val SERVICE_TYPE_TLS_CONNECT = "_adb-tls-connect._tcp"
         const val DEFAULT_DISCOVERY_TIMEOUT_MS = 8_000L
+        const val PAIRING_DISCOVERY_TIMEOUT_MS = 60_000L
         const val DEFAULT_CONNECT_TIMEOUT_MS = 8_000L
     }
 }
@@ -170,19 +229,35 @@ class LibAdbTransport(
     }
 
     override suspend fun runShell(command: String): Result<AdbCommandResult> = withContext(Dispatchers.IO) {
-        runCatching {
+        val activeStream = AtomicReference<Closeable?>(null)
+        val cancelHook = coroutineContext.job.invokeOnCompletion { cause ->
+            if (cause != null) {
+                runCatching { activeStream.getAndSet(null)?.close() }
+            }
+        }
+        try {
             val adb = synchronized(lock) { manager }
-                ?: throw IOException("Not connected to localhost ADB daemon.")
+                ?: return@withContext Result.failure(IOException("Not connected to localhost ADB daemon."))
             if (!adb.isConnected) {
-                throw IOException("Not connected to localhost ADB daemon.")
+                return@withContext Result.failure(IOException("Not connected to localhost ADB daemon."))
             }
             val wrapped = AdbShellOutputParser.wrapWithExitCode(command)
-            val rawOutput = adb.openStream("shell:$wrapped").use { stream ->
+            val stream = adb.openStream("shell:$wrapped")
+            activeStream.set(stream)
+            try {
                 BufferedReader(InputStreamReader(stream.openInputStream(), Charsets.UTF_8)).use { reader ->
-                    reader.readText()
+                    AdbShellOutputParser.readStreamUntilComplete(reader)
                 }
+            } finally {
+                activeStream.set(null)
+                runCatching { stream.close() }
             }
-            AdbShellOutputParser.parse(rawOutput).getOrThrow()
+        } catch (ce: CancellationException) {
+            throw ce
+        } catch (t: Throwable) {
+            Result.failure(t)
+        } finally {
+            cancelHook.dispose()
         }
     }
 

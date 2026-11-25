@@ -164,6 +164,47 @@ object CockpitWidgetActions {
 }
 
 /**
+ * 60-second cache for today's mobile data total so 1-2 s network widget partial patches do not
+ * repeatedly query `NetworkStatsManager.querySummaryForDevice` in `system_server`.
+ * Invalidated on screen-on and refreshed on full widget rebuilds or after [ttlMs].
+ */
+internal class TodayMobileDataCache(
+    private val ttlMs: Long = DEFAULT_TTL_MS,
+    private val elapsedClock: () -> Long = SystemClock::elapsedRealtime,
+    private val reader: (Context) -> String = { ctx ->
+        CockpitQuickControlsController.readTodayMobileDataLabel(ctx)
+    },
+) {
+    private val lock = Any()
+    private var cachedLabel: String? = null
+    private var lastReadElapsedMs: Long = Long.MIN_VALUE
+
+    fun get(context: Context, forceRefresh: Boolean = false): String = synchronized(lock) {
+        val now = elapsedClock()
+        val fresh = !forceRefresh &&
+            cachedLabel != null &&
+            lastReadElapsedMs != Long.MIN_VALUE &&
+            (now - lastReadElapsedMs) in 0L until ttlMs
+        if (fresh) {
+            return cachedLabel!!
+        }
+        val value = reader(context)
+        cachedLabel = value
+        lastReadElapsedMs = now
+        value
+    }
+
+    fun invalidate() = synchronized(lock) {
+        cachedLabel = null
+        lastReadElapsedMs = Long.MIN_VALUE
+    }
+
+    companion object {
+        const val DEFAULT_TTL_MS = 60_000L
+    }
+}
+
+/**
  * Home Screen Cyber-Glass Bento HUD Master Widget builder & state synchronizer.
  *
  * Uses direct `RemoteViews` + `AppWidgetManager.updateAppWidget()` with unique `PendingIntent`
@@ -243,10 +284,20 @@ class CockpitGlanceWidget {
         private val batteryCurrentAverager = BatteryCurrentRollingAverage(
             windowSize = CockpitWidgetModel.CURRENT_AVERAGE_WINDOW,
         )
+        private val todayMobileDataCache = TodayMobileDataCache()
 
         internal fun resetBatteryCurrentAveragerForTest() {
             batteryCurrentAverager.reset()
         }
+
+        internal fun invalidateTodayMobileDataCache() {
+            todayMobileDataCache.invalidate()
+        }
+
+        internal fun readCachedTodayMobileDataLabel(
+            context: Context,
+            forceRefresh: Boolean = false,
+        ): String = todayMobileDataCache.get(context, forceRefresh = forceRefresh)
 
         fun readSavedPage(context: Context, appWidgetId: Int): Int {
             val prefs = context.applicationContext.getSharedPreferences(WIDGET_PREFS, Context.MODE_PRIVATE)
@@ -428,7 +479,7 @@ class CockpitGlanceWidget {
             val battery = readBatteryMetric(context)
             val ram = readRamMetric(context)
             val network = cockpit.telemetryMonitor.network.value
-            val todayDataLabel = CockpitQuickControlsController.readTodayMobileDataLabel(context)
+            val todayDataLabel = readCachedTodayMobileDataLabel(context, forceRefresh = true)
 
             val allPinned = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
             val pageCount = CockpitWidgetModel.pageCount(allPinned.size)
@@ -545,7 +596,7 @@ class CockpitGlanceWidget {
         ): RemoteViews {
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
             val resolvedToday = if (network != null) {
-                todayDataLabel ?: CockpitQuickControlsController.readTodayMobileDataLabel(context)
+                todayDataLabel ?: readCachedTodayMobileDataLabel(context)
             } else {
                 todayDataLabel
             }
@@ -578,7 +629,7 @@ class CockpitGlanceWidget {
             todayDataLabel: String? = null,
         ): RemoteViews {
             val resolvedToday = if (network != null) {
-                todayDataLabel ?: CockpitQuickControlsController.readTodayMobileDataLabel(context)
+                todayDataLabel ?: readCachedTodayMobileDataLabel(context)
             } else {
                 todayDataLabel
             }
@@ -607,7 +658,7 @@ class CockpitGlanceWidget {
         fun buildNetworkPartialRemoteViews(
             context: Context,
             network: IdleNetworkSnapshot,
-            todayDataLabel: String = CockpitQuickControlsController.readTodayMobileDataLabel(context),
+            todayDataLabel: String = readCachedTodayMobileDataLabel(context),
         ): RemoteViews {
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
@@ -628,7 +679,7 @@ class CockpitGlanceWidget {
         internal fun buildTallNetworkPartialRemoteViewsForTest(
             context: Context,
             network: IdleNetworkSnapshot,
-            todayDataLabel: String = CockpitQuickControlsController.readTodayMobileDataLabel(context),
+            todayDataLabel: String = readCachedTodayMobileDataLabel(context),
         ): RemoteViews {
             val views = RemoteViews(context.packageName, WidgetSizeVariant.TALL.layoutResId)
             applyTallNetworkRowToRemoteViews(views, network, todayDataLabel, WidgetSizeVariant.TALL)

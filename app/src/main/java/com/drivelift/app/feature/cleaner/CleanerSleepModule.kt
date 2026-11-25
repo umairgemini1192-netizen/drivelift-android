@@ -16,6 +16,7 @@ import com.drivelift.app.feature.automode.AutoModeWizardState
 import com.drivelift.app.feature.automode.AutoModeWizardStateMachine
 import com.drivelift.app.feature.automode.AutoSessionOutcome
 import com.drivelift.app.feature.automode.LibAdbTransport
+import com.drivelift.app.feature.automode.NotificationAccessState
 import com.drivelift.app.feature.automode.SharedPrefsAutoModePreferences
 import com.drivelift.app.feature.cleaner.cache.AndroidAppStorageStatsSource
 import com.drivelift.app.feature.cleaner.cache.GuidedCleanTarget
@@ -39,15 +40,20 @@ import com.drivelift.app.feature.hibernation.engine.ProtectionReason
 import com.drivelift.app.feature.hibernation.engine.SleepSessionStateMachine
 import com.drivelift.app.feature.hibernation.ui.SleepModeUiState
 import com.drivelift.app.feature.hibernation.ui.defaultProtectedRules
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Self-contained coordinator wiring Storage Cleaner, Sleep Mode, Android StorageStatsManager /
@@ -100,6 +106,14 @@ class CleanerSleepModule(
 
     private var cachedDuplicateGroups: List<DuplicateGroup> = emptyList()
     private var initialScanTriggered = false
+    private var activeAutoCleanJob: Job? = null
+    private var activeAutoSleepJob: Job? = null
+    private var pairingDiscoveryJob: Job? = null
+    private val autoSleepCancelRequested = AtomicBoolean(false)
+
+    init {
+        adbSilentExecutor.recoverInterruptedSessionIfNeeded()
+    }
 
     private val _autoModeWizardState = MutableStateFlow(
         autoModeWizardMachine.onEnvironmentUpdated(
@@ -142,6 +156,7 @@ class CleanerSleepModule(
                     needsUsageAccess = !hasUsage,
                     autoModeStatus = status,
                     celebrationReclaimedBytes = null,
+                    celebrationWirelessDebuggingTurnedOff = false,
                 )
             }
 
@@ -245,7 +260,8 @@ class CleanerSleepModule(
     }
 
     fun executeSelectedCleanup() {
-        scope.launch {
+        activeAutoCleanJob?.cancel()
+        activeAutoCleanJob = scope.launch {
             val state = _cleanerState.value
             val selectedItems = state.groups.flatMap { it.items }.filter { it.id in state.selectedItemIds }
             if (selectedItems.isEmpty()) return@launch
@@ -271,51 +287,66 @@ class CleanerSleepModule(
 
             var totalReclaimed = fileResult?.reclaimedBytes ?: 0L
             var totalDeleted = fileResult?.deletedPaths?.size ?: 0
+            var wirelessDebuggingTurnedOff = false
 
             val status = adbSilentExecutor.inspectStatus()
             val guidedTargets = mutableListOf<GuidedCleanTarget>()
             var fallbackReason: String? = null
 
-            if (cacheItems.isNotEmpty()) {
-                if (status.effectiveMode == HibernationMode.AUTO_SILENT) {
-                    _cleanerState.update {
-                        it.copy(
-                            autoProgressMessage = "Auto Mode: trimming caches for ${cacheItems.size} apps...",
-                            autoModeStatus = status,
-                        )
-                    }
-                    when (val outcome = adbSilentExecutor.runWithAutoSession { executor -> executor.trimCachesSilent() }) {
-                        is AutoSessionOutcome.Completed -> {
-                            if (outcome.value.isSuccess) {
-                                totalReclaimed += cacheItems.sumOf { it.sizeBytes }
-                                totalDeleted += cacheItems.size
-                            } else {
-                                fallbackReason = outcome.value.exceptionOrNull()?.message
-                                    ?: "Could not trim caches automatically - using guided steps this time"
+            try {
+                if (cacheItems.isNotEmpty()) {
+                    if (status.effectiveMode == HibernationMode.AUTO_SILENT) {
+                        _cleanerState.update {
+                            it.copy(
+                                autoProgressMessage = "Auto Mode: trimming caches for ${cacheItems.size} apps...",
+                                autoModeStatus = status,
+                            )
+                        }
+                        when (val outcome = adbSilentExecutor.runWithAutoSession { executor -> executor.trimCachesSilent() }) {
+                            is AutoSessionOutcome.Completed -> {
+                                wirelessDebuggingTurnedOff = adbSilentExecutor.lastSessionTurnedOffWirelessDebugging
+                                if (outcome.value.isSuccess) {
+                                    totalReclaimed += cacheItems.sumOf { it.sizeBytes }
+                                    totalDeleted += cacheItems.size
+                                } else {
+                                    fallbackReason = outcome.value.exceptionOrNull()?.message
+                                        ?: "Could not trim caches automatically - using guided steps this time"
+                                    for (cacheItem in cacheItems) {
+                                        val pkg = cacheItem.packageName ?: continue
+                                        guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
+                                    }
+                                }
+                            }
+                            is AutoSessionOutcome.FallbackToGuided -> {
+                                fallbackReason = outcome.reason
                                 for (cacheItem in cacheItems) {
                                     val pkg = cacheItem.packageName ?: continue
                                     guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
                                 }
                             }
                         }
-                        is AutoSessionOutcome.FallbackToGuided -> {
-                            fallbackReason = outcome.reason
-                            for (cacheItem in cacheItems) {
-                                val pkg = cacheItem.packageName ?: continue
-                                guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
-                            }
+                        _cleanerState.update { it.copy(autoProgressMessage = null) }
+                    } else {
+                        if (status.isConfigured && status.availability == AutoModeAvailability.NEEDS_WIFI) {
+                            fallbackReason = AdbSilentExecutor.FALLBACK_REASON_NO_WIFI
+                        }
+                        for (cacheItem in cacheItems) {
+                            val pkg = cacheItem.packageName ?: continue
+                            guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
                         }
                     }
-                    _cleanerState.update { it.copy(autoProgressMessage = null) }
-                } else {
-                    if (status.isConfigured && status.availability == AutoModeAvailability.NEEDS_WIFI) {
-                        fallbackReason = AdbSilentExecutor.FALLBACK_REASON_NO_WIFI
-                    }
-                    for (cacheItem in cacheItems) {
-                        val pkg = cacheItem.packageName ?: continue
-                        guidedTargets.add(GuidedCleanTarget(pkg, cacheItem.name, cacheItem.sizeBytes))
+                }
+            } catch (ce: CancellationException) {
+                withContext(NonCancellable) {
+                    val refreshed = adbSilentExecutor.inspectStatus()
+                    _cleanerState.update {
+                        it.copy(
+                            autoModeStatus = refreshed,
+                            autoProgressMessage = null,
+                        )
                     }
                 }
+                throw ce
             }
 
             val refreshedStatus = adbSilentExecutor.inspectStatus()
@@ -336,6 +367,7 @@ class CleanerSleepModule(
                     it.copy(
                         celebrationReclaimedBytes = totalReclaimed,
                         celebrationDeletedCount = totalDeleted,
+                        celebrationWirelessDebuggingTurnedOff = wirelessDebuggingTurnedOff,
                         selectedItemIds = emptySet(),
                         autoModeStatus = refreshedStatus,
                         autoProgressMessage = null,
@@ -343,6 +375,11 @@ class CleanerSleepModule(
                 }
             }
         }
+    }
+
+    fun cancelAutoCleanBatch() {
+        activeAutoCleanJob?.cancel()
+        activeAutoCleanJob = null
     }
 
     fun confirmGuidedCleanStep() {
@@ -386,27 +423,85 @@ class CleanerSleepModule(
         return status
     }
 
-    fun postPairingNotification() {
+    fun setKeepWirelessDebuggingOn(enabled: Boolean) {
+        adbSilentExecutor.keepWirelessDebuggingOn = enabled
+        refreshAutoModeStatus()
+    }
+
+    fun postPairingNotification(): Boolean {
         refreshAutoModeStatus()
         val current = _autoModeWizardState.value
+        val access = autoModeSystemGateway.notificationAccessState()
+        if (access != NotificationAccessState.ALLOWED) {
+            _autoModeWizardState.value = autoModeWizardMachine.onPairingNotificationBlocked(current, access)
+            return false
+        }
         val next = autoModeWizardMachine.onPairingNotificationPosted(current)
-        _autoModeWizardState.value = next
-        if (next.pairingNotificationPosted) {
-            AdbPairingNotifier.showPairingPrompt(app)
+        if (!next.pairingNotificationPosted) {
+            _autoModeWizardState.value = next
+            return false
+        }
+        val posted = AdbPairingNotifier.showPairingPrompt(app)
+        if (posted) {
+            _autoModeWizardState.value = next
+            return true
+        }
+        val rechecked = autoModeSystemGateway.notificationAccessState()
+        _autoModeWizardState.value = autoModeWizardMachine.onPairingNotificationBlocked(current, rechecked)
+        return false
+    }
+
+    fun startPairingServiceDiscovery() {
+        pairingDiscoveryJob?.cancel()
+        val current = _autoModeWizardState.value
+        if (!current.isOnWifi) return
+        _autoModeWizardState.update { autoModeWizardMachine.onPairingDiscoveryStarted(it) }
+        pairingDiscoveryJob = scope.launch {
+            val result = adbSilentExecutor.discoverPairingPortWithTimeout()
+            result.fold(
+                onSuccess = { port ->
+                    _autoModeWizardState.update { autoModeWizardMachine.onPairingDiscoveryFound(it, port) }
+                },
+                onFailure = { err ->
+                    val message = err.message ?: AdbSilentExecutor.PAIRING_DISCOVERY_TIMEOUT_MESSAGE
+                    _autoModeWizardState.update { autoModeWizardMachine.onPairingDiscoveryTimedOut(it, message) }
+                },
+            )
         }
     }
 
-    fun submitPairingCodeFromWizard(rawCode: String) {
+    fun stopPairingServiceDiscovery() {
+        pairingDiscoveryJob?.cancel()
+        pairingDiscoveryJob = null
+        _autoModeWizardState.update { it.copy(isDiscoveringPairingService = false) }
+    }
+
+    fun submitPairingCodeFromWizard(rawCode: String, rawPort: String = "") {
+        val portValidation = autoModeWizardMachine.validateOptionalPairingPort(rawPort)
+        if (portValidation.isFailure) {
+            val msg = portValidation.exceptionOrNull()?.message
+                ?: "Enter a valid pairing port between 1 and 65535."
+            _autoModeWizardState.update { autoModeWizardMachine.onPairingFailed(it, msg) }
+            return
+        }
+        val explicitPort = portValidation.getOrNull() ?: _autoModeWizardState.value.discoveredPairingPort
+        stopPairingServiceDiscovery()
         scope.launch {
-            performPairingAndBootstrap(rawCode, fromNotification = false)
+            performPairingAndBootstrap(rawCode, fromNotification = false, explicitPort = explicitPort)
         }
     }
 
     suspend fun handlePairingCodeFromNotification(rawCode: String) {
-        performPairingAndBootstrap(rawCode, fromNotification = true)
+        val discoveredPort = _autoModeWizardState.value.discoveredPairingPort
+        stopPairingServiceDiscovery()
+        performPairingAndBootstrap(rawCode, fromNotification = true, explicitPort = discoveredPort)
     }
 
-    private suspend fun performPairingAndBootstrap(rawCode: String, fromNotification: Boolean) {
+    private suspend fun performPairingAndBootstrap(
+        rawCode: String,
+        fromNotification: Boolean,
+        explicitPort: Int? = null,
+    ) {
         val sanitized = autoModeWizardMachine.sanitizePairingCode(rawCode)
         if (sanitized == null) {
             val msg = "Enter the 6-digit pairing code shown in Wireless debugging."
@@ -422,7 +517,7 @@ class CleanerSleepModule(
             AdbPairingNotifier.showProgress(app, "Pairing with local Wireless debugging...")
         }
 
-        val pairResult = adbSilentExecutor.pairWithCode(sanitized)
+        val pairResult = adbSilentExecutor.pairWithCode(sanitized, explicitPort = explicitPort)
         if (pairResult.isFailure) {
             val errMsg = pairResult.exceptionOrNull()?.message
                 ?: "Pairing failed. Check the 6-digit code and try again."
@@ -508,7 +603,13 @@ class CleanerSleepModule(
     }.getOrDefault(false)
 
     fun dismissCelebration() {
-        _cleanerState.update { it.copy(celebrationReclaimedBytes = null, celebrationDeletedCount = 0) }
+        _cleanerState.update {
+            it.copy(
+                celebrationReclaimedBytes = null,
+                celebrationDeletedCount = 0,
+                celebrationWirelessDebuggingTurnedOff = false,
+            )
+        }
         runFullCleanerScan()
     }
 
@@ -614,7 +715,9 @@ class CleanerSleepModule(
         val status = adbSilentExecutor.inspectStatus()
         val sessionId = "sleep-${graph.clock()}"
         if (status.effectiveMode == HibernationMode.AUTO_SILENT) {
-            scope.launch {
+            autoSleepCancelRequested.set(false)
+            activeAutoSleepJob?.cancel()
+            activeAutoSleepJob = scope.launch {
                 _sleepState.update {
                     it.copy(
                         isSleepingBatch = true,
@@ -629,27 +732,76 @@ class CleanerSleepModule(
                     candidates = targets,
                     nowMs = graph.clock(),
                 )
-                val outcome = adbSilentExecutor.runWithAutoSession { executor ->
-                    sleepStateMachine.runSilentBatch(
-                        initialState = initial,
-                        executor = executor,
-                        clockMs = { graph.clock() },
-                        onStateChange = { stepState ->
-                            val currentApp = stepState.currentCandidate?.appLabel
-                            if (currentApp != null) {
-                                _sleepState.update {
-                                    it.copy(
-                                        autoProgressMessage = "Auto Mode: sleeping $currentApp (${stepState.results.size + 1} of ${stepState.queue.size})",
-                                    )
+                var latestState = initial
+                try {
+                    val outcome = adbSilentExecutor.runWithAutoSession { executor ->
+                        sleepStateMachine.runSilentBatch(
+                            initialState = initial,
+                            executor = executor,
+                            clockMs = { graph.clock() },
+                            shouldCancel = { autoSleepCancelRequested.get() },
+                            batchWatchdogMs = SleepSessionStateMachine.DEFAULT_BATCH_WATCHDOG_PER_APP_MS *
+                                targets.size.coerceAtLeast(1),
+                            onStateChange = { stepState ->
+                                latestState = stepState
+                                val currentApp = stepState.currentCandidate?.appLabel
+                                if (currentApp != null) {
+                                    _sleepState.update {
+                                        it.copy(
+                                            autoProgressMessage = "Auto Mode: sleeping $currentApp (${stepState.results.size + 1} of ${stepState.queue.size})",
+                                        )
+                                    }
                                 }
+                            },
+                        )
+                    }
+                    val refreshed = adbSilentExecutor.inspectStatus()
+                    when (outcome) {
+                        is AutoSessionOutcome.Completed -> {
+                            val report = sleepStateMachine.buildReport(
+                                state = outcome.value,
+                                completedAtMs = graph.clock(),
+                                wirelessDebuggingTurnedOff = adbSilentExecutor.lastSessionTurnedOffWirelessDebugging,
+                            )
+                            _sleepState.update {
+                                it.copy(
+                                    isSleepingBatch = false,
+                                    autoProgressMessage = null,
+                                    lastReport = report,
+                                    autoModeStatus = refreshed,
+                                )
                             }
-                        },
-                    )
-                }
-                val refreshed = adbSilentExecutor.inspectStatus()
-                when (outcome) {
-                    is AutoSessionOutcome.Completed -> {
-                        val report = sleepStateMachine.buildReport(outcome.value, graph.clock())
+                        }
+                        is AutoSessionOutcome.FallbackToGuided -> {
+                            val pill = guidedSleepController.startGuidedSleep(
+                                sessionId = sessionId,
+                                candidates = targets,
+                                fallbackReason = outcome.reason,
+                            )
+                            _sleepState.update {
+                                it.copy(
+                                    isSleepingBatch = false,
+                                    autoProgressMessage = null,
+                                    guidedPill = pill,
+                                    lastReport = guidedSleepController.lastSleepReport,
+                                    autoModeStatus = refreshed,
+                                )
+                            }
+                        }
+                    }
+                } catch (ce: CancellationException) {
+                    withContext(NonCancellable) {
+                        val cancelled = sleepStateMachine.cancelSession(
+                            state = latestState,
+                            nowMs = graph.clock(),
+                            reason = SleepSessionStateMachine.REASON_CANCELLED_BY_USER,
+                        )
+                        val report = sleepStateMachine.buildReport(
+                            state = cancelled,
+                            completedAtMs = graph.clock(),
+                            wirelessDebuggingTurnedOff = adbSilentExecutor.lastSessionTurnedOffWirelessDebugging,
+                        )
+                        val refreshed = adbSilentExecutor.inspectStatus()
                         _sleepState.update {
                             it.copy(
                                 isSleepingBatch = false,
@@ -659,22 +811,7 @@ class CleanerSleepModule(
                             )
                         }
                     }
-                    is AutoSessionOutcome.FallbackToGuided -> {
-                        val pill = guidedSleepController.startGuidedSleep(
-                            sessionId = sessionId,
-                            candidates = targets,
-                            fallbackReason = outcome.reason,
-                        )
-                        _sleepState.update {
-                            it.copy(
-                                isSleepingBatch = false,
-                                autoProgressMessage = null,
-                                guidedPill = pill,
-                                lastReport = guidedSleepController.lastSleepReport,
-                                autoModeStatus = refreshed,
-                            )
-                        }
-                    }
+                    throw ce
                 }
             }
         } else {
@@ -726,6 +863,12 @@ class CleanerSleepModule(
                 lastReport = guidedSleepController.lastSleepReport,
             )
         }
+    }
+
+    fun cancelAutoSleepBatch() {
+        autoSleepCancelRequested.set(true)
+        activeAutoSleepJob?.cancel()
+        activeAutoSleepJob = null
     }
 
     fun dismissSleepReport() {
