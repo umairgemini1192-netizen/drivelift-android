@@ -15,12 +15,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.io.BufferedReader
+import java.io.ByteArrayInputStream
+import java.io.Closeable
 import java.io.IOException
+import java.io.InputStream
 import java.io.Reader
 import java.io.StringReader
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicReference
 
 class AdbSilentExecutorTest {
 
@@ -546,6 +555,124 @@ class AdbSilentExecutorTest {
         assertTrue(emptyEof.isSuccess)
         assertEquals(0, emptyEof.exitCode)
         assertEquals("", emptyEof.stdout)
+    }
+
+    @Test
+    fun cancellableShellStreamClosesStalledStreamImmediatelyWhenCancellationBegins() = runBlocking {
+        val enteredRead = CountDownLatch(1)
+        val streamClosed = CountDownLatch(1)
+        val readUnblocked = CountDownLatch(1)
+        val closeCount = AtomicInteger(0)
+        val closeThread = AtomicReference<Thread?>(null)
+        val isClosed = AtomicBoolean(false)
+
+        val stalledInputStream: InputStream = object : InputStream() {
+            override fun read(): Int {
+                enteredRead.countDown()
+                var remainingMs = 5_000L
+                val deadlineMs = System.currentTimeMillis() + remainingMs
+                while (!isClosed.get() && remainingMs > 0L) {
+                    try {
+                        streamClosed.await(remainingMs, TimeUnit.MILLISECONDS)
+                    } catch (_: InterruptedException) {
+                        // Intentionally ignore thread interrupt so the test proves stream.close()
+                        // is what unblocks a stalled ADB shell stream.
+                    }
+                    remainingMs = deadlineMs - System.currentTimeMillis()
+                }
+                readUnblocked.countDown()
+                throw IOException("Stream closed on cancellation")
+            }
+        }
+        val stalledStream = Closeable {
+            closeCount.incrementAndGet()
+            closeThread.set(Thread.currentThread())
+            isClosed.set(true)
+            streamClosed.countDown()
+        }
+
+        val cancellingThread = Thread.currentThread()
+        var caughtCancel = false
+        val job = launch {
+            try {
+                runCancellableShellStream(
+                    openStream = { stalledStream },
+                    openInputStream = { stalledInputStream },
+                )
+            } catch (_: CancellationException) {
+                caughtCancel = true
+            }
+        }
+
+        assertTrue("Expected shell reader to enter blocking read()", enteredRead.await(5, TimeUnit.SECONDS))
+        job.cancel()
+        job.join()
+
+        assertTrue("Expected cancellation to interrupt stalled shell read", caughtCancel)
+        assertTrue("Expected stream.close() to run as soon as cancellation began", streamClosed.await(5, TimeUnit.SECONDS))
+        assertTrue("Expected blocked read() to unblock once stream closed", readUnblocked.await(5, TimeUnit.SECONDS))
+        assertEquals(1, closeCount.get())
+        assertNotEquals(cancellingThread, closeThread.get())
+    }
+
+    @Test
+    fun cancellableShellStreamClosesLateOpenedStreamOnCancelAndCompletesNormally() = runBlocking {
+        val normalCloseCount = AtomicInteger(0)
+        val normalInputStream: InputStream =
+            ByteArrayInputStream("ok\n__DRIVELIFT_EXIT__=0\n".toByteArray(Charsets.UTF_8))
+        val normalStream = Closeable {
+            normalCloseCount.incrementAndGet()
+        }
+        val ok = runCancellableShellStream(
+            openStream = { normalStream },
+            openInputStream = { normalInputStream },
+        ).getOrThrow()
+        assertTrue(ok.isSuccess)
+        assertEquals("ok", ok.stdout)
+        assertEquals(1, normalCloseCount.get())
+
+        val enteredOpen = CountDownLatch(1)
+        val allowOpenToReturn = CountDownLatch(1)
+        val lateStreamClosed = CountDownLatch(1)
+        val lateCloseCount = AtomicInteger(0)
+        val openInputStreamCalled = AtomicBoolean(false)
+
+        val lateStream = object : Closeable {
+            override fun close() {
+                lateCloseCount.incrementAndGet()
+                lateStreamClosed.countDown()
+            }
+        }
+
+        val job = launch {
+            runCancellableShellStream(
+                openStream = {
+                    enteredOpen.countDown()
+                    while (allowOpenToReturn.count > 0L) {
+                        try {
+                            allowOpenToReturn.await(5, TimeUnit.SECONDS)
+                            break
+                        } catch (_: InterruptedException) {
+                            // Simulate openStream() returning just as cancellation begins.
+                        }
+                    }
+                    lateStream
+                },
+                openInputStream = {
+                    openInputStreamCalled.set(true)
+                    ByteArrayInputStream(ByteArray(0))
+                },
+            )
+        }
+
+        assertTrue("Expected openStream() to start", enteredOpen.await(5, TimeUnit.SECONDS))
+        job.cancel()
+        allowOpenToReturn.countDown()
+        job.join()
+
+        assertTrue("Expected late-opened stream to be closed", lateStreamClosed.await(5, TimeUnit.SECONDS))
+        assertEquals(1, lateCloseCount.get())
+        assertFalse(openInputStreamCalled.get())
     }
 
     @Test

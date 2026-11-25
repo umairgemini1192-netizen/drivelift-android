@@ -5,15 +5,17 @@ import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.os.Build
 import io.github.muntashirakon.adb.AbsAdbConnectionManager
-import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.job
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import java.io.BufferedReader
 import java.io.Closeable
 import java.io.IOException
+import java.io.InputStream
 import java.io.InputStreamReader
 import java.net.InetAddress
 import java.net.NetworkInterface
@@ -25,7 +27,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.coroutineContext
+import kotlin.coroutines.EmptyCoroutineContext
 import kotlin.coroutines.resume
 
 /**
@@ -228,37 +230,19 @@ class LibAdbTransport(
         }
     }
 
-    override suspend fun runShell(command: String): Result<AdbCommandResult> = withContext(Dispatchers.IO) {
-        val activeStream = AtomicReference<Closeable?>(null)
-        val cancelHook = coroutineContext.job.invokeOnCompletion { cause ->
-            if (cause != null) {
-                runCatching { activeStream.getAndSet(null)?.close() }
-            }
+    override suspend fun runShell(command: String): Result<AdbCommandResult> {
+        currentCoroutineContext().ensureActive()
+        val adb = synchronized(lock) { manager }
+            ?: return Result.failure(IOException("Not connected to localhost ADB daemon."))
+        if (!adb.isConnected) {
+            return Result.failure(IOException("Not connected to localhost ADB daemon."))
         }
-        try {
-            val adb = synchronized(lock) { manager }
-                ?: return@withContext Result.failure(IOException("Not connected to localhost ADB daemon."))
-            if (!adb.isConnected) {
-                return@withContext Result.failure(IOException("Not connected to localhost ADB daemon."))
-            }
-            val wrapped = AdbShellOutputParser.wrapWithExitCode(command)
-            val stream = adb.openStream("shell:$wrapped")
-            activeStream.set(stream)
-            try {
-                BufferedReader(InputStreamReader(stream.openInputStream(), Charsets.UTF_8)).use { reader ->
-                    AdbShellOutputParser.readStreamUntilComplete(reader)
-                }
-            } finally {
-                activeStream.set(null)
-                runCatching { stream.close() }
-            }
-        } catch (ce: CancellationException) {
-            throw ce
-        } catch (t: Throwable) {
-            Result.failure(t)
-        } finally {
-            cancelHook.dispose()
-        }
+        val wrapped = runCatching { AdbShellOutputParser.wrapWithExitCode(command) }
+            .getOrElse { return Result.failure(it) }
+        return runCancellableShellStream(
+            openStream = { adb.openStream("shell:$wrapped") },
+            openInputStream = { it.openInputStream() },
+        )
     }
 
     override suspend fun disconnect() {
@@ -408,4 +392,106 @@ class LibAdbTransport(
         }
         addresses
     }.getOrDefault(setOf(AdbTransport.LOOPBACK_HOST, "::1"))
+}
+
+/**
+ * Executes a blocking ADB shell stream open + read on [ioDispatcher] while registering a
+ * [suspendCancellableCoroutine] cancellation callback so timeouts, batch watchdogs, and user
+ * Cancel actions immediately interrupt the worker thread and close the active [Closeable] stream
+ * on [closeDispatcher] when cancellation begins (without waiting for blocking `readLine()` to
+ * return first and without running socket `close()` on the cancelling/main thread).
+ */
+internal suspend fun <S : Closeable> runCancellableShellStream(
+    openStream: () -> S,
+    openInputStream: (S) -> InputStream,
+    ioDispatcher: CoroutineDispatcher = Dispatchers.IO,
+    closeDispatcher: CoroutineDispatcher = ioDispatcher,
+): Result<AdbCommandResult> = suspendCancellableCoroutine { continuation ->
+    val cancelled = AtomicBoolean(false)
+    val completed = AtomicBoolean(false)
+    val streamClosed = AtomicBoolean(false)
+    val activeStream = AtomicReference<S?>(null)
+    val threadLock = Any()
+    var workerThread: Thread? = null
+
+    fun closeStreamOnce(stream: S?) {
+        if (stream != null && streamClosed.compareAndSet(false, true)) {
+            runCatching { stream.close() }
+        }
+    }
+
+    fun dispatchClose(stream: S) {
+        try {
+            closeDispatcher.dispatch(
+                EmptyCoroutineContext,
+                Runnable { closeStreamOnce(stream) },
+            )
+        } catch (_: Throwable) {
+            closeStreamOnce(stream)
+        }
+    }
+
+    fun finish(result: Result<AdbCommandResult>) {
+        if (completed.compareAndSet(false, true) && continuation.isActive) {
+            continuation.resume(result)
+        }
+    }
+
+    continuation.invokeOnCancellation {
+        cancelled.set(true)
+        synchronized(threadLock) {
+            workerThread?.interrupt()
+        }
+        val streamToClose = activeStream.getAndSet(null)
+        if (streamToClose != null) {
+            dispatchClose(streamToClose)
+        }
+    }
+
+    if (cancelled.get() || !continuation.isActive) {
+        return@suspendCancellableCoroutine
+    }
+
+    val task = Runnable {
+        val started = synchronized(threadLock) {
+            if (cancelled.get()) {
+                false
+            } else {
+                workerThread = Thread.currentThread()
+                true
+            }
+        }
+        if (!started) return@Runnable
+
+        var openedStream: S? = null
+        var result: Result<AdbCommandResult>? = null
+        try {
+            val stream = openStream()
+            openedStream = stream
+            activeStream.set(stream)
+            if (!cancelled.get()) {
+                result = BufferedReader(InputStreamReader(openInputStream(stream), Charsets.UTF_8)).use { reader ->
+                    AdbShellOutputParser.readStreamUntilComplete(reader)
+                }
+            }
+        } catch (t: Throwable) {
+            result = Result.failure(t)
+        } finally {
+            synchronized(threadLock) {
+                workerThread = null
+                Thread.interrupted()
+            }
+            val remaining = activeStream.getAndSet(null)
+            closeStreamOnce(remaining ?: openedStream)
+        }
+        if (result != null) {
+            finish(result)
+        }
+    }
+
+    try {
+        ioDispatcher.dispatch(EmptyCoroutineContext, task)
+    } catch (t: Throwable) {
+        finish(Result.failure(t))
+    }
 }
