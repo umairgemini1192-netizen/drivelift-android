@@ -1738,6 +1738,24 @@ private fun ExpandedActivityInfoStrip(
                     )
                 }
             }
+            primary is CockpitLiveActivity.TimerRecordingActivity -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    InfoStripMetric(
+                        label = if (primary.isRecording) "Recording" else "Timer",
+                        value = primary.timeText.ifBlank { "--:--" },
+                        tint = accent,
+                    )
+                    InfoStripMetric(
+                        label = "Status",
+                        value = if (primary.isRecording) "Active" else "Running",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
             else -> {
                 val connIcon = when (liveNet.kind) {
                     IdleNetworkKind.WIFI -> Icons.Outlined.Wifi

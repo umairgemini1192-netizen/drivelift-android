@@ -455,6 +455,49 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         }
     }
 
+    @Test
+    fun expandedTimerActivityPreservesTimeReadoutInInfoStrip() {
+        val timer = CockpitLiveActivity.TimerRecordingActivity(
+            id = "timer:test",
+            label = "Kitchen Timer",
+            timeText = "04:32",
+            isRecording = false,
+            packageName = "com.google.android.deskclock",
+        )
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            ExpandedCockpitCard(
+                                slotState = CockpitSlotState(primary = timer),
+                                telemetry = DriveLiftTelemetrySummary(),
+                                torchState = TorchUiState(available = true, isOn = false),
+                                pinnedApps = emptyList(),
+                                onCollapse = {},
+                                onCycleNext = {},
+                                onCyclePrevious = {},
+                                onSoftDismiss = {},
+                                onRestoreDismissed = {},
+                                onTapActivity = {},
+                                onStopDesktopDrop = {},
+                                onOpenDriveLiftCockpit = {},
+                                onToggleInlineReply = {},
+                                onSendWhatsAppReply = { _, _ -> },
+                                onToggleTorch = {},
+                                onTorchBrightnessChange = {},
+                                onToggleTorchSos = {},
+                                onLaunchPinnedApp = {},
+                            )
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+            compose.onNodeWithText("04:32").assertIsDisplayed()
+        }
+    }
+
     // ------------------------------------------------------------------ 5. Activity pill cap & speeds
 
     @Test
