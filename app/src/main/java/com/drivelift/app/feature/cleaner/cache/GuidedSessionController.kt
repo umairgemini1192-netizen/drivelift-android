@@ -38,6 +38,7 @@ data class GuidedPillState(
     val completedCount: Int,
     val skippedCount: Int,
     val reclaimedBytes: Long = 0L,
+    val fallbackReason: String? = null,
 ) {
     val stepNumber: Int
         get() = if (totalCount == 0) 0 else (currentIndex + 1).coerceAtMost(totalCount)
@@ -60,8 +61,10 @@ class GuidedSessionController(
     private var cleanCompletedCount: Int = 0
     private var cleanSkippedCount: Int = 0
     private var cleanReclaimedBytes: Long = 0L
+    private var cleanFallbackReason: String? = null
 
     private var sleepState: SleepSessionState? = null
+    private var sleepFallbackReason: String? = null
 
     var activePill: GuidedPillState? = null
         private set
@@ -69,14 +72,19 @@ class GuidedSessionController(
     var lastSleepReport: SleepExecutionReport? = null
         private set
 
-    fun startGuidedClean(targets: List<GuidedCleanTarget>): GuidedPillState? {
+    fun startGuidedClean(
+        targets: List<GuidedCleanTarget>,
+        fallbackReason: String? = null,
+    ): GuidedPillState? {
         val deduplicated = targets.distinctBy { it.packageName }
         sleepState = null
+        sleepFallbackReason = null
         cleanQueue = deduplicated
         cleanIndex = 0
         cleanCompletedCount = 0
         cleanSkippedCount = 0
         cleanReclaimedBytes = 0L
+        cleanFallbackReason = fallbackReason
 
         activePill = buildCleanPillState()
         return activePill
@@ -85,8 +93,11 @@ class GuidedSessionController(
     fun startGuidedSleep(
         sessionId: String,
         candidates: List<AppDrainCandidate>,
+        fallbackReason: String? = null,
     ): GuidedPillState? {
         cleanQueue = emptyList()
+        cleanFallbackReason = null
+        sleepFallbackReason = fallbackReason
         val initial = sleepStateMachine.startSession(
             sessionId = sessionId,
             mode = HibernationMode.GUIDED_PILL,
@@ -201,6 +212,7 @@ class GuidedSessionController(
             completedCount = cleanCompletedCount,
             skippedCount = cleanSkippedCount,
             reclaimedBytes = cleanReclaimedBytes,
+            fallbackReason = cleanFallbackReason,
         )
     }
 
@@ -220,6 +232,7 @@ class GuidedSessionController(
             completedCount = completed,
             skippedCount = skipped,
             reclaimedBytes = 0L,
+            fallbackReason = sleepFallbackReason,
         )
     }
 }

@@ -85,14 +85,14 @@ class SleepSessionStateMachineTest {
             candidate("com.example.two", "Two"),
             candidate("com.example.three", "Three"),
         )
-        val initial = machine.startSession("s-silent", HibernationMode.SHIZUKU_SILENT, queue, 1000L)
+        val initial = machine.startSession("s-silent", HibernationMode.AUTO_SILENT, queue, 1000L)
         var clock = 1000L
 
         val finalState = machine.runSilentBatch(
             initialState = initial,
             executor = SleepCommandExecutor { item ->
                 if (item.packageName == "com.example.two") {
-                    Result.failure(IllegalStateException("Shizuku binder timeout"))
+                    Result.failure(IllegalStateException("Localhost ADB timeout"))
                 } else {
                     Result.success(listOf("am force-stop ${item.packageName}"))
                 }
@@ -116,7 +116,7 @@ class SleepSessionStateMachineTest {
             candidate("com.example.two", "Two"),
             candidate("com.example.three", "Three"),
         )
-        val initial = machine.startSession("s-recover", HibernationMode.SHIZUKU_SILENT, queue, 1000L)
+        val initial = machine.startSession("s-recover", HibernationMode.AUTO_SILENT, queue, 1000L)
         var processedInFirstRun = 0
         val executedPackages = mutableListOf<String>()
 
@@ -160,7 +160,7 @@ class SleepSessionStateMachineTest {
     fun emptyQueueStartsInCompletedPhase() {
         val state = machine.startSession(
             sessionId = "s-empty",
-            mode = HibernationMode.SHIZUKU_SILENT,
+            mode = HibernationMode.AUTO_SILENT,
             candidates = emptyList(),
             nowMs = 5000L,
         )

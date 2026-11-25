@@ -261,11 +261,11 @@ class CockpitWindowOrderAndTelemetryTest {
             CockpitQuickControlsController.sanitizeSsid("\"StormFiber-46B6-5G\"", true, true, true),
         )
         assertEquals(
-            "Wi-Fi On",
+            "Wi-Fi connected",
             CockpitQuickControlsController.sanitizeSsid("<unknown ssid>", true, true, true),
         )
         assertEquals(
-            "Wi-Fi On",
+            "Wi-Fi connected",
             CockpitQuickControlsController.sanitizeSsid("\"StormFiber\"", true, true, false),
         )
         assertEquals(

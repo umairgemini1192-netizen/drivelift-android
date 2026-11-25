@@ -329,6 +329,13 @@ class PhoneExplorerAndDriveTilesTest {
             compose.onNodeWithTag("storage-entry").assertHeightIsAtLeast(Tokens.TouchTarget)
             compose.onNodeWithTag("bento-favorites-tile").assertHeightIsAtLeast(Tokens.TouchTarget)
             compose.onNodeWithTag("bento-explorer-tile").assertHeightIsAtLeast(Tokens.TouchTarget)
+            compose.onNodeWithTag("bento-automode-tile").assertHeightIsAtLeast(Tokens.TouchTarget)
+
+            // Auto Mode opens directly from Phone tab bento grid.
+            compose.onNodeWithTag("bento-automode-tile").performClick()
+            waitForTag("automode-setup-screen")
+            activity.onBackPressedDispatcher.onBackPressed()
+            waitForTag("phone-bento-grid")
 
             // App Lock opens directly from Phone tab bento grid.
             compose.onNodeWithTag("bento-applock-tile").performClick()

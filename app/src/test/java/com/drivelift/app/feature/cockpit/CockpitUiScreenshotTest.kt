@@ -2067,6 +2067,101 @@ class CockpitUiScreenshotTest {
         )
     }
 
+    @Test
+    fun pr99IdlePillStackedSpeedsAndExpandedDesktopDropCard() {
+        val idle = CockpitSlotState()
+        val dropSlot = CockpitSlotState(
+            primary = CockpitLiveActivity.TransferActivity(
+                id = CockpitLiveActivity.ID_DESKTOP_DROP,
+                title = "Desktop Drop",
+                subtitle = "Waiting for transfer",
+                speedText = "LAN ready",
+                progressFraction = null,
+                isDesktopDrop = true,
+                canStop = true,
+            ),
+            isExpanded = false,
+        )
+        val wifiTraffic = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.WIFI,
+            label = "Wi-Fi",
+            uploadBytesPerSec = 12L * 1024L,
+            downloadBytesPerSec = (1.4 * 1024 * 1024).toLong(),
+        )
+        val dropTelemetry = syntheticTelemetry.copy(
+            desktopDropUrl = "http://192.168.1.42:8080",
+            desktopDropPairingCode = "74-29",
+            desktopDropUploadBytesPerSec = 24L * 1024L * 1024L,
+            desktopDropDownloadBytesPerSec = 12L * 1024L * 1024L,
+            desktopDropSentCount = 3,
+            desktopDropReceivedCount = 2,
+        )
+        launchAndAssert(
+            name = "cockpit-idle-stacked-speeds",
+            content = {
+                Column(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = Tokens.Medium, vertical = Tokens.Edge),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                ) {
+                    CompositionLocalProvider(LocalIdleNetworkOverride provides wifiTraffic) {
+                        CollapsedSplitIslandRow(
+                            slotState = idle,
+                            widthDeltaDp = 0,
+                            cutoutWidthDp = 34,
+                            onTapPrimary = {},
+                            onTapSecondary = {},
+                            onLongPressExpand = {},
+                            onCycleNext = {},
+                            onCyclePrevious = {},
+                        )
+                        CollapsedSplitIslandRow(
+                            slotState = dropSlot,
+                            widthDeltaDp = 0,
+                            cutoutWidthDp = 34,
+                            onTapPrimary = {},
+                            onTapSecondary = {},
+                            onLongPressExpand = {},
+                            onCycleNext = {},
+                            onCyclePrevious = {},
+                        )
+                        ExpandedCockpitCard(
+                            slotState = dropSlot.copy(isExpanded = true),
+                            telemetry = dropTelemetry,
+                            torchState = TorchUiState(available = true, isOn = false),
+                            quickControls = syntheticQuickControls,
+                            pinnedApps = manyPinned,
+                            onCollapse = {},
+                            onCycleNext = {},
+                            onCyclePrevious = {},
+                            onSoftDismiss = {},
+                            onRestoreDismissed = {},
+                            onTapActivity = {},
+                            onStopDesktopDrop = {},
+                            onOpenDriveLiftCockpit = {},
+                            onToggleInlineReply = {},
+                            onSendWhatsAppReply = { _, _ -> },
+                            onToggleTorch = {},
+                            onTorchBrightnessChange = {},
+                            onToggleTorchSos = {},
+                            onLaunchPinnedApp = {},
+                        )
+                    }
+                }
+            },
+            verify = {
+                compose.onAllNodesWithText("12K")[0].assertIsDisplayed()
+                compose.onAllNodesWithText("1.4M")[0].assertIsDisplayed()
+                compose.onNodeWithTag("cockpit-expanded-info-strip").assertExists()
+                compose.onNodeWithText("http://192.168.1.42:8080").assertExists()
+                compose.onNodeWithText("PIN 74-29").assertExists()
+                compose.onNodeWithText("Torch").assertExists()
+            },
+        )
+    }
+
     private fun syntheticIconBitmap(argb: Int): Bitmap =
         Bitmap.createBitmap(48, 48, Bitmap.Config.ARGB_8888).apply {
             val canvas = Canvas(this)

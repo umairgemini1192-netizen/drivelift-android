@@ -3,6 +3,7 @@ package com.drivelift.app.feature.cockpit.ui
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -56,11 +57,14 @@ internal enum class IdleSpeedDisplayMode {
 }
 
 /**
- * Pure zone geometry for the collapsed idle pill:
- * - [leftZoneWidthDp] holds the connection icon and label (start-aligned, ellipsized).
+ * Pure zone geometry for the collapsed idle (and active) pill:
+ * - [leftZoneWidthDp] holds the connection/activity icon and label (start-aligned, ellipsized).
  * - [centerGapDp] stays completely empty over the camera punch-hole cutout plus [Tokens.Small]
  *   padding on each side.
- * - [rightZoneWidthDp] holds the speed figures (end-aligned) and never crosses into [centerGapDp].
+ * - [rightZoneWidthDp] holds the speed figures (stacked vertically when both upload and download
+ *   are active, or a single centred figure) and never crosses into [centerGapDp].
+ * - Priority when space is short: (1) speeds always visible whenever traffic >= 1K (never NONE),
+ *   (2) connection icon, (3) connection text label dropped first.
  */
 internal data class IdlePillZoneLayout(
     val centerGapDp: Float,
@@ -68,11 +72,16 @@ internal data class IdlePillZoneLayout(
     val rightZoneWidthDp: Float,
     val totalContentWidthDp: Float,
     val speedDisplayMode: IdleSpeedDisplayMode,
+    val showConnectionIcon: Boolean = true,
+    val showConnectionLabel: Boolean = true,
+    val isStacked: Boolean = false,
+    val useCompactSpeedStyle: Boolean = false,
 )
 
 /**
- * Pure layout-math helper keeping the idle pill's connection label and live network speeds clear
- * of the camera punch-hole cutout. Nothing here touches Android views.
+ * Pure layout-math helper keeping the pill's left cluster and live network speeds clear of the
+ * camera punch-hole cutout while always keeping speeds visible when traffic >= 1K.
+ * Nothing here touches Android views.
  */
 internal object IdlePillLayoutMath {
     /** Compact rate formatting (`0K`, `999K`, `1.4M`, `999M`) never exceeds 4 characters. */
@@ -89,7 +98,7 @@ internal object IdlePillLayoutMath {
         return effectiveCutout + (safePadding * 2f)
     }
 
-    /** Estimated width in dp of one 4-char max speed figure (`999K` + gap + triangle). */
+    /** Estimated width in dp of one 4-char standard single-line speed figure (`999K` + gap + triangle). */
     fun singleSpeedFigureWidthDp(
         fontScale: Float = 1f,
         rateChars: Int = MAX_RATE_CHARS,
@@ -100,7 +109,32 @@ internal object IdlePillLayoutMath {
         return textWidth + Tokens.GridGap.value + Tokens.Cockpit.IdleSpeedArrow.value
     }
 
-    /** Estimated width in dp of two 4-char max speed figures side by side. */
+    /**
+     * Estimated width in dp of one compact stacked-line speed figure (`999K` + gap + small triangle).
+     * Because upload and download stack vertically, two speeds require only a single figure's width.
+     */
+    fun stackedSpeedFigureWidthDp(
+        fontScale: Float = 1f,
+        rateChars: Int = MAX_RATE_CHARS,
+    ): Float {
+        val safeScale = fontScale.coerceAtLeast(0.5f)
+        val chars = rateChars.coerceIn(1, MAX_RATE_CHARS)
+        val textWidth = chars * Tokens.Cockpit.IdleStackedRateCharWidth.value * safeScale
+        return textWidth + Tokens.GridGap.value + Tokens.Cockpit.IdleStackedSpeedArrow.value
+    }
+
+    /** True when two stacked speed lines fit vertically inside [Tokens.Cockpit.PillHeight]. */
+    fun stackedFitsVertically(
+        fontScale: Float = 1f,
+        pillHeightDp: Float = Tokens.Cockpit.PillHeight.value,
+    ): Boolean {
+        val safeScale = fontScale.coerceAtLeast(0.5f)
+        val twoLineHeight = (Tokens.Cockpit.IdleStackedRateLineHeight.value * safeScale * 2f) +
+            Tokens.GridGap.value
+        return twoLineHeight <= pillHeightDp
+    }
+
+    /** Estimated width in dp of two 4-char max speed figures side by side (retained for reference). */
     fun twoSpeedFiguresWidthDp(
         fontScale: Float = 1f,
         figureGapDp: Float = Tokens.Tiny.value,
@@ -109,11 +143,17 @@ internal object IdlePillLayoutMath {
     /**
      * Splits [maxContentWidthDp] into a left zone, a fixed centre cutout gap, and a right zone.
      *
-     * When a physical cutout is present (`measuredCutoutWidthDp + cutoutWidthDeltaDp > 0`), the
-     * left and right zones are kept strictly equal so the centre gap aligns with the horizontal
-     * centre of the pill (and therefore with the camera punch-hole). If two speed figures do not
-     * fit inside the right zone, only the larger direction is shown so speeds never slide under
-     * the cutout.
+     * Rules:
+     * 1. When both upload and download have traffic (`>= 1K`), stack them vertically (upload top,
+     *    download bottom) inside [Tokens.Cockpit.PillHeight]. Stacked width equals one compact
+     *    figure, so both directions fit beside the Pixel 8 Pro cutout at font scales 1.0 and 1.3
+     *    (and 1.5). At extreme font scales where two lines would clip vertically or horizontally,
+     *    degrade cleanly to the larger single direction rather than overlapping.
+     * 2. Priority when space is short: (1) speeds ALWAYS visible while traffic exists (never
+     *    returns [IdleSpeedDisplayMode.NONE] while traffic >= 1K), (2) connection icon, (3) text
+     *    label dropped first.
+     * 3. Symmetric widening: both zones grow equally up to [maxContentWidthDp] (the status-bar
+     *    safe cap) before dropping the text label, keeping [centerGapDp] centred over the cutout.
      */
     fun compute(
         maxContentWidthDp: Float,
@@ -141,10 +181,12 @@ internal object IdlePillLayoutMath {
         val maxSymmetricZone = remaining / 2f
         val minSymmetricZone = ((safeMin - centerGap) / 2f).coerceAtLeast(0f)
 
+        val iconOnlyWidth = Tokens.IconSmall.value
+        val minLabelZone = iconOnlyWidth + Tokens.Snug.value + (Tokens.Cockpit.IdleCompactLabelWidth.value * safeScale)
+        val idleLabelZone = iconOnlyWidth + Tokens.Snug.value + (Tokens.Cockpit.IdleLabelWidth.value * safeScale)
+        val stackedFigureWidth = stackedSpeedFigureWidthDp(safeScale)
         val singleFigureWidth = singleSpeedFigureWidthDp(safeScale)
-        val twoFiguresWidth = twoSpeedFiguresWidthDp(safeScale)
-        val minLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (Tokens.Cockpit.IdleCompactLabelWidth.value * safeScale)
-        val idleLabelZone = Tokens.IconSmall.value + Tokens.Snug.value + (Tokens.Cockpit.IdleLabelWidth.value * safeScale)
+        val canStackVertically = stackedFitsVertically(safeScale)
 
         val activeCount = (if (hasUploadTraffic) 1 else 0) + (if (hasDownloadTraffic) 1 else 0)
         val largerSingleMode = when {
@@ -167,47 +209,74 @@ internal object IdlePillLayoutMath {
                 rightZoneWidthDp = zone,
                 totalContentWidthDp = zone + centerGap + zone,
                 speedDisplayMode = IdleSpeedDisplayMode.NONE,
+                showConnectionIcon = zone >= iconOnlyWidth,
+                showConnectionLabel = zone >= minLabelZone,
+                isStacked = false,
+                useCompactSpeedStyle = false,
             )
         }
+
+        // Traffic exists: speeds are Priority 1 and must NEVER return NONE.
+        val bothFitSymmetric = activeCount == 2 && canStackVertically && stackedFigureWidth <= maxSymmetricZone
+        val bothFitAsymmetric = effectiveCutout <= 0f &&
+            activeCount == 2 &&
+            canStackVertically &&
+            stackedFigureWidth <= (remaining - iconOnlyWidth).coerceAtLeast(0f)
 
         if (effectiveCutout > 0f) {
-            // Physical punch-hole present: strictly symmetric zones keep centerGap dead-centre over the camera.
-            val (mode, neededRight) = when {
-                activeCount == 2 && twoFiguresWidth <= maxSymmetricZone ->
-                    IdleSpeedDisplayMode.BOTH to twoFiguresWidth
-                singleFigureWidth <= maxSymmetricZone ->
-                    largerSingleMode to singleFigureWidth
-                else ->
-                    IdleSpeedDisplayMode.NONE to 0f
+            // Physical punch-hole present: keep left & right zones strictly symmetric so the
+            // centre cutout gap stays dead-centre over the camera. Widen symmetrically up to
+            // maxSymmetricZone (status-bar safe cap) so full labels like "Wi-Fi" fit before
+            // truncating or dropping the text label.
+            val (mode, stacked, compact, neededRight) = when {
+                bothFitSymmetric -> Quad(IdleSpeedDisplayMode.BOTH, true, true, stackedFigureWidth)
+                singleFigureWidth <= maxSymmetricZone -> Quad(largerSingleMode, false, false, singleFigureWidth)
+                else -> Quad(largerSingleMode, false, true, minOf(stackedFigureWidth, maxSymmetricZone))
             }
-            val zone = maxOf(minSymmetricZone, minLabelZone, neededRight).coerceAtMost(maxSymmetricZone)
+            val desiredLeft = when {
+                idleLabelZone <= maxSymmetricZone -> idleLabelZone
+                minLabelZone <= maxSymmetricZone -> minLabelZone
+                else -> iconOnlyWidth
+            }
+            val zone = maxOf(minSymmetricZone, desiredLeft, neededRight).coerceAtMost(maxSymmetricZone)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,
                 leftZoneWidthDp = zone,
                 rightZoneWidthDp = zone,
                 totalContentWidthDp = zone + centerGap + zone,
                 speedDisplayMode = mode,
+                showConnectionIcon = zone >= iconOnlyWidth,
+                showConnectionLabel = zone >= minLabelZone,
+                isStacked = stacked,
+                useCompactSpeedStyle = compact,
             )
         }
 
-        // No physical cutout (e.g. non-cutout screen or JVM preview): stay symmetric when both
-        // figures fit in half the pill, and only borrow unused left margin at large font scales
-        // while keeping the fixed centre gap completely clear.
-        val symmetricFitsTwo = activeCount == 2 && twoFiguresWidth <= maxSymmetricZone
-        if (symmetricFitsTwo) {
-            val zone = maxOf(minSymmetricZone, minLabelZone, twoFiguresWidth).coerceAtMost(maxSymmetricZone)
+        // No physical cutout: prefer symmetric zones, widening up to maxSymmetricZone first,
+        // and only borrowing from the left zone if extreme font/compact width requires it
+        // (dropping the connection text label before the icon, and never dropping speeds).
+        if (bothFitSymmetric) {
+            val desiredLeft = when {
+                idleLabelZone <= maxSymmetricZone -> idleLabelZone
+                minLabelZone <= maxSymmetricZone -> minLabelZone
+                else -> iconOnlyWidth
+            }
+            val zone = maxOf(minSymmetricZone, desiredLeft, stackedFigureWidth).coerceAtMost(maxSymmetricZone)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,
                 leftZoneWidthDp = zone,
                 rightZoneWidthDp = zone,
                 totalContentWidthDp = zone + centerGap + zone,
                 speedDisplayMode = IdleSpeedDisplayMode.BOTH,
+                showConnectionIcon = zone >= iconOnlyWidth,
+                showConnectionLabel = zone >= minLabelZone,
+                isStacked = true,
+                useCompactSpeedStyle = true,
             )
         }
 
-        val maxRightWithMinLeft = (remaining - minLabelZone).coerceAtLeast(0f)
-        if (activeCount == 2 && twoFiguresWidth <= maxRightWithMinLeft) {
-            val rightZone = twoFiguresWidth
+        if (bothFitAsymmetric) {
+            val rightZone = stackedFigureWidth.coerceAtMost(remaining)
             val leftZone = (remaining - rightZone).coerceAtLeast(0f)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,
@@ -215,47 +284,57 @@ internal object IdlePillLayoutMath {
                 rightZoneWidthDp = rightZone,
                 totalContentWidthDp = leftZone + centerGap + rightZone,
                 speedDisplayMode = IdleSpeedDisplayMode.BOTH,
+                showConnectionIcon = leftZone >= iconOnlyWidth,
+                showConnectionLabel = leftZone >= minLabelZone,
+                isStacked = true,
+                useCompactSpeedStyle = true,
             )
         }
 
-        val mode = if (singleFigureWidth <= maxSymmetricZone) {
-            largerSingleMode
-        } else if (singleFigureWidth <= maxRightWithMinLeft) {
-            largerSingleMode
-        } else {
-            IdleSpeedDisplayMode.NONE
-        }
-        if (mode == IdleSpeedDisplayMode.NONE) {
-            val zone = maxOf(minSymmetricZone, minLabelZone).coerceAtMost(maxSymmetricZone)
+        // Single direction (either only 1 active direction, or degraded from BOTH at extreme scale).
+        if (singleFigureWidth <= maxSymmetricZone) {
+            val desiredLeft = if (minLabelZone <= maxSymmetricZone) minLabelZone else iconOnlyWidth
+            val zone = maxOf(minSymmetricZone, desiredLeft, singleFigureWidth).coerceAtMost(maxSymmetricZone)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,
                 leftZoneWidthDp = zone,
                 rightZoneWidthDp = zone,
                 totalContentWidthDp = zone + centerGap + zone,
-                speedDisplayMode = IdleSpeedDisplayMode.NONE,
+                speedDisplayMode = largerSingleMode,
+                showConnectionIcon = zone >= iconOnlyWidth,
+                showConnectionLabel = zone >= minLabelZone,
+                isStacked = false,
+                useCompactSpeedStyle = false,
             )
         }
-        return if (singleFigureWidth <= maxSymmetricZone) {
-            val zone = maxOf(minSymmetricZone, minLabelZone, singleFigureWidth).coerceAtMost(maxSymmetricZone)
-            IdlePillZoneLayout(
-                centerGapDp = centerGap,
-                leftZoneWidthDp = zone,
-                rightZoneWidthDp = zone,
-                totalContentWidthDp = zone + centerGap + zone,
-                speedDisplayMode = mode,
-            )
+
+        val compactNeeded = stackedFigureWidth.coerceAtMost(remaining)
+        val rightZone = if (singleFigureWidth <= (remaining - iconOnlyWidth).coerceAtLeast(0f)) {
+            singleFigureWidth
         } else {
-            val rightZone = singleFigureWidth.coerceAtMost(maxRightWithMinLeft)
-            val leftZone = (remaining - rightZone).coerceAtLeast(0f)
-            IdlePillZoneLayout(
-                centerGapDp = centerGap,
-                leftZoneWidthDp = leftZone,
-                rightZoneWidthDp = rightZone,
-                totalContentWidthDp = leftZone + centerGap + rightZone,
-                speedDisplayMode = mode,
-            )
+            compactNeeded
         }
+        val compact = rightZone < singleFigureWidth
+        val leftZone = (remaining - rightZone).coerceAtLeast(0f)
+        return IdlePillZoneLayout(
+            centerGapDp = centerGap,
+            leftZoneWidthDp = leftZone,
+            rightZoneWidthDp = rightZone,
+            totalContentWidthDp = leftZone + centerGap + rightZone,
+            speedDisplayMode = largerSingleMode,
+            showConnectionIcon = leftZone >= iconOnlyWidth,
+            showConnectionLabel = leftZone >= minLabelZone,
+            isStacked = false,
+            useCompactSpeedStyle = compact,
+        )
     }
+
+    private data class Quad(
+        val mode: IdleSpeedDisplayMode,
+        val stacked: Boolean,
+        val compact: Boolean,
+        val neededRight: Float,
+    )
 }
 
 /**
@@ -265,11 +344,12 @@ internal object IdlePillLayoutMath {
 val LocalIdleNetworkOverride = compositionLocalOf<IdleNetworkSnapshot?> { null }
 
 /**
- * The live snapshot for the idle pill. While this is composed the monitor samples throughput once a
- * second and only with the screen on; when the pill leaves the screen the sampling stops.
+ * The live snapshot for the collapsed pill and expanded info strip. While this is composed the
+ * monitor samples throughput once a second and only with the screen on; when it leaves the screen
+ * the sampling stops.
  */
 @Composable
-private fun rememberIdleNetworkSnapshot(): IdleNetworkSnapshot {
+internal fun rememberIdleNetworkSnapshot(): IdleNetworkSnapshot {
     val override = LocalIdleNetworkOverride.current
     val context = LocalContext.current
     val monitor = remember(context) { runCatching { Graph.get(context).cockpit.telemetryMonitor }.getOrNull() }
@@ -286,9 +366,10 @@ private fun rememberIdleNetworkSnapshot(): IdleNetworkSnapshot {
 
 /**
  * The collapsed pill when no live activity is on screen. Splits the pill into a left zone
- * (connection icon and label, start-aligned with end ellipsis), a fixed empty centre gap sized
- * to the measured camera cutout + calibration delta + [Tokens.Small] padding on each side, and a
- * right zone (end-aligned tabular speeds, falling back to the larger direction if both do not fit).
+ * (connection icon and optional label, start-aligned with end ellipsis), a fixed empty centre gap
+ * sized to the measured camera cutout + calibration delta + [Tokens.Small] padding on each side,
+ * and a right zone (stacked up+down tabular speeds when both directions have traffic, or a single
+ * centred-vertical figure when only one direction is active or at extreme font scales).
  */
 @Composable
 internal fun RowScope.CollapsedIdleNetworkContent(
@@ -296,8 +377,9 @@ internal fun RowScope.CollapsedIdleNetworkContent(
     widthDeltaDp: Int = 0,
     minContentWidth: Dp = Tokens.Cockpit.PillMinWidth - (Tokens.Medium * 2),
     maxContentWidth: Dp = Tokens.Cockpit.PillMaxWidth - (Tokens.Medium * 2),
+    networkSnapshot: IdleNetworkSnapshot? = null,
 ) {
-    val net = rememberIdleNetworkSnapshot()
+    val net = networkSnapshot ?: rememberIdleNetworkSnapshot()
     val fontScale = LocalDensity.current.fontScale
     val layout = remember(
         cutoutWidthDp,
@@ -347,20 +429,24 @@ internal fun RowScope.CollapsedIdleNetworkContent(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
         ) {
-            Icon(
-                imageVector = connectionIcon,
-                contentDescription = null,
-                tint = connectionTint,
-                modifier = Modifier.size(Tokens.IconSmall),
-            )
-            Text(
-                text = net.label,
-                style = MaterialTheme.typography.labelMedium,
-                color = MaterialTheme.colorScheme.onSurface,
-                textAlign = TextAlign.Start,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            if (layout.showConnectionIcon) {
+                Icon(
+                    imageVector = connectionIcon,
+                    contentDescription = null,
+                    tint = connectionTint,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+            }
+            if (layout.showConnectionLabel) {
+                Text(
+                    text = net.label,
+                    style = MaterialTheme.typography.labelMedium,
+                    color = MaterialTheme.colorScheme.onSurface,
+                    textAlign = TextAlign.Start,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
     }
 
@@ -377,66 +463,138 @@ internal fun RowScope.CollapsedIdleNetworkContent(
             .clipToBounds(),
         contentAlignment = Alignment.CenterEnd,
     ) {
-        val showUpload = layout.speedDisplayMode == IdleSpeedDisplayMode.BOTH ||
-            layout.speedDisplayMode == IdleSpeedDisplayMode.UPLOAD_ONLY
-        val showDownload = layout.speedDisplayMode == IdleSpeedDisplayMode.BOTH ||
-            layout.speedDisplayMode == IdleSpeedDisplayMode.DOWNLOAD_ONLY
+        CollapsedLiveSpeedCluster(net = net, layout = layout)
+    }
+}
 
-        if (showUpload || showDownload) {
-            Row(
-                modifier = Modifier
-                    .testTag("cockpit-idle-speed")
-                    .semantics(mergeDescendants = true) {
-                        val parts = buildList {
-                            if (showUpload) {
-                                add("Uploading ${CockpitNetworkFormat.spokenRate(net.uploadBytesPerSec)}")
-                            }
-                            if (showDownload) {
-                                add("downloading ${CockpitNetworkFormat.spokenRate(net.downloadBytesPerSec)}")
-                            }
-                        }
-                        contentDescription = parts.joinToString(", ")
-                    },
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
-            ) {
-                if (showUpload) {
-                    SpeedFigure(text = net.uploadText, up = true, tint = CockpitLivePalette.Cyan)
-                }
-                if (showDownload) {
-                    SpeedFigure(text = net.downloadText, up = false, tint = CockpitLivePalette.Emerald)
-                }
+/**
+ * Renders live upload/download speeds in the right zone of any collapsed pill:
+ * - Both active & fits: stacked vertically (upload top in cyan, download bottom in emerald).
+ * - Single active or extreme font scale: single centred-vertical figure.
+ * - Idle: draws nothing.
+ * Spoken contentDescription always lists every active direction.
+ */
+@Composable
+internal fun CollapsedLiveSpeedCluster(
+    net: IdleNetworkSnapshot,
+    layout: IdlePillZoneLayout,
+    modifier: Modifier = Modifier,
+) {
+    val showUpload = layout.speedDisplayMode == IdleSpeedDisplayMode.BOTH ||
+        layout.speedDisplayMode == IdleSpeedDisplayMode.UPLOAD_ONLY
+    val showDownload = layout.speedDisplayMode == IdleSpeedDisplayMode.BOTH ||
+        layout.speedDisplayMode == IdleSpeedDisplayMode.DOWNLOAD_ONLY
+
+    if (!showUpload && !showDownload) return
+
+    val spokenDescription = remember(
+        net.hasUploadTraffic,
+        net.hasDownloadTraffic,
+        net.uploadBytesPerSec,
+        net.downloadBytesPerSec,
+    ) {
+        val parts = buildList {
+            if (net.hasUploadTraffic) {
+                add("Uploading ${CockpitNetworkFormat.spokenRate(net.uploadBytesPerSec)}")
+            }
+            if (net.hasDownloadTraffic) {
+                add("downloading ${CockpitNetworkFormat.spokenRate(net.downloadBytesPerSec)}")
+            }
+        }
+        parts.joinToString(", ")
+    }
+
+    if (layout.isStacked && showUpload && showDownload) {
+        Column(
+            modifier = modifier
+                .testTag("cockpit-idle-speed")
+                .semantics(mergeDescendants = true) { contentDescription = spokenDescription },
+            horizontalAlignment = Alignment.End,
+            verticalArrangement = Arrangement.spacedBy(Tokens.GridGap, Alignment.CenterVertically),
+        ) {
+            SpeedFigure(
+                text = net.uploadText,
+                up = true,
+                tint = CockpitLivePalette.Cyan,
+                compact = true,
+            )
+            SpeedFigure(
+                text = net.downloadText,
+                up = false,
+                tint = CockpitLivePalette.Emerald,
+                compact = true,
+            )
+        }
+    } else {
+        Row(
+            modifier = modifier
+                .testTag("cockpit-idle-speed")
+                .semantics(mergeDescendants = true) { contentDescription = spokenDescription },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+        ) {
+            if (showUpload) {
+                SpeedFigure(
+                    text = net.uploadText,
+                    up = true,
+                    tint = CockpitLivePalette.Cyan,
+                    compact = layout.useCompactSpeedStyle,
+                )
+            }
+            if (showDownload) {
+                SpeedFigure(
+                    text = net.downloadText,
+                    up = false,
+                    tint = CockpitLivePalette.Emerald,
+                    compact = layout.useCompactSpeedStyle,
+                )
             }
         }
     }
 }
 
 @Composable
-private fun SpeedFigure(text: String, up: Boolean, tint: Color) {
+internal fun SpeedFigure(
+    text: String,
+    up: Boolean,
+    tint: Color,
+    compact: Boolean = false,
+) {
+    val textStyle = if (compact) {
+        MaterialTheme.typography.labelSmall.copy(
+            fontSize = Tokens.Cockpit.IdleStackedRateTextSize,
+            lineHeight = Tokens.Cockpit.IdleStackedRateLineHeight,
+            fontWeight = FontWeight.SemiBold,
+            fontFeatureSettings = TABULAR_DIGITS,
+        )
+    } else {
+        MaterialTheme.typography.labelSmall.copy(
+            fontWeight = FontWeight.SemiBold,
+            fontFeatureSettings = TABULAR_DIGITS,
+        )
+    }
+    val arrowSize = if (compact) Tokens.Cockpit.IdleStackedSpeedArrow else Tokens.Cockpit.IdleSpeedArrow
     Row(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.GridGap),
     ) {
         Text(
             text = text,
-            style = MaterialTheme.typography.labelSmall.copy(
-                fontWeight = FontWeight.SemiBold,
-                fontFeatureSettings = TABULAR_DIGITS,
-            ),
+            style = textStyle,
             color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             softWrap = false,
         )
-        SpeedTriangle(up = up, tint = tint)
+        SpeedTriangle(up = up, tint = tint, size = arrowSize)
     }
 }
 
 /** A small filled triangle. Drawn rather than typed so it renders the same on every font. */
 @Composable
-private fun SpeedTriangle(up: Boolean, tint: Color) {
-    Canvas(Modifier.size(Tokens.Cockpit.IdleSpeedArrow)) {
-        val w = size.width
-        val h = size.height
+private fun SpeedTriangle(up: Boolean, tint: Color, size: Dp = Tokens.Cockpit.IdleSpeedArrow) {
+    Canvas(Modifier.size(size)) {
+        val w = this.size.width
+        val h = this.size.height
         val inset = w * 0.12f
         val path = Path().apply {
             if (up) {

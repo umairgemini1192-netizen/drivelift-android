@@ -49,6 +49,11 @@
     <uses-permission
         android:name="android.permission.PACKAGE_USAGE_STATS"
         tools:ignore="ProtectedPermissions" />
+    <!-- Granted once via DriveLift's built-in Wireless Debugging Auto Mode setup so DriveLift can
+         toggle adb_wifi_enabled only during a Clean/Sleep run and restore it immediately after. -->
+    <uses-permission
+        android:name="android.permission.WRITE_SECURE_SETTINGS"
+        tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
     <uses-permission android:name="android.permission.VIBRATE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
@@ -202,6 +207,14 @@
                 <action android:name="android.app.action.NEXT_ALARM_CLOCK_CHANGED" />
                 <action android:name="android.intent.action.TIME_SET" />
                 <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
+        <receiver
+            android:name=".feature.automode.AdbPairingReplyReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="com.drivelift.app.action.ADB_PAIRING_REPLY" />
             </intent-filter>
         </receiver>
 

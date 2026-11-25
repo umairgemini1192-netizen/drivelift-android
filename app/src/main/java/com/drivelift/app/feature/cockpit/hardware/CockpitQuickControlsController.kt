@@ -56,6 +56,8 @@ data class WifiTileState(
     val ssid: String = "",
     val hasLocationPermission: Boolean = false,
     val label: String = "Wi-Fi Off",
+    val needsLocationHint: Boolean = false,
+    val locationHint: String? = null,
 )
 
 data class MobileDataTileState(
@@ -101,6 +103,38 @@ class CockpitQuickControlsController(
     private val isScreenInteractive: () -> Boolean = {
         context.getSystemService(PowerManager::class.java)?.isInteractive != false
     },
+    private val activeCapabilitiesProvider: () -> NetworkCapabilities? = {
+        runCatching {
+            val cm = context.applicationContext.getSystemService(ConnectivityManager::class.java)
+            cm?.activeNetwork?.let { cm.getNetworkCapabilities(it) }
+        }.getOrNull()
+    },
+    private val wifiEnabledProvider: () -> Boolean = {
+        runCatching {
+            context.applicationContext.getSystemService(WifiManager::class.java)?.isWifiEnabled == true
+        }.getOrDefault(false)
+    },
+    private val wifiManagerSsidProvider: () -> String? = {
+        @Suppress("DEPRECATION")
+        runCatching {
+            context.applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+        }.getOrNull()
+    },
+    private val locationAccessProvider: () -> Pair<Boolean, Boolean> = {
+        val appCtx = context.applicationContext
+        val hasFine = hasLocationPermission(appCtx)
+        val enabled = runCatching {
+            appCtx.getSystemService(LocationManager::class.java)?.isLocationEnabled == true
+        }.getOrDefault(false)
+        hasFine to enabled
+    },
+    private val transportSsidExtractor: (NetworkCapabilities?) -> String? = { caps ->
+        if (Build.VERSION.SDK_INT >= 29) {
+            (caps?.transportInfo as? WifiInfo)?.ssid
+        } else {
+            null
+        }
+    },
 ) {
     private val appContext = context.applicationContext
     private val connectivityManager = appContext.getSystemService(ConnectivityManager::class.java)
@@ -133,6 +167,9 @@ class CockpitQuickControlsController(
 
     @Volatile
     private var latestWifiInfoSsid: String? = null
+
+    @Volatile
+    private var latestWifiNetwork: Network? = null
 
     @Volatile
     private var latestWifiConnected: Boolean = false
@@ -179,11 +216,18 @@ class CockpitQuickControlsController(
         stopUsageRefreshTicker()
     }
 
-    /** Cleanly resumes periodic polling when the screen wakes if this controller is started. */
+    /** Cleanly resumes periodic polling and re-reads active network capabilities when the screen wakes. */
     fun onScreenOn() {
         screenPaused = false
         if (!started || !isScreenInteractive()) return
-        refreshAll()
+        if (wifiCallback == null) {
+            registerWifiCallback()
+        }
+        val activeCaps = activeCapabilitiesProvider()
+        handleDefaultNetworkCapabilities(activeCaps)
+        refreshBluetoothState()
+        refreshRingerState()
+        refreshMonthlyMobileData()
         startUsageRefreshTicker()
     }
 
@@ -287,6 +331,25 @@ class CockpitQuickControlsController(
         runCatching { appContext.startActivity(intent) }
     }
 
+    /** One-tap hint action when Wi-Fi is connected without location permission or location services. */
+    fun onWifiLocationHintTap() {
+        CockpitHaptics.performClick(appContext)
+        val (hasFine, locationEnabled) = locationAccessProvider()
+        if (!hasFine) {
+            val details = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+                .setData(android.net.Uri.parse("package:${appContext.packageName}"))
+                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            if (runCatching { appContext.startActivity(details); true }.getOrDefault(false)) {
+                postStatusConfirmation("Allow Location for Wi-Fi network name")
+            }
+        } else if (!locationEnabled) {
+            openLocationSettings()
+            postStatusConfirmation("Turn on Location for Wi-Fi network name")
+        } else {
+            refreshWifiState()
+        }
+    }
+
     fun openUsageAccessSettings() {
         val pkgIntent = Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
             .setData(android.net.Uri.parse("package:${appContext.packageName}"))
@@ -312,43 +375,47 @@ class CockpitQuickControlsController(
         val callback = if (Build.VERSION.SDK_INT >= 31) {
             object : ConnectivityManager.NetworkCallback(FLAG_INCLUDE_LOCATION_INFO) {
                 override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                    handleDefaultNetworkCapabilities(networkCapabilities)
+                    handleDefaultNetworkCapabilities(networkCapabilities, network = network)
                 }
 
                 override fun onAvailable(network: Network) {
                     val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
-                    handleDefaultNetworkCapabilities(caps)
+                    handleDefaultNetworkCapabilities(caps, network = network)
                 }
 
                 override fun onLost(network: Network) {
+                    latestWifiInfoSsid = null
+                    latestWifiNetwork = null
                     val active = runCatching { cm.activeNetwork }.getOrNull()
                     val caps = if (active != null && active != network) {
                         runCatching { cm.getNetworkCapabilities(active) }.getOrNull()
                     } else {
                         null
                     }
-                    handleDefaultNetworkCapabilities(caps)
+                    handleDefaultNetworkCapabilities(caps, network = active?.takeIf { it != network })
                 }
             }
         } else {
             object : ConnectivityManager.NetworkCallback() {
                 override fun onCapabilitiesChanged(network: Network, networkCapabilities: NetworkCapabilities) {
-                    handleDefaultNetworkCapabilities(networkCapabilities)
+                    handleDefaultNetworkCapabilities(networkCapabilities, network = network)
                 }
 
                 override fun onAvailable(network: Network) {
                     val caps = runCatching { cm.getNetworkCapabilities(network) }.getOrNull()
-                    handleDefaultNetworkCapabilities(caps)
+                    handleDefaultNetworkCapabilities(caps, network = network)
                 }
 
                 override fun onLost(network: Network) {
+                    latestWifiInfoSsid = null
+                    latestWifiNetwork = null
                     val active = runCatching { cm.activeNetwork }.getOrNull()
                     val caps = if (active != null && active != network) {
                         runCatching { cm.getNetworkCapabilities(active) }.getOrNull()
                     } else {
                         null
                     }
-                    handleDefaultNetworkCapabilities(caps)
+                    handleDefaultNetworkCapabilities(caps, network = active?.takeIf { it != network })
                 }
             }
         }
@@ -357,20 +424,29 @@ class CockpitQuickControlsController(
     }
 
     /**
-     * Single-source-of-truth default network transition handler: when Wi-Fi is turned off or
-     * `TRANSPORT_WIFI` is absent on the default network, immediately clears any cached SSID,
-     * switches the Wi-Fi tile to `"Wi-Fi Off"`, and propagates the new capabilities to the
-     * Dynamic Island pill so it immediately flips to Mobile Data (or Offline).
+     * Single-source-of-truth default network transition handler:
+     * - When Wi-Fi is active, immediately replaces any cached SSID with the new network's valid
+     *   SSID (never storing a redacted `<unknown ssid>` sentinel so the WifiManager fallback works).
+     * - When Wi-Fi is lost or absent on the default network, immediately clears any cached SSID,
+     *   switches the Wi-Fi tile to `"Wi-Fi Off"`, and notifies the Dynamic Island pill.
      */
-    internal fun handleDefaultNetworkCapabilities(capabilities: NetworkCapabilities?) {
+    internal fun handleDefaultNetworkCapabilities(
+        capabilities: NetworkCapabilities?,
+        network: Network? = null,
+    ) {
         val hasWifi = capabilities?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
         if (hasWifi) {
+            if (network != null && network != latestWifiNetwork) {
+                latestWifiInfoSsid = null
+                latestWifiNetwork = network
+            }
             latestWifiConnected = true
-            val info = if (Build.VERSION.SDK_INT >= 29) capabilities?.transportInfo as? WifiInfo else null
-            latestWifiInfoSsid = info?.ssid
+            // Always replace with validated SSID (or null when redacted/absent so WifiManager fallback runs).
+            latestWifiInfoSsid = extractValidSsid(transportSsidExtractor(capabilities))
         } else {
             latestWifiConnected = false
             latestWifiInfoSsid = null
+            latestWifiNetwork = null
         }
         refreshWifiState(defaultNetworkHasWifiOverride = hasWifi)
         onDefaultNetworkChanged?.invoke(capabilities)
@@ -453,32 +529,34 @@ class CockpitQuickControlsController(
         ContextCompat.registerReceiver(appContext, sysReceiver, filter, ContextCompat.RECEIVER_NOT_EXPORTED)
     }
 
-    private fun refreshWifiState(defaultNetworkHasWifiOverride: Boolean? = null) {
-        val wifiEnabled = runCatching { wifiManager?.isWifiEnabled == true }.getOrDefault(false)
-        val defaultHasWifi = defaultNetworkHasWifiOverride ?: runCatching {
-            val active = connectivityManager?.activeNetwork
-            val caps = active?.let { connectivityManager?.getNetworkCapabilities(it) }
-            caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true
-        }.getOrDefault(false)
+    internal fun refreshWifiState(defaultNetworkHasWifiOverride: Boolean? = null) {
+        val wifiEnabled = wifiEnabledProvider()
+        val activeCaps = if (defaultNetworkHasWifiOverride == null) activeCapabilitiesProvider() else null
+        val defaultHasWifi = defaultNetworkHasWifiOverride
+            ?: (activeCaps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
+
+        if (defaultNetworkHasWifiOverride == null && defaultHasWifi) {
+            latestWifiInfoSsid = extractValidSsid(transportSsidExtractor(activeCaps))
+        }
 
         if (!wifiEnabled || !defaultHasWifi) {
             latestWifiConnected = false
             latestWifiInfoSsid = null
+            latestWifiNetwork = null
         }
         val connected = wifiEnabled && defaultHasWifi
-        val hasFineLocation = hasLocationPermission(appContext)
-        val locationEnabled = runCatching { locationManager?.isLocationEnabled == true }.getOrDefault(false)
+        val (hasFineLocation, locationEnabled) = locationAccessProvider()
         val hasFullLocationAccess = hasFineLocation && locationEnabled
 
-        @Suppress("DEPRECATION")
-        val rawSsid = if (!connected) {
+        if (connected && !hasFullLocationAccess) {
+            // Never keep a stale SSID when location permission or services are turned off.
+            latestWifiInfoSsid = null
+        }
+
+        val rawSsid = if (!connected || !hasFullLocationAccess) {
             null
         } else {
-            latestWifiInfoSsid ?: if (hasFullLocationAccess) {
-                runCatching { wifiManager?.connectionInfo?.ssid }.getOrNull()
-            } else {
-                null
-            }
+            extractValidSsid(latestWifiInfoSsid) ?: extractValidSsid(wifiManagerSsidProvider())
         }
         val displayLabel = sanitizeSsid(
             rawSsid = rawSsid,
@@ -486,7 +564,20 @@ class CockpitQuickControlsController(
             wifiConnected = connected,
             hasLocationAccess = hasFullLocationAccess,
         )
-        val cleanSsid = if (displayLabel != WIFI_OFF_LABEL && displayLabel != "Wi-Fi On") displayLabel else ""
+        val cleanSsid = if (
+            displayLabel != WIFI_OFF_LABEL &&
+            displayLabel != WIFI_CONNECTED_LABEL
+        ) {
+            displayLabel
+        } else {
+            ""
+        }
+        val needsHint = connected && !hasFullLocationAccess
+        val hintText = when {
+            !needsHint -> null
+            !hasFineLocation -> "Tap to allow location for name"
+            else -> "Tap to turn on location for name"
+        }
         _state.value = _state.value.copy(
             wifi = WifiTileState(
                 isEnabled = connected,
@@ -494,6 +585,8 @@ class CockpitQuickControlsController(
                 ssid = cleanSsid,
                 hasLocationPermission = hasFineLocation,
                 label = displayLabel,
+                needsLocationHint = needsHint,
+                locationHint = hintText,
             ),
         )
     }
@@ -676,10 +769,27 @@ class CockpitQuickControlsController(
 
     companion object {
         const val WIFI_OFF_LABEL = "Wi-Fi Off"
+        const val WIFI_CONNECTED_LABEL = "Wi-Fi connected"
         private const val USAGE_REFRESH_INTERVAL_MS = 60_000L
         private const val STATUS_CONFIRMATION_MS = 2_400L
         private const val BYTES_PER_MB = 1024.0 * 1024.0
         private const val BYTES_PER_GB = 1024.0 * 1024.0 * 1024.0
+
+        /**
+         * Returns the unquoted SSID or null when blank or an Android redacted sentinel
+         * (`<unknown ssid>`, `0x`). Prevents redacted values from being cached as non-null.
+         */
+        fun extractValidSsid(rawSsid: String?): String? {
+            val cleaned = rawSsid?.trim()?.removeSurrounding("\"").orEmpty()
+            return if (cleaned.isBlank() ||
+                cleaned.equals("<unknown ssid>", ignoreCase = true) ||
+                cleaned.equals("0x", ignoreCase = true)
+            ) {
+                null
+            } else {
+                cleaned
+            }
+        }
 
         fun sanitizeSsid(
             rawSsid: String?,
@@ -688,16 +798,8 @@ class CockpitQuickControlsController(
             hasLocationAccess: Boolean,
         ): String {
             if (!wifiEnabled || !wifiConnected) return WIFI_OFF_LABEL
-            if (!hasLocationAccess) return "Wi-Fi On"
-            val cleaned = rawSsid?.trim()?.removeSurrounding("\"").orEmpty()
-            return if (cleaned.isBlank() ||
-                cleaned.equals("<unknown ssid>", ignoreCase = true) ||
-                cleaned.equals("0x", ignoreCase = true)
-            ) {
-                "Wi-Fi On"
-            } else {
-                cleaned
-            }
+            if (!hasLocationAccess) return WIFI_CONNECTED_LABEL
+            return extractValidSsid(rawSsid) ?: WIFI_CONNECTED_LABEL
         }
 
         fun formatMonthlyDataUsage(bytes: Long): String {
@@ -709,6 +811,47 @@ class CockpitQuickControlsController(
                 val mb = (bytes / BYTES_PER_MB).roundToLong().coerceAtLeast(0L)
                 "$mb MB / mo"
             }
+        }
+
+        fun formatTodayDataUsage(bytes: Long): String {
+            if (bytes < 0L) return "Today --"
+            val gb = bytes / BYTES_PER_GB
+            return if (gb >= 1.0) {
+                "Today %.1f GB".format(Locale.US, gb)
+            } else {
+                val mb = (bytes / BYTES_PER_MB).roundToLong().coerceAtLeast(0L)
+                "Today $mb MB"
+            }
+        }
+
+        fun startOfDayMillis(
+            nowMillis: Long,
+            zoneId: ZoneId = ZoneId.systemDefault(),
+        ): Long {
+            val nowZdt = ZonedDateTime.ofInstant(Instant.ofEpochMilli(nowMillis), zoneId)
+            return nowZdt.toLocalDate().atStartOfDay(zoneId).toInstant().toEpochMilli()
+        }
+
+        /** Reads today's cellular data usage for the Tall home screen widget row. */
+        @Suppress("DEPRECATION")
+        fun readTodayMobileDataLabel(
+            context: Context,
+            nowMillis: Long = System.currentTimeMillis(),
+        ): String {
+            val appCtx = context.applicationContext ?: context
+            if (!hasUsageStatsPermission(appCtx)) return "Data: grant access"
+            val statsManager = appCtx.getSystemService(NetworkStatsManager::class.java)
+                ?: return "Today --"
+            val bytes = runCatching {
+                val bucket = statsManager.querySummaryForDevice(
+                    ConnectivityManager.TYPE_MOBILE,
+                    null,
+                    startOfDayMillis(nowMillis),
+                    nowMillis,
+                )
+                (bucket.rxBytes + bucket.txBytes).coerceAtLeast(0L)
+            }.getOrDefault(-1L)
+            return formatTodayDataUsage(bytes)
         }
 
         fun formatBluetoothStatus(

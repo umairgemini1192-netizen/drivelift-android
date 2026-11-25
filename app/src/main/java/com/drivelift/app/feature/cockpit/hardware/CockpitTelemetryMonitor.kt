@@ -100,6 +100,7 @@ class CockpitTelemetryMonitor(
     private var widgetPushJob: Job? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
     private var lastPushedSnapshot: TelemetryHudSnapshot? = null
+    private var lastPushedNetworkLabel: String? = null
     private var lastWidgetPushElapsedMs: Long = Long.MIN_VALUE
     internal var lastPushWasBatteryCurrentOnly: Boolean = false
         private set
@@ -122,8 +123,12 @@ class CockpitTelemetryMonitor(
         if (bound == widgetBound) return
         widgetBound = bound
         if (bound) {
+            // Acquire idle network BEFORE acquire() so the initial widget push already has live
+            // connection state for the Tall widget's network row even when the Island is off.
+            acquireIdleNetwork()
             acquire()
         } else {
+            releaseIdleNetwork()
             release()
         }
     }
@@ -200,13 +205,13 @@ class CockpitTelemetryMonitor(
                 screenPaused = false
                 _isScreenOn.value = true
                 _screenWakeCount.value = _screenWakeCount.value + 1L
-                if (activeClients > 0) {
-                    evaluateNow(batteryIntent = null, pushWidget = true, bypassDebounce = true)
-                    startScreenOnTicker()
-                }
                 if (idleConsumers > 0) {
                     refreshNetworkKind()
                     startSpeedTicker()
+                }
+                if (activeClients > 0) {
+                    evaluateNow(batteryIntent = null, pushWidget = true, bypassDebounce = true)
+                    startScreenOnTicker()
                 }
             }
             Intent.ACTION_BATTERY_CHANGED -> {
@@ -227,22 +232,32 @@ class CockpitTelemetryMonitor(
     ): Boolean {
         val current = snapshotReader(batteryIntent).copy(isLoadingInitial = false)
         _snapshot.value = current
+        val currentNet = _network.value
+        val currentNetLabel = CockpitGlanceWidget.formatWidgetNetworkSpeed(currentNet)
         val previous = lastPushedSnapshot
-        val changed = shouldPushWidgetUpdate(previous, current)
+        val telemetryChanged = shouldPushWidgetUpdate(previous, current)
+        val networkChanged = previous != null &&
+            lastPushedNetworkLabel != null &&
+            currentNetLabel != lastPushedNetworkLabel
+        val changed = telemetryChanged || networkChanged
         if (changed && pushWidget) {
             val nowMs = elapsedClock()
-            val urgent = isUrgentWidgetChange(previous, current)
-            val batteryCurrentOnly = isBatteryCurrentOnlyChange(previous, current)
+            val urgent = telemetryChanged && isUrgentWidgetChange(previous, current)
+            val batteryCurrentOnly = telemetryChanged && isBatteryCurrentOnlyChange(previous, current)
+            val networkOnly = !telemetryChanged
             val withinDebounce = lastWidgetPushElapsedMs != Long.MIN_VALUE &&
                 (nowMs - lastWidgetPushElapsedMs) in 0L until Tokens.Cockpit.WIDGET_PUSH_DEBOUNCE_MS
             if (!urgent && !bypassDebounce && withinDebounce) {
                 return false
             }
-            lastPushedSnapshot = nextPushedSnapshotBaseline(
-                previous = previous,
-                current = current,
-                batteryCurrentOnly = batteryCurrentOnly,
-            )
+            if (telemetryChanged) {
+                lastPushedSnapshot = nextPushedSnapshotBaseline(
+                    previous = previous,
+                    current = current,
+                    batteryCurrentOnly = batteryCurrentOnly,
+                )
+            }
+            lastPushedNetworkLabel = currentNetLabel
             lastPushWasBatteryCurrentOnly = batteryCurrentOnly
             lastWidgetPushElapsedMs = nowMs
             widgetPushJob?.cancel()
@@ -255,6 +270,8 @@ class CockpitTelemetryMonitor(
                         context = context,
                         snapshot = current,
                         batteryCurrentOnly = batteryCurrentOnly,
+                        network = currentNet,
+                        networkOnly = networkOnly,
                     )
                 }
             }

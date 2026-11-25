@@ -58,6 +58,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.clearAndSetSemantics
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import coil.compose.AsyncImage
@@ -728,9 +730,20 @@ private fun DuplicateRow(
 @Composable
 private fun CleanupBar(count: Int, bytes: Long, checking: Boolean, onClear: () -> Unit, onTrash: () -> Unit) {
     val context = LocalContext.current
-    Box(Modifier.fillMaxWidth().glassBar()) {
+    val selectionLabel = if (count == 1) "1 copy selected" else "$count copies selected"
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .glassBar()
+            .testTag("storage-cleanup-bar")
+            .semantics { stateDescription = selectionLabel },
+    ) {
         Column(Modifier.fillMaxWidth().padding(horizontal = Tokens.Edge, vertical = Tokens.Medium)) {
-            Text(if (count == 1) "1 copy selected" else "$count copies selected", style = MaterialTheme.typography.titleMedium)
+            Text(
+                selectionLabel,
+                style = MaterialTheme.typography.titleMedium,
+                modifier = Modifier.testTag("storage-cleanup-count"),
+            )
             Text(
                 if (checking) "Reading the files again before anything is changed"
                 else formatBytes(context, bytes),

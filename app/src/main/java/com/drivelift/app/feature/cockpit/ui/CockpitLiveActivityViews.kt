@@ -783,6 +783,14 @@ private fun OngoingCallCard(
                     overflow = TextOverflow.Ellipsis,
                     modifier = Modifier.testTag("cockpit-call-subtitle"),
                 )
+                Text(
+                    text = "Audio: ${audioOutputLabel(audio.output)}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CockpitLivePalette.Cyan,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("cockpit-call-route"),
+                )
             }
             CallCircleButton(
                 size = Tokens.Cockpit.CallInfoButton,
