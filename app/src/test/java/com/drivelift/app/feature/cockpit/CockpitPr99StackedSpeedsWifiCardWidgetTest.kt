@@ -395,7 +395,7 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         )
         val nav = CockpitLiveActivity.MapsNavActivity(
             id = "nav:compact",
-            instruction = "Turn left",
+            maneuverText = "Turn left",
             distanceText = "300 m",
             etaText = "4 min",
         )
