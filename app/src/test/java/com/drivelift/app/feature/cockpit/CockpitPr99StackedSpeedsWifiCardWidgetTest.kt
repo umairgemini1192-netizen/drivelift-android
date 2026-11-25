@@ -32,10 +32,12 @@ import com.drivelift.app.feature.cockpit.hardware.BluetoothTileState
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsController
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
+import com.drivelift.app.feature.cockpit.hardware.CockpitTelemetryMonitor
 import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
 import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.feature.cockpit.hardware.MobileDataTileState
 import com.drivelift.app.feature.cockpit.hardware.RingerTileState
+import com.drivelift.app.feature.cockpit.hardware.TelemetryHudSnapshot
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
 import com.drivelift.app.feature.cockpit.hardware.WifiTileState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
@@ -54,8 +56,14 @@ import com.drivelift.app.ui.LocalReducedMotion
 import com.drivelift.app.ui.Tokens
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.TestScope
+import kotlinx.coroutines.test.advanceTimeBy
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -548,6 +556,34 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 dockContainer.height > 0,
             )
 
+            // Every primary control button retains a >= 48 dp touch target height in all sizes.
+            val minTouchPx = (48f * density).toInt()
+            for (btnId in intArrayOf(
+                R.id.cockpit_widget_btn_drop,
+                R.id.cockpit_widget_btn_torch,
+                R.id.cockpit_widget_btn_island,
+            )) {
+                val btn = inflated.findViewById<View>(btnId)
+                assertNotNull("Control button missing in ${spec.name}", btn)
+                assertTrue(
+                    "Control button height ${btn.height}px < ${minTouchPx}px (48dp) in ${spec.name}",
+                    btn.height >= minTouchPx,
+                )
+            }
+            if (variant != WidgetSizeVariant.COMPACT) {
+                for (dockId in intArrayOf(
+                    R.id.cockpit_widget_btn_prev,
+                    R.id.cockpit_widget_btn_next,
+                    R.id.cockpit_widget_app_0,
+                )) {
+                    val v = inflated.findViewById<View>(dockId)
+                    assertTrue(
+                        "Dock interactive target height ${v.height}px < ${minTouchPx}px in ${spec.name}",
+                        v.height >= minTouchPx,
+                    )
+                }
+            }
+
             // Compact 4x2 hides app labels so short height never clips them.
             val appLabel0 = inflated.findViewById<View>(R.id.cockpit_widget_app_label_0)
             if (variant == WidgetSizeVariant.COMPACT) {
@@ -590,5 +626,87 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             }
             bitmap.recycle()
         }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    @Test
+    fun tallWidgetReceivesLiveNetworkUpdatesWithoutDynamicIsland() = runTest {
+        val dispatcher = StandardTestDispatcher(testScheduler)
+        val scope = TestScope(dispatcher)
+        var nowMs = 1_000L
+        var txBytes = 10_000L
+        var rxBytes = 20_000L
+        var pushCount = 0
+
+        val fixedSnapshot = TelemetryHudSnapshot(
+            battery = BatteryHudMetric(
+                percent = 80,
+                fraction = 0.80f,
+                valueText = "80%",
+                isCharging = false,
+                current = CockpitWidgetModel.formatBatteryCurrent(-500_000L, isCharging = false),
+                charge = CockpitWidgetModel.formatBatteryCharge(4_000_000L),
+            ),
+            ram = CockpitHudBitmapRenderer.formatRamHudMetric(
+                availBytes = (4.0 * 1024 * 1024 * 1024).toLong(),
+                totalBytes = (12.0 * 1024 * 1024 * 1024).toLong(),
+            ),
+            isLoadingInitial = false,
+        )
+
+        val monitor = CockpitTelemetryMonitor(
+            context = app,
+            scope = scope,
+            isScreenInteractive = { true },
+            snapshotReader = { fixedSnapshot },
+            widgetPusher = { pushCount++ },
+            trafficReader = { txBytes to rxBytes },
+            networkReader = { IdleNetworkKind.WIFI to null },
+            elapsedClock = { nowMs },
+        )
+
+        // Binding a widget alone (with NO Dynamic Island consumer) must start live network tracking.
+        monitor.setWidgetBound(true)
+        scope.runCurrent()
+        assertTrue("Widget bind must start telemetry ticker", monitor.isTelemetryTickerActive)
+        assertTrue("Widget bind must start speed ticker for Tall widget", monitor.isSpeedTickerActive)
+        assertEquals(IdleNetworkKind.WIFI, monitor.network.value.kind)
+        assertEquals(1, pushCount)
+
+        // First speed tick establishes baseline; sustained traffic ramps up across ticks so the
+        // 2s telemetry tick observes active throughput regardless of equal-timestamp scheduling.
+        nowMs += 1_000L
+        scope.advanceTimeBy(1_000L)
+        scope.runCurrent()
+        repeat(3) {
+            nowMs += 1_000L
+            txBytes += 32L * 1024L
+            rxBytes += (2.4 * 1024 * 1024).toLong()
+            scope.advanceTimeBy(1_000L)
+            scope.runCurrent()
+        }
+        assertTrue("Network snapshot must reflect live throughput", monitor.network.value.hasActiveTraffic)
+        assertTrue("Network rate change alone must push Tall widget update (pushCount=$pushCount)", pushCount >= 2)
+
+        // Verify the lightweight Tall partial RemoteViews patches network speed & today's data.
+        val container = FrameLayout(app)
+        val inflated = CockpitGlanceWidget.buildPreviewRemoteViewsForVariant(app, WidgetSizeVariant.TALL)
+            .apply(app, container)
+        val partial = CockpitGlanceWidget.buildTallNetworkPartialRemoteViewsForTest(
+            context = app,
+            network = monitor.network.value,
+            todayDataLabel = "Today 512 MB",
+        )
+        partial.reapply(app, inflated)
+        val netText = inflated.findViewById<TextView>(R.id.cockpit_widget_net_speed).text.toString()
+        val dataText = inflated.findViewById<TextView>(R.id.cockpit_widget_today_data).text.toString()
+        assertTrue("Expected live download speed in patched Tall row, got '$netText'", netText.contains("2.4M"))
+        assertEquals("Today 512 MB", dataText)
+
+        // Unbinding cleanly stops both telemetry and speed tickers.
+        monitor.setWidgetBound(false)
+        scope.runCurrent()
+        assertFalse(monitor.isTelemetryTickerActive)
+        assertFalse(monitor.isSpeedTickerActive)
     }
 }

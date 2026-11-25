@@ -18,7 +18,7 @@
         android:layout_height="match_parent"
         android:orientation="vertical"
         android:paddingHorizontal="10dp"
-        android:paddingVertical="7dp">
+        android:paddingVertical="4dp">
 
         <!-- Zone 1: Clock + Date (Left) | Status Badge aligned directly on the Clock Row (Right) -->
         <LinearLayout
@@ -46,7 +46,7 @@
                     android:includeFontPadding="false"
                     android:singleLine="true"
                     android:textColor="@color/cockpit_on_surface"
-                    android:textSize="28sp"
+                    android:textSize="24sp"
                     android:textStyle="bold" />
 
                 <TextClock
@@ -221,8 +221,8 @@
 
                     <ImageView
                         android:id="@+id/cockpit_widget_battery_gauge"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
                         android:contentDescription="Battery level"
                         android:scaleType="fitCenter" />
 
@@ -264,8 +264,8 @@
 
                     <ImageView
                         android:id="@+id/cockpit_widget_ram_gauge"
-                        android:layout_width="48dp"
-                        android:layout_height="48dp"
+                        android:layout_width="44dp"
+                        android:layout_height="44dp"
                         android:contentDescription="RAM usage"
                         android:scaleType="fitCenter" />
 
@@ -304,11 +304,11 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Zone 3: 3-Column Sculptural Control Deck (Drop, Torch, Island) -->
+        <!-- Zone 3: 3-Column Sculptural Control Deck (48 dp hit targets with 42 dp visual tiles centred inside) -->
         <LinearLayout
             android:id="@+id/cockpit_widget_controls_row"
             android:layout_width="match_parent"
-            android:layout_height="42dp"
+            android:layout_height="48dp"
             android:gravity="center_vertical"
             android:orientation="horizontal">
 
@@ -322,13 +322,15 @@
                 <ImageView
                     android:id="@+id/cockpit_widget_drop_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
@@ -367,13 +369,15 @@
                 <ImageView
                     android:id="@+id/cockpit_widget_torch_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
@@ -412,13 +416,15 @@
                 <ImageView
                     android:id="@+id/cockpit_widget_island_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="42dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
@@ -471,18 +477,18 @@
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
                 android:paddingHorizontal="6dp"
-                android:paddingVertical="3dp">
+                android:paddingVertical="2dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
+                    android:layout_height="48dp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_prev"
-                        android:layout_width="28dp"
-                        android:layout_height="40dp"
+                        android:layout_width="30dp"
+                        android:layout_height="match_parent"
                         android:contentDescription="Previous pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"
@@ -494,7 +500,7 @@
                     <LinearLayout
                         android:id="@+id/cockpit_widget_app_0"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:gravity="center"
                         android:orientation="vertical"
@@ -523,7 +529,7 @@
                     <LinearLayout
                         android:id="@+id/cockpit_widget_app_1"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:gravity="center"
                         android:orientation="vertical"
@@ -552,7 +558,7 @@
                     <LinearLayout
                         android:id="@+id/cockpit_widget_app_2"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:gravity="center"
                         android:orientation="vertical"
@@ -581,7 +587,7 @@
                     <LinearLayout
                         android:id="@+id/cockpit_widget_app_3"
                         android:layout_width="0dp"
-                        android:layout_height="wrap_content"
+                        android:layout_height="match_parent"
                         android:layout_weight="1"
                         android:gravity="center"
                         android:orientation="vertical"
@@ -609,8 +615,8 @@
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_next"
-                        android:layout_width="28dp"
-                        android:layout_height="40dp"
+                        android:layout_width="30dp"
+                        android:layout_height="match_parent"
                         android:contentDescription="Next pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"

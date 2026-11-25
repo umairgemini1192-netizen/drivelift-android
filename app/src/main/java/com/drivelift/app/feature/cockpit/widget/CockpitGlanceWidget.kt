@@ -56,7 +56,7 @@ enum class WidgetSizeVariant(
 ) {
     COMPACT(
         layoutResId = R.layout.cockpit_widget_compact,
-        gaugeSizeDp = 38f,
+        gaugeSizeDp = 36f,
         tileHeightDp = 32f,
         showAppLabels = false,
         showExtendedTelemetry = false,
@@ -64,7 +64,7 @@ enum class WidgetSizeVariant(
     ),
     NORMAL(
         layoutResId = R.layout.cockpit_widget_master,
-        gaugeSizeDp = 48f,
+        gaugeSizeDp = 44f,
         tileHeightDp = 42f,
         showAppLabels = true,
         showExtendedTelemetry = true,
@@ -320,36 +320,46 @@ class CockpitGlanceWidget {
                 ram = readRamMetric(appContext),
                 isLoadingInitial = false,
             )
-            pushTelemetryUpdate(appContext, snapshot, batteryCurrentOnly = false)
+            val network = runCatching { Graph.get(appContext).cockpit.telemetryMonitor.network.value }.getOrNull()
+            pushTelemetryUpdate(appContext, snapshot, batteryCurrentOnly = false, network = network)
         }
 
         /**
          * Pushes an already-sampled [TelemetryHudSnapshot] without re-sampling the rolling current
-         * averager. When [batteryCurrentOnly] is true, patches only the mA and mAh TextViews via
-         * `partiallyUpdateAppWidget()` with zero bitmap redraws.
+         * averager. When [batteryCurrentOnly] is true, patches only the mA and mAh TextViews (plus
+         * the Tall network row when provided) via `partiallyUpdateAppWidget()` with zero bitmap
+         * redraws. When [networkOnly] is true, patches only the Tall widget network/data row.
          */
         suspend fun pushTelemetryUpdate(
             context: Context,
             snapshot: TelemetryHudSnapshot,
             batteryCurrentOnly: Boolean = false,
+            network: IdleNetworkSnapshot? = null,
+            networkOnly: Boolean = false,
         ) {
             val appContext = context.applicationContext ?: context
+            if (networkOnly && (network == null || Build.VERSION.SDK_INT < 31)) return
             val manager = runCatching { AppWidgetManager.getInstance(appContext) }.getOrNull() ?: return
             val ids = runCatching {
                 manager.getAppWidgetIds(ComponentName(appContext, CockpitGlanceWidgetReceiver::class.java))
             }.getOrDefault(IntArray(0))
             if (ids.isEmpty()) return
 
-            val partial = if (batteryCurrentOnly) {
-                buildBatteryCurrentPartialRemoteViews(
+            val partial = when {
+                networkOnly && network != null -> buildNetworkPartialRemoteViews(
+                    context = appContext,
+                    network = network,
+                )
+                batteryCurrentOnly -> buildBatteryCurrentPartialRemoteViews(
                     context = appContext,
                     battery = snapshot.battery,
+                    network = network,
                 )
-            } else {
-                buildTelemetryPartialRemoteViews(
+                else -> buildTelemetryPartialRemoteViews(
                     context = appContext,
                     battery = snapshot.battery,
                     ram = snapshot.ram,
+                    network = network,
                 )
             }
             runCatching { manager.partiallyUpdateAppWidget(ids, partial) }
@@ -530,11 +540,19 @@ class CockpitGlanceWidget {
             context: Context,
             battery: BatteryHudMetric,
             ram: RamHudMetric,
+            network: IdleNetworkSnapshot? = null,
+            todayDataLabel: String? = null,
         ): RemoteViews {
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
+            val resolvedToday = if (network != null) {
+                todayDataLabel ?: CockpitQuickControlsController.readTodayMobileDataLabel(context)
+            } else {
+                todayDataLabel
+            }
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
                 applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
+                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant)
                 return views
             }
             return if (Build.VERSION.SDK_INT >= 31) {
@@ -550,15 +568,24 @@ class CockpitGlanceWidget {
 
         /**
          * Ultra-lightweight partial RemoteViews patching only the live mA current and mAh charge
-         * TextViews, skipping arc gauge bitmap rendering on 2-second battery-current-only ticks.
+         * TextViews (and the Tall widget network row when provided), skipping arc gauge bitmap
+         * rendering on 2-second battery-current-only ticks.
          */
         fun buildBatteryCurrentPartialRemoteViews(
             context: Context,
             battery: BatteryHudMetric,
+            network: IdleNetworkSnapshot? = null,
+            todayDataLabel: String? = null,
         ): RemoteViews {
+            val resolvedToday = if (network != null) {
+                todayDataLabel ?: CockpitQuickControlsController.readTodayMobileDataLabel(context)
+            } else {
+                todayDataLabel
+            }
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
                 applyBatteryCurrentToRemoteViews(views, context, battery, variant)
+                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant)
                 return views
             }
             return if (Build.VERSION.SDK_INT >= 31) {
@@ -569,6 +596,57 @@ class CockpitGlanceWidget {
                 )
             } else {
                 partialFor(WidgetSizeVariant.NORMAL)
+            }
+        }
+
+        /**
+         * Lightweight partial RemoteViews patching ONLY the Tall widget's live network speed and
+         * today's mobile data TextViews, performing zero ops on Compact/Normal sizes and zero
+         * bitmap redraws.
+         */
+        fun buildNetworkPartialRemoteViews(
+            context: Context,
+            network: IdleNetworkSnapshot,
+            todayDataLabel: String = CockpitQuickControlsController.readTodayMobileDataLabel(context),
+        ): RemoteViews {
+            fun partialFor(variant: WidgetSizeVariant): RemoteViews {
+                val views = RemoteViews(context.packageName, variant.layoutResId)
+                applyTallNetworkRowToRemoteViews(views, network, todayDataLabel, variant)
+                return views
+            }
+            return if (Build.VERSION.SDK_INT >= 31) {
+                wrapResponsiveRemoteViews(
+                    compact = partialFor(WidgetSizeVariant.COMPACT),
+                    normal = partialFor(WidgetSizeVariant.NORMAL),
+                    tall = partialFor(WidgetSizeVariant.TALL),
+                )
+            } else {
+                partialFor(WidgetSizeVariant.NORMAL)
+            }
+        }
+
+        internal fun buildTallNetworkPartialRemoteViewsForTest(
+            context: Context,
+            network: IdleNetworkSnapshot,
+            todayDataLabel: String = CockpitQuickControlsController.readTodayMobileDataLabel(context),
+        ): RemoteViews {
+            val views = RemoteViews(context.packageName, WidgetSizeVariant.TALL.layoutResId)
+            applyTallNetworkRowToRemoteViews(views, network, todayDataLabel, WidgetSizeVariant.TALL)
+            return views
+        }
+
+        private fun applyTallNetworkRowToRemoteViews(
+            views: RemoteViews,
+            network: IdleNetworkSnapshot?,
+            todayDataLabel: String?,
+            variant: WidgetSizeVariant,
+        ) {
+            if (!variant.showTallNetworkRow) return
+            if (network != null) {
+                views.setTextViewText(R.id.cockpit_widget_net_speed, formatWidgetNetworkSpeed(network))
+            }
+            if (todayDataLabel != null) {
+                views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
             }
         }
 
