@@ -1618,11 +1618,8 @@ private fun ExpandedActivityInfoStrip(
                 } else {
                     liveNet.downloadBytesPerSec
                 }
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
+                val stackMetrics = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+                val countsAndPinRow: @Composable () -> Unit = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
@@ -1648,6 +1645,8 @@ private fun ExpandedActivityInfoStrip(
                             modifier = Modifier.testTag("cockpit-drop-counts"),
                         )
                     }
+                }
+                val speedsRow: @Composable () -> Unit = {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
@@ -1664,6 +1663,25 @@ private fun ExpandedActivityInfoStrip(
                             tint = CockpitLivePalette.Emerald,
                             compact = true,
                         )
+                    }
+                }
+                if (stackMetrics) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                    ) {
+                        countsAndPinRow()
+                        speedsRow()
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Box(Modifier.weight(1f)) { countsAndPinRow() }
+                        Spacer(Modifier.width(Tokens.Snug))
+                        speedsRow()
                     }
                 }
             }

@@ -226,13 +226,18 @@ internal object IdlePillLayoutMath {
         if (effectiveCutout > 0f) {
             // Physical punch-hole present: keep left & right zones strictly symmetric so the
             // centre cutout gap stays dead-centre over the camera. Widen symmetrically up to
-            // maxSymmetricZone (status-bar safe cap) before dropping the text label.
+            // maxSymmetricZone (status-bar safe cap) so full labels like "Wi-Fi" fit before
+            // truncating or dropping the text label.
             val (mode, stacked, compact, neededRight) = when {
                 bothFitSymmetric -> Quad(IdleSpeedDisplayMode.BOTH, true, true, stackedFigureWidth)
                 singleFigureWidth <= maxSymmetricZone -> Quad(largerSingleMode, false, false, singleFigureWidth)
                 else -> Quad(largerSingleMode, false, true, minOf(stackedFigureWidth, maxSymmetricZone))
             }
-            val desiredLeft = if (minLabelZone <= maxSymmetricZone) minLabelZone else iconOnlyWidth
+            val desiredLeft = when {
+                idleLabelZone <= maxSymmetricZone -> idleLabelZone
+                minLabelZone <= maxSymmetricZone -> minLabelZone
+                else -> iconOnlyWidth
+            }
             val zone = maxOf(minSymmetricZone, desiredLeft, neededRight).coerceAtMost(maxSymmetricZone)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,
@@ -251,7 +256,11 @@ internal object IdlePillLayoutMath {
         // and only borrowing from the left zone if extreme font/compact width requires it
         // (dropping the connection text label before the icon, and never dropping speeds).
         if (bothFitSymmetric) {
-            val desiredLeft = if (minLabelZone <= maxSymmetricZone) minLabelZone else iconOnlyWidth
+            val desiredLeft = when {
+                idleLabelZone <= maxSymmetricZone -> idleLabelZone
+                minLabelZone <= maxSymmetricZone -> minLabelZone
+                else -> iconOnlyWidth
+            }
             val zone = maxOf(minSymmetricZone, desiredLeft, stackedFigureWidth).coerceAtMost(maxSymmetricZone)
             return IdlePillZoneLayout(
                 centerGapDp = centerGap,

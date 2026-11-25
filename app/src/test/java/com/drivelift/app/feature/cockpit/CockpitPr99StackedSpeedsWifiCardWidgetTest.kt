@@ -503,6 +503,11 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             val container = FrameLayout(app)
             val remoteViews = CockpitGlanceWidget.buildPreviewRemoteViewsForVariant(app, variant)
             val inflated = remoteViews.apply(app, container)
+            // TextClock only formats automatically once attached to a real window; seed fixed
+            // display time on the detached Robolectric view so layout bounds and screenshots reflect real text.
+            inflated.findViewById<TextView>(R.id.cockpit_widget_time)?.text = "11:15"
+            inflated.findViewById<TextView>(R.id.cockpit_widget_ampm)?.text = "PM"
+            inflated.findViewById<TextView>(R.id.cockpit_widget_date)?.text = "Wed \u00B7 Nov 25"
             inflated.measure(
                 View.MeasureSpec.makeMeasureSpec(widthPx, View.MeasureSpec.EXACTLY),
                 View.MeasureSpec.makeMeasureSpec(heightPx, View.MeasureSpec.EXACTLY),
