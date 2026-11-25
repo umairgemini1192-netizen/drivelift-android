@@ -68,6 +68,7 @@ import com.drivelift.app.feature.hibernation.engine.HibernationMode
 import com.drivelift.app.feature.hibernation.engine.ProtectedAppRule
 import com.drivelift.app.feature.hibernation.engine.ProtectionReason
 import com.drivelift.app.feature.hibernation.engine.SleepExecutionReport
+import com.drivelift.app.feature.hibernation.engine.SleepReportFormatter
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
 import com.drivelift.app.ui.Tokens
@@ -149,6 +150,7 @@ fun SleepModeScreen(
         onSkipGuidedStep = { module.skipGuidedSleepStep() },
         onCancelGuidedSession = { module.cancelGuidedSleepSession() },
         onAutoModeAction = onOpenAutoMode,
+        onCancelAutoSleep = { module.cancelAutoSleepBatch() },
         modifier = modifier,
     )
 }
@@ -176,6 +178,7 @@ fun SleepModeContent(
     modifier: Modifier = Modifier,
     onAutoModeAction: () -> Unit = {},
     onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
+    onCancelAutoSleep: () -> Unit = {},
 ) {
     val haptics = LocalHapticFeedback.current
 
@@ -226,7 +229,10 @@ fun SleepModeContent(
                     .fillMaxWidth()
                     .padding(horizontal = Tokens.Edge, vertical = Tokens.Small),
             ) {
-                AutoModeProgressPill(message = state.autoProgressMessage)
+                AutoModeProgressPill(
+                    message = state.autoProgressMessage,
+                    onCancel = if (state.isSleepingBatch) onCancelAutoSleep else null,
+                )
             }
         }
 
@@ -276,25 +282,41 @@ fun SleepModeContent(
                             .fillMaxWidth()
                             .testTag("sleep-loading-panel"),
                     ) {
-                        Row(
+                        Column(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(Tokens.Edge),
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(Tokens.Gutter),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Medium),
                         ) {
-                            CircularProgressIndicator(
-                                color = GlassPalette.HudElectricCyan,
-                                modifier = Modifier.size(Tokens.Icon),
-                            )
-                            Text(
-                                text = if (state.isSleepingBatch) {
-                                    "Putting selected apps to sleep"
-                                } else {
-                                    "Measuring background drainers"
-                                },
-                                style = MaterialTheme.typography.titleMedium,
-                            )
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Gutter),
+                            ) {
+                                CircularProgressIndicator(
+                                    color = GlassPalette.HudElectricCyan,
+                                    modifier = Modifier.size(Tokens.Icon),
+                                )
+                                Text(
+                                    text = if (state.isSleepingBatch) {
+                                        state.autoProgressMessage ?: "Putting selected apps to sleep"
+                                    } else {
+                                        "Measuring background drainers"
+                                    },
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                            }
+                            if (state.isSleepingBatch) {
+                                OutlinedButton(
+                                    onClick = onCancelAutoSleep,
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .heightIn(min = Tokens.TouchTarget)
+                                        .testTag("sleep-batch-cancel-button"),
+                                ) {
+                                    Text("Cancel")
+                                }
+                            }
                         }
                     }
                 }
@@ -582,11 +604,19 @@ private fun SleepReportPanel(
                 )
             }
             Text(
-                text = "Slept ${report.sleptPackages.size}, skipped ${report.skippedPackages.size}, " +
-                    "failed ${report.failedPackages.size}, cancelled ${report.cancelledPackages.size}.",
+                text = SleepReportFormatter.formatSummary(report),
                 style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                color = MaterialTheme.colorScheme.onSurface,
+                modifier = Modifier.testTag("sleep-report-summary"),
             )
+            if (report.wirelessDebuggingTurnedOff) {
+                Text(
+                    text = "Wireless debugging turned off",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GlassPalette.HudEmerald,
+                    modifier = Modifier.testTag("sleep-report-wireless-off"),
+                )
+            }
             TextButton(
                 onClick = onDismiss,
                 modifier = Modifier

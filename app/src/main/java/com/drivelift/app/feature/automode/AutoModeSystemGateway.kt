@@ -4,8 +4,12 @@ import android.Manifest
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.database.ContentObserver
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Settings
 import androidx.core.content.ContextCompat
 
@@ -22,6 +26,7 @@ interface AutoModeSystemGateway {
     fun getAdbAllowedConnectionTime(): Long?
     fun setAdbAllowedConnectionTime(value: Long): Boolean
     fun applicationId(): String
+    fun notificationAccessState(): NotificationAccessState = NotificationAccessState.ALLOWED
 }
 
 /**
@@ -81,6 +86,9 @@ class AndroidAutoModeSystemGateway(
 
     override fun applicationId(): String = context.packageName
 
+    override fun notificationAccessState(): NotificationAccessState =
+        AdbPairingNotifier.checkNotificationAccess(context)
+
     companion object {
         const val SETTING_ADB_WIFI_ENABLED = "adb_wifi_enabled"
         const val SETTING_ADB_ALLOWED_CONNECTION_TIME = "adb_allowed_connection_time"
@@ -99,5 +107,45 @@ class AndroidAutoModeSystemGateway(
             Intent(Settings.ACTION_WIFI_SETTINGS).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             }
+    }
+}
+
+/**
+ * Observes `Settings.Global.DEVELOPMENT_SETTINGS_ENABLED` while the Auto Mode setup wizard is
+ * visible so Step 1 advances automatically the moment the "Use developer options" master switch
+ * is turned on.
+ */
+class DeveloperOptionsObserver(
+    private val context: Context,
+    private val onChanged: () -> Unit,
+    handler: Handler = Handler(Looper.getMainLooper()),
+) {
+    private var registered = false
+
+    internal val contentObserver = object : ContentObserver(handler) {
+        override fun onChange(selfChange: Boolean) {
+            onChanged()
+        }
+
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+            onChanged()
+        }
+    }
+
+    fun register() {
+        if (registered) return
+        val uri = Settings.Global.getUriFor(Settings.Global.DEVELOPMENT_SETTINGS_ENABLED)
+        runCatching {
+            context.contentResolver.registerContentObserver(uri, false, contentObserver)
+            registered = true
+        }
+    }
+
+    fun unregister() {
+        if (!registered) return
+        registered = false
+        runCatching {
+            context.contentResolver.unregisterContentObserver(contentObserver)
+        }
     }
 }

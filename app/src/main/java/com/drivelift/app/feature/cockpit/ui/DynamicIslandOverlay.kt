@@ -211,14 +211,18 @@ internal fun canShowSatelliteBubble(
     cutoutWidthDp: Int,
     fontScale: Float,
 ): Boolean {
-    if (cutoutWidthDp <= 0) return true
+    val effectiveCutoutDp = (cutoutWidthDp + widthDeltaDp).coerceAtLeast(0)
+    if (effectiveCutoutDp <= 0) return true
     val splitPrimaryMaxDp = computeSafePillMaxWidthDp(
         screenWidthDp = screenWidthDp,
         widthDeltaDp = widthDeltaDp,
         hasSatelliteBubble = true,
     ).toFloat()
     val horizontalPaddingDp = (Tokens.Medium * 2).value
-    val centerGapDp = IdlePillLayoutMath.computeCenterGapDp(cutoutWidthDp.toFloat())
+    val centerGapDp = IdlePillLayoutMath.computeCenterGapDp(
+        measuredCutoutWidthDp = cutoutWidthDp.toFloat(),
+        cutoutWidthDeltaDp = widthDeltaDp.toFloat(),
+    )
     val minPerZoneDp = IdlePillLayoutMath.stackedSpeedFigureWidthDp(fontScale)
     val minRequiredPrimaryDp = horizontalPaddingDp + centerGapDp + (minPerZoneDp * 2f)
     return splitPrimaryMaxDp >= minRequiredPrimaryDp
@@ -554,7 +558,13 @@ private fun RowScope.CollapsedPillBody(
     }
 
     val fontScale = LocalDensity.current.fontScale
-    val showLiveSpeeds = net.hasActiveTraffic
+    // Live network speeds replace only static text such as "LAN ready". Live call status
+    // ("Incoming" / waveform), screen-recording stop box, and navigation ETA/distance always keep
+    // their activity right cluster even while VoIP/nav traffic is active.
+    val preservesActivityRightCluster = primary is CockpitLiveActivity.CallActivity ||
+        primary is CockpitLiveActivity.ScreenRecordingActivity ||
+        primary is CockpitLiveActivity.MapsNavActivity
+    val showLiveSpeeds = net.hasActiveTraffic && !preservesActivityRightCluster
     val useCutoutZones = cutoutWidthDp > 0 || showLiveSpeeds
 
     if (useCutoutZones) {
@@ -563,6 +573,7 @@ private fun RowScope.CollapsedPillBody(
             widthDeltaDp,
             minContentWidth,
             maxContentWidth,
+            showLiveSpeeds,
             net.hasUploadTraffic,
             net.hasDownloadTraffic,
             net.uploadBytesPerSec,
@@ -574,10 +585,10 @@ private fun RowScope.CollapsedPillBody(
                 minContentWidthDp = minContentWidth.value,
                 measuredCutoutWidthDp = cutoutWidthDp.toFloat(),
                 cutoutWidthDeltaDp = widthDeltaDp.toFloat(),
-                hasUploadTraffic = net.hasUploadTraffic,
-                hasDownloadTraffic = net.hasDownloadTraffic,
-                uploadBytesPerSec = net.uploadBytesPerSec,
-                downloadBytesPerSec = net.downloadBytesPerSec,
+                hasUploadTraffic = showLiveSpeeds && net.hasUploadTraffic,
+                hasDownloadTraffic = showLiveSpeeds && net.hasDownloadTraffic,
+                uploadBytesPerSec = if (showLiveSpeeds) net.uploadBytesPerSec else 0L,
+                downloadBytesPerSec = if (showLiveSpeeds) net.downloadBytesPerSec else 0L,
                 fontScale = fontScale,
             )
         }

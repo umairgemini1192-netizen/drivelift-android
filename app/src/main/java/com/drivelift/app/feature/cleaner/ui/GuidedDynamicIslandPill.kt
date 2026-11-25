@@ -28,6 +28,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import com.drivelift.app.feature.cleaner.cache.GuidedPillMode
@@ -198,12 +200,18 @@ fun GuidedDynamicIslandPill(
 
 /**
  * Compact live progress pill shown while Built-in Auto Mode runs a Clean or Sleep queue silently.
+ * When [onCancel] is supplied, shows an accessible Cancel button (stacking cleanly on compact
+ * widths or large font scale) so the owner can abort a batch cleanly at any time.
  */
 @Composable
 fun AutoModeProgressPill(
     message: String,
     modifier: Modifier = Modifier,
+    onCancel: (() -> Unit)? = null,
 ) {
+    val stack = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
+        LocalConfiguration.current.screenWidthDp < Tokens.Cleaner.CompactStackWidthDp
+
     GlassSurface(
         level = GlassLevel.Island,
         shape = Tokens.Cleaner.PillShape,
@@ -211,25 +219,79 @@ fun AutoModeProgressPill(
             .fillMaxWidth()
             .testTag("automode-progress-pill"),
     ) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(Tokens.Gutter),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
-        ) {
-            CircularProgressIndicator(
-                color = GlassPalette.HudEmerald,
-                strokeWidth = Tokens.Stroke,
-                modifier = Modifier.size(Tokens.IconSmall),
-            )
-            Text(
-                text = message,
-                style = MaterialTheme.typography.bodyMedium,
-                color = CockpitLivePalette.White,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis,
-            )
+        if (onCancel != null && stack) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Tokens.Gutter),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+            ) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                ) {
+                    CircularProgressIndicator(
+                        color = GlassPalette.HudEmerald,
+                        strokeWidth = Tokens.Stroke,
+                        modifier = Modifier.size(Tokens.IconSmall),
+                    )
+                    Text(
+                        text = message,
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = CockpitLivePalette.White,
+                        maxLines = 3,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                OutlinedButton(
+                    onClick = onCancel,
+                    colors = ButtonDefaults.outlinedButtonColors(
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .heightIn(min = Tokens.TouchTarget)
+                        .testTag("automode-progress-cancel"),
+                ) {
+                    Text("Cancel")
+                }
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(Tokens.Gutter),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+            ) {
+                CircularProgressIndicator(
+                    color = GlassPalette.HudEmerald,
+                    strokeWidth = Tokens.Stroke,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                Text(
+                    text = message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = CockpitLivePalette.White,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+                if (onCancel != null) {
+                    TextButton(
+                        onClick = onCancel,
+                        colors = ButtonDefaults.textButtonColors(
+                            contentColor = MaterialTheme.colorScheme.error,
+                        ),
+                        modifier = Modifier
+                            .heightIn(min = Tokens.TouchTarget)
+                            .testTag("automode-progress-cancel"),
+                    ) {
+                        Text("Cancel")
+                    }
+                }
+            }
         }
     }
 }

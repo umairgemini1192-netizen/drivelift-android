@@ -145,6 +145,7 @@ data class CleanerDashboardUiState(
     val guidedPill: GuidedPillState? = null,
     val celebrationReclaimedBytes: Long? = null,
     val celebrationDeletedCount: Int = 0,
+    val celebrationWirelessDebuggingTurnedOff: Boolean = false,
     val scannedFileCount: Int = 0,
 ) {
     val selectedBytes: Long
@@ -221,6 +222,7 @@ fun CleanerDashboardScreen(
         onSkipGuidedStep = { module.skipGuidedCleanStep() },
         onCancelGuidedSession = { module.cancelGuidedCleanSession() },
         onAutoModeAction = onOpenAutoMode,
+        onCancelAutoClean = { module.cancelAutoCleanBatch() },
         modifier = modifier,
     )
 }
@@ -248,6 +250,7 @@ fun CleanerDashboardContent(
     modifier: Modifier = Modifier,
     onAutoModeAction: () -> Unit = {},
     onNextGuidedApp: () -> Unit = onConfirmGuidedStep,
+    onCancelAutoClean: () -> Unit = {},
 ) {
     val context = LocalContext.current
     val haptics = LocalHapticFeedback.current
@@ -298,7 +301,10 @@ fun CleanerDashboardContent(
                         .fillMaxWidth()
                         .padding(horizontal = Tokens.Edge, vertical = Tokens.Small),
                 ) {
-                    AutoModeProgressPill(message = state.autoProgressMessage)
+                    AutoModeProgressPill(
+                        message = state.autoProgressMessage,
+                        onCancel = onCancelAutoClean,
+                    )
                 }
             }
 
@@ -393,6 +399,7 @@ fun CleanerDashboardContent(
                             PostCleanCelebrationPanel(
                                 reclaimedBytes = state.celebrationReclaimedBytes ?: 0L,
                                 deletedCount = state.celebrationDeletedCount,
+                                wirelessDebuggingTurnedOff = state.celebrationWirelessDebuggingTurnedOff,
                                 onDone = onDismissCelebration,
                             )
                         }
@@ -835,6 +842,7 @@ private fun CleanerEmptyStatePanel(onRescan: () -> Unit) {
 private fun PostCleanCelebrationPanel(
     reclaimedBytes: Long,
     deletedCount: Int,
+    wirelessDebuggingTurnedOff: Boolean,
     onDone: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -872,6 +880,14 @@ private fun PostCleanCelebrationPanel(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+            if (wirelessDebuggingTurnedOff) {
+                Text(
+                    text = "Wireless debugging turned off",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = GlassPalette.HudEmerald,
+                    modifier = Modifier.testTag("cleaner-celebration-wireless-off"),
+                )
+            }
             OutlinedButton(
                 onClick = onDone,
                 modifier = Modifier
