@@ -208,14 +208,11 @@ class AutoModePr100FieldFixesTest {
         )
         assertFalse(AdbPairingNotifier.showPairingPrompt(app))
 
-        // Healthy permission + high-importance channel -> ALLOWED and posts notification.
-        nm.createNotificationChannel(
-            NotificationChannel(
-                AdbPairingNotifier.CHANNEL_ID,
-                "Auto Mode setup",
-                NotificationManager.IMPORTANCE_HIGH,
-            ),
-        )
+        // Simulate user re-enabling the channel in system settings (Android/Robolectric
+        // createNotificationChannel intentionally ignores attempts by an app to raise
+        // an existing channel's importance above IMPORTANCE_NONE).
+        nm.getNotificationChannel(AdbPairingNotifier.CHANNEL_ID)!!.importance =
+            NotificationManager.IMPORTANCE_HIGH
         assertEquals(
             NotificationAccessState.ALLOWED,
             AdbPairingNotifier.checkNotificationAccess(app),
