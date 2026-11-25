@@ -10,6 +10,7 @@ import com.drivelift.app.feature.hibernation.engine.SleepSessionStateMachine
 import com.drivelift.app.feature.hibernation.engine.StandbyBucket
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
@@ -593,7 +594,7 @@ class AdbSilentExecutorTest {
 
         val cancellingThread = Thread.currentThread()
         var caughtCancel = false
-        val job = launch {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
             try {
                 runCancellableShellStream(
                     openStream = { stalledStream },
@@ -644,7 +645,7 @@ class AdbSilentExecutorTest {
             }
         }
 
-        val job = launch {
+        val job = launch(start = CoroutineStart.UNDISPATCHED) {
             runCancellableShellStream(
                 openStream = {
                     enteredOpen.countDown()
