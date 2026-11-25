@@ -26,10 +26,12 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -963,7 +965,7 @@ fun CockpitMasterWidgetCard(
     val pagedApps = CockpitWidgetModel.pageSlice(pinnedApps, currentPinnedPage)
     val batteryGaugeBitmap = remember(batteryMetric, density) {
         CockpitHudBitmapRenderer.renderArcGaugeBitmap(
-            sizePx = (58f * density).toInt(),
+            sizePx = (Tokens.Cockpit.HudGaugeSize.value * density).toInt(),
             fraction = batteryMetric.fraction,
             valueText = batteryMetric.valueText,
             subLabel = batteryMetric.label,
@@ -974,7 +976,7 @@ fun CockpitMasterWidgetCard(
     }
     val ramGaugeBitmap = remember(ramMetric, density) {
         CockpitHudBitmapRenderer.renderArcGaugeBitmap(
-            sizePx = (58f * density).toInt(),
+            sizePx = (Tokens.Cockpit.HudGaugeSize.value * density).toInt(),
             fraction = ramMetric.fraction,
             valueText = ramMetric.usedPercentText,
             subLabel = ramMetric.label,
@@ -985,7 +987,7 @@ fun CockpitMasterWidgetCard(
     val dropTileBitmap = remember(telemetry.isDesktopDropRunning, dropAvailable, density) {
         CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = (104f * density).toInt(),
-            heightPx = (50f * density).toInt(),
+            heightPx = (Tokens.Cockpit.HudControlHeight.value * density).toInt(),
             active = telemetry.isDesktopDropRunning,
             accentColor = GlassPalette.DestructiveRed,
             density = density,
@@ -995,7 +997,7 @@ fun CockpitMasterWidgetCard(
     val torchTileBitmap = remember(torchOn, torchAvailable, density) {
         CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = (104f * density).toInt(),
-            heightPx = (50f * density).toInt(),
+            heightPx = (Tokens.Cockpit.HudControlHeight.value * density).toInt(),
             active = torchOn && torchAvailable,
             accentColor = GlassPalette.PrimaryCyan,
             density = density,
@@ -1005,7 +1007,7 @@ fun CockpitMasterWidgetCard(
     val islandTileBitmap = remember(islandOn, density) {
         CockpitHudBitmapRenderer.renderControlTileBitmap(
             widthPx = (104f * density).toInt(),
-            heightPx = (50f * density).toInt(),
+            heightPx = (Tokens.Cockpit.HudControlHeight.value * density).toInt(),
             active = islandOn,
             accentColor = GlassPalette.SecondaryViolet,
             density = density,
@@ -1015,7 +1017,7 @@ fun CockpitMasterWidgetCard(
     val dockTrayBitmap = remember(density) {
         CockpitHudBitmapRenderer.renderDockTrayBitmap(
             widthPx = (312f * density).toInt(),
-            heightPx = (44f * density).toInt(),
+            heightPx = (68f * density).toInt(),
             density = density,
         ).asImageBitmap()
     }
@@ -1042,8 +1044,8 @@ fun CockpitMasterWidgetCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = Tokens.Medium, vertical = Tokens.Row),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    .padding(Tokens.RowLoose),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Row),
             ) {
                 // Top Header Row: Clock + Date (Left) | Status Pill aligned directly with the Clock Row (Right)
                 Row(
@@ -1125,6 +1127,7 @@ fun CockpitMasterWidgetCard(
                                         modifier = Modifier.fillMaxSize(),
                                     )
                                 }
+                                Spacer(Modifier.height(Tokens.Snug))
                                 BatteryCurrentLabel(
                                     reading = batteryMetric.current,
                                     charge = batteryMetric.charge,
@@ -1138,6 +1141,7 @@ fun CockpitMasterWidgetCard(
                                         .size(Tokens.Cockpit.HudGaugeSize)
                                         .testTag("cockpit-widget-ram-gauge"),
                                 )
+                                Spacer(Modifier.height(Tokens.Snug))
                                 RamTelemetryLabel(ram = ramMetric)
                             }
                         }
@@ -1145,20 +1149,29 @@ fun CockpitMasterWidgetCard(
                 }
 
                 if (stackTopRow) {
-                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
-                        AlarmBadgeBlock(alarm = alarm, onTapAlarm = onTapAlarm)
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Row)) {
+                        AlarmBadgeBlock(
+                            alarm = alarm,
+                            onTapAlarm = onTapAlarm,
+                            modifier = Modifier.fillMaxWidth(),
+                        )
                         telemetryGaugesContent()
                     }
                 } else {
                     Row(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(IntrinsicSize.Min),
                         verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        Box(Modifier.weight(1f)) {
-                            AlarmBadgeBlock(alarm = alarm, onTapAlarm = onTapAlarm)
-                        }
-                        Spacer(Modifier.width(Tokens.Small))
+                        AlarmBadgeBlock(
+                            alarm = alarm,
+                            onTapAlarm = onTapAlarm,
+                            modifier = Modifier
+                                .weight(1f)
+                                .fillMaxHeight(),
+                        )
+                        Spacer(Modifier.width(Tokens.Row))
                         telemetryGaugesContent()
                     }
                 }
@@ -1219,8 +1232,8 @@ fun CockpitMasterWidgetCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("cockpit-widget-controls-row"),
-                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
-                        verticalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Row),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Row),
                     ) {
                         controlsContent(Modifier.widthIn(min = Tokens.Cockpit.PillMinWidth / 2))
                     }
@@ -1229,7 +1242,7 @@ fun CockpitMasterWidgetCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("cockpit-widget-controls-row"),
-                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Row),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         controlsContent(Modifier.weight(1f))
@@ -1260,7 +1273,7 @@ fun CockpitMasterWidgetCard(
                                     .fillMaxWidth()
                                     .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny),
                                 horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
-                                verticalAlignment = Alignment.CenterVertically,
+                                verticalAlignment = Alignment.Top,
                             ) {
                                 if (paged) {
                                     HudPagerArrow(
@@ -1284,7 +1297,7 @@ fun CockpitMasterWidgetCard(
                                     Row(
                                         modifier = Modifier.weight(1f),
                                         horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
-                                        verticalAlignment = Alignment.CenterVertically,
+                                        verticalAlignment = Alignment.Top,
                                     ) {
                                         pagedApps.forEach { app ->
                                             HudPinnedAppDockItem(
@@ -1376,15 +1389,15 @@ private fun HudControlTileButton(
             modifier = Modifier.matchParentSize(),
         )
         Column(
-            modifier = Modifier.padding(horizontal = Tokens.Tiny, vertical = Tokens.Tiny),
+            modifier = Modifier.padding(horizontal = Tokens.Tiny, vertical = Tokens.Snug),
             horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.Center,
+            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny, Alignment.CenterVertically),
         ) {
             Icon(
                 painter = painter,
                 contentDescription = null,
                 tint = fg,
-                modifier = Modifier.size(Tokens.IconSmall),
+                modifier = Modifier.size(Tokens.Cockpit.HudControlIconSize),
             )
             Text(
                 text = label,
@@ -1439,15 +1452,16 @@ private fun ClockHeroBlock(timeLabel: String, dateLabel: String) {
 private fun AlarmBadgeBlock(
     alarm: NextAlarmUiModel,
     onTapAlarm: () -> Unit,
+    modifier: Modifier = Modifier,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .defaultMinSize(minHeight = Tokens.TouchTarget)
             .clip(Tokens.ThumbShape)
             .background(GlassPalette.HudTileRecessed)
             .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.ThumbShape)
             .clickable(role = Role.Button, onClickLabel = "Open Google Clock alarms", onClick = onTapAlarm)
-            .padding(horizontal = Tokens.Small, vertical = Tokens.Snug)
+            .padding(horizontal = Tokens.Row, vertical = Tokens.Small)
             .testTag("cockpit-widget-alarm-pill"),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center,
@@ -1554,13 +1568,20 @@ private fun HudPagerArrow(glyph: String, label: String, tag: String, onClick: ()
             .clip(CircleShape)
             .clickable(role = Role.Button, onClickLabel = label, onClick = onClick)
             .testTag(tag),
-        contentAlignment = Alignment.Center,
+        contentAlignment = Alignment.TopCenter,
     ) {
-        Text(
-            text = glyph,
-            style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
-            color = GlassPalette.HudElectricCyan,
-        )
+        Box(
+            modifier = Modifier
+                .padding(top = Tokens.Tiny)
+                .height(Tokens.Cockpit.HudDockIconHaloSize),
+            contentAlignment = Alignment.Center,
+        ) {
+            Text(
+                text = glyph,
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = GlassPalette.HudElectricCyan,
+            )
+        }
     }
 }
 
@@ -1568,7 +1589,7 @@ private fun HudPagerArrow(glyph: String, label: String, tag: String, onClick: ()
 private fun HudPagerDots(count: Int, current: Int) {
     Row(
         modifier = Modifier
-            .padding(bottom = Tokens.Tiny)
+            .padding(top = Tokens.Tiny, bottom = Tokens.Small)
             .testTag("cockpit-widget-pinned-dots"),
         horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPagerDotGap),
         verticalAlignment = Alignment.CenterVertically,

@@ -64,16 +64,24 @@ enum class WidgetSizeVariant(
     ),
     NORMAL(
         layoutResId = R.layout.cockpit_widget_master,
-        gaugeSizeDp = 44f,
-        tileHeightDp = 42f,
+        gaugeSizeDp = 38f,
+        tileHeightDp = 44f,
         showAppLabels = true,
         showExtendedTelemetry = true,
         showTallNetworkRow = false,
     ),
     TALL(
         layoutResId = R.layout.cockpit_widget_tall,
-        gaugeSizeDp = 56f,
+        gaugeSizeDp = 44f,
         tileHeightDp = 48f,
+        showAppLabels = true,
+        showExtendedTelemetry = true,
+        showTallNetworkRow = true,
+    ),
+    EXPANDED(
+        layoutResId = R.layout.cockpit_widget_expanded,
+        gaugeSizeDp = 64f,
+        tileHeightDp = 54f,
         showAppLabels = true,
         showExtendedTelemetry = true,
         showTallNetworkRow = true,
@@ -224,12 +232,15 @@ class CockpitGlanceWidget {
         internal const val COMPACT_MIN_HEIGHT_DP = 110f
         internal const val NORMAL_MIN_HEIGHT_DP = 200f
         internal const val TALL_MIN_HEIGHT_DP = 280f
+        internal const val EXPANDED_MIN_WIDTH_DP = 336f
+        internal const val EXPANDED_MIN_HEIGHT_DP = 368f
 
         /** Maps launcher widget bounds in dp to its responsive [WidgetSizeVariant]. */
         fun selectWidgetSizeVariant(widthDp: Float, heightDp: Float): WidgetSizeVariant = when {
             heightDp < NORMAL_MIN_HEIGHT_DP -> WidgetSizeVariant.COMPACT
-            heightDp >= TALL_MIN_HEIGHT_DP -> WidgetSizeVariant.TALL
-            else -> WidgetSizeVariant.NORMAL
+            heightDp < TALL_MIN_HEIGHT_DP -> WidgetSizeVariant.NORMAL
+            widthDp >= EXPANDED_MIN_WIDTH_DP && heightDp >= EXPANDED_MIN_HEIGHT_DP -> WidgetSizeVariant.EXPANDED
+            else -> WidgetSizeVariant.TALL
         }
 
         /** Formats live network connection + throughput for the Tall home screen widget row. */
@@ -243,12 +254,14 @@ class CockpitGlanceWidget {
             compact: RemoteViews,
             normal: RemoteViews,
             tall: RemoteViews,
+            expanded: RemoteViews,
         ): RemoteViews = if (Build.VERSION.SDK_INT >= 31) {
             RemoteViews(
                 mapOf(
                     SizeF(COMPACT_MIN_WIDTH_DP, COMPACT_MIN_HEIGHT_DP) to compact,
                     SizeF(COMPACT_MIN_WIDTH_DP, NORMAL_MIN_HEIGHT_DP) to normal,
                     SizeF(COMPACT_MIN_WIDTH_DP, TALL_MIN_HEIGHT_DP) to tall,
+                    SizeF(EXPANDED_MIN_WIDTH_DP, EXPANDED_MIN_HEIGHT_DP) to expanded,
                 ),
             )
         } else {
@@ -512,6 +525,7 @@ class CockpitGlanceWidget {
                     compact = render(WidgetSizeVariant.COMPACT),
                     normal = render(WidgetSizeVariant.NORMAL),
                     tall = render(WidgetSizeVariant.TALL),
+                    expanded = render(WidgetSizeVariant.EXPANDED),
                 )
             } else {
                 render(WidgetSizeVariant.NORMAL)
@@ -523,6 +537,7 @@ class CockpitGlanceWidget {
                 compact = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.COMPACT),
                 normal = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.NORMAL),
                 tall = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.TALL),
+                expanded = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.EXPANDED),
             )
         } else {
             buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.NORMAL)
@@ -611,6 +626,7 @@ class CockpitGlanceWidget {
                     compact = partialFor(WidgetSizeVariant.COMPACT),
                     normal = partialFor(WidgetSizeVariant.NORMAL),
                     tall = partialFor(WidgetSizeVariant.TALL),
+                    expanded = partialFor(WidgetSizeVariant.EXPANDED),
                 )
             } else {
                 partialFor(WidgetSizeVariant.NORMAL)
@@ -644,6 +660,7 @@ class CockpitGlanceWidget {
                     compact = partialFor(WidgetSizeVariant.COMPACT),
                     normal = partialFor(WidgetSizeVariant.NORMAL),
                     tall = partialFor(WidgetSizeVariant.TALL),
+                    expanded = partialFor(WidgetSizeVariant.EXPANDED),
                 )
             } else {
                 partialFor(WidgetSizeVariant.NORMAL)
@@ -670,6 +687,7 @@ class CockpitGlanceWidget {
                     compact = partialFor(WidgetSizeVariant.COMPACT),
                     normal = partialFor(WidgetSizeVariant.NORMAL),
                     tall = partialFor(WidgetSizeVariant.TALL),
+                    expanded = partialFor(WidgetSizeVariant.EXPANDED),
                 )
             } else {
                 partialFor(WidgetSizeVariant.NORMAL)
@@ -793,6 +811,7 @@ class CockpitGlanceWidget {
                 WidgetSizeVariant.COMPACT -> 144f
                 WidgetSizeVariant.NORMAL -> 228f
                 WidgetSizeVariant.TALL -> 320f
+                WidgetSizeVariant.EXPANDED -> 390f
             }
             val shellBmp = CockpitHudBitmapRenderer.renderShellBitmap(
                 widthPx = (340f * density).toInt(),
@@ -930,9 +949,15 @@ class CockpitGlanceWidget {
                 views.setViewVisibility(R.id.cockpit_widget_dock_container, View.GONE)
             } else {
                 views.setViewVisibility(R.id.cockpit_widget_dock_container, View.VISIBLE)
+                val dockHeightDp = when (variant) {
+                    WidgetSizeVariant.COMPACT -> 34f
+                    WidgetSizeVariant.NORMAL -> 60f
+                    WidgetSizeVariant.TALL -> 64f
+                    WidgetSizeVariant.EXPANDED -> 72f
+                }
                 val trayBmp = CockpitHudBitmapRenderer.renderDockTrayBitmap(
                     widthPx = (312f * density).toInt(),
-                    heightPx = (56f * density).toInt(),
+                    heightPx = (dockHeightDp * density).toInt(),
                     density = density,
                 )
                 views.setImageViewBitmap(R.id.cockpit_widget_dock_bg, trayBmp)
