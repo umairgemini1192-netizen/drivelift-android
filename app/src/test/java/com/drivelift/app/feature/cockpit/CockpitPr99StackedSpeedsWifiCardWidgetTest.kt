@@ -855,8 +855,11 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         val incomingCall = CockpitLiveActivity.CallActivity(
             id = "call:incoming",
             callerName = "Alex",
+            sourceLabel = "Phone",
+            isVideo = false,
             state = CallState.INCOMING,
             startedAtMs = 1_000L,
+            packageName = "com.google.android.dialer",
         )
         val activeNav = CockpitLiveActivity.MapsNavActivity(
             id = "nav:active",
