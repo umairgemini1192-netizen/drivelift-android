@@ -6,8 +6,10 @@ import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitStateCoordinator
 import com.drivelift.app.feature.desktopdrop.controller.DesktopDropController
 import com.drivelift.app.feature.desktopdrop.model.DesktopDropSnapshot
+import com.drivelift.app.feature.desktopdrop.model.DropTransferStatus
 import com.drivelift.app.feature.desktopdrop.model.PeerApprovalStatus
 import com.drivelift.app.feature.desktopdrop.model.ServerStatus
+import com.drivelift.app.feature.desktopdrop.model.TransferDirection
 import com.drivelift.app.transfer.LiveProgress
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -24,6 +26,12 @@ data class DriveLiftTelemetrySummary(
     val connectedPeerName: String? = null,
     val desktopDropSpeedBytesPerSec: Long = 0L,
     val desktopDropActiveCount: Int = 0,
+    val desktopDropUrl: String? = null,
+    val desktopDropPairingCode: String? = null,
+    val desktopDropUploadBytesPerSec: Long = 0L,
+    val desktopDropDownloadBytesPerSec: Long = 0L,
+    val desktopDropSentCount: Int = 0,
+    val desktopDropReceivedCount: Int = 0,
     val uploadPhase: LiveProgress.Phase = LiveProgress.Phase.IDLE,
     val uploadFileName: String = "",
     val uploadFraction: Float = 0f,
@@ -109,12 +117,34 @@ class DriveLiftTelemetryAdapter(
         val dropAvailable = dropRunning ||
             dropSnap.mode == com.drivelift.app.feature.desktopdrop.model.ConnectivityMode.DIRECT_HOTSPOT ||
             dropSnap.status != ServerStatus.ERROR
+        val pairingCode = dropSnap.pendingApproval?.matchCode?.takeIf { it.isNotBlank() }
+            ?: dropSnap.peers.firstOrNull { it.status == PeerApprovalStatus.APPROVED }
+                ?.matchCode?.takeIf { it.isNotBlank() }
+        val dropUploadSpeed = dropSnap.transfers
+            .filter { it.status == DropTransferStatus.ACTIVE && it.direction == TransferDirection.PHONE_TO_PC }
+            .sumOf { it.speedBytesPerSec }
+        val dropDownloadSpeed = dropSnap.transfers
+            .filter { it.status == DropTransferStatus.ACTIVE && it.direction == TransferDirection.PC_TO_PHONE }
+            .sumOf { it.speedBytesPerSec }
+        val sentCount = dropSnap.transfers.count {
+            it.status == DropTransferStatus.COMPLETED && it.direction == TransferDirection.PHONE_TO_PC
+        }
+        val receivedCount = dropSnap.transfers.count {
+            it.status == DropTransferStatus.COMPLETED && it.direction == TransferDirection.PC_TO_PHONE
+        }
         return DriveLiftTelemetrySummary(
             isDesktopDropRunning = dropRunning,
             isDropAvailable = dropAvailable,
             connectedPeerName = peerName,
             desktopDropSpeedBytesPerSec = dropSnap.aggregateSpeedBytesPerSec,
             desktopDropActiveCount = dropSnap.activeTransferCount,
+            desktopDropUrl = dropSnap.dropUrl?.takeIf { it.isNotBlank() }
+                ?: dropSnap.bookmarkUrl?.takeIf { it.isNotBlank() },
+            desktopDropPairingCode = pairingCode,
+            desktopDropUploadBytesPerSec = dropUploadSpeed,
+            desktopDropDownloadBytesPerSec = dropDownloadSpeed,
+            desktopDropSentCount = sentCount,
+            desktopDropReceivedCount = receivedCount,
             uploadPhase = live.phase,
             uploadFileName = live.name,
             uploadFraction = uploadFraction,

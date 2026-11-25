@@ -20,6 +20,7 @@ import android.os.Looper
 import android.os.StatFs
 import android.os.SystemClock
 import android.provider.AlarmClock
+import android.util.SizeF
 import android.view.View
 import android.widget.RemoteViews
 import android.widget.Toast
@@ -29,6 +30,9 @@ import com.drivelift.app.Graph
 import com.drivelift.app.R
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
+import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsController
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmFormatter
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.hardware.TelemetryHudSnapshot
@@ -40,6 +44,41 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+
+/** Responsive size bucket for the Home Screen Master Widget (Android 12+ SizeF mapping). */
+enum class WidgetSizeVariant(
+    val layoutResId: Int,
+    val gaugeSizeDp: Float,
+    val tileHeightDp: Float,
+    val showAppLabels: Boolean,
+    val showExtendedTelemetry: Boolean,
+    val showTallNetworkRow: Boolean,
+) {
+    COMPACT(
+        layoutResId = R.layout.cockpit_widget_compact,
+        gaugeSizeDp = 38f,
+        tileHeightDp = 32f,
+        showAppLabels = false,
+        showExtendedTelemetry = false,
+        showTallNetworkRow = false,
+    ),
+    NORMAL(
+        layoutResId = R.layout.cockpit_widget_master,
+        gaugeSizeDp = 48f,
+        tileHeightDp = 42f,
+        showAppLabels = true,
+        showExtendedTelemetry = true,
+        showTallNetworkRow = false,
+    ),
+    TALL(
+        layoutResId = R.layout.cockpit_widget_tall,
+        gaugeSizeDp = 56f,
+        tileHeightDp = 48f,
+        showAppLabels = true,
+        showExtendedTelemetry = true,
+        showTallNetworkRow = true,
+    ),
+}
 
 data class BatteryHudMetric(
     val percent: Int,
@@ -139,6 +178,41 @@ class CockpitGlanceWidget {
         private const val WIDGET_PREFS = "cockpit_widget_state"
         private const val KEY_PINNED_PAGE_PREFIX = "pinned_page_"
         private const val KEY_DROP_LIVE_OVERRIDE = "drop_live_override"
+
+        internal const val COMPACT_MIN_WIDTH_DP = 180f
+        internal const val COMPACT_MIN_HEIGHT_DP = 110f
+        internal const val NORMAL_MIN_HEIGHT_DP = 200f
+        internal const val TALL_MIN_HEIGHT_DP = 280f
+
+        /** Maps launcher widget bounds in dp to its responsive [WidgetSizeVariant]. */
+        fun selectWidgetSizeVariant(widthDp: Float, heightDp: Float): WidgetSizeVariant = when {
+            heightDp < NORMAL_MIN_HEIGHT_DP -> WidgetSizeVariant.COMPACT
+            heightDp >= TALL_MIN_HEIGHT_DP -> WidgetSizeVariant.TALL
+            else -> WidgetSizeVariant.NORMAL
+        }
+
+        /** Formats live network connection + throughput for the Tall home screen widget row. */
+        fun formatWidgetNetworkSpeed(snapshot: IdleNetworkSnapshot): String = when {
+            snapshot.kind == IdleNetworkKind.OFFLINE -> "Offline"
+            !snapshot.hasActiveTraffic -> "${snapshot.label} \u00B7 Idle"
+            else -> "${snapshot.label} \u00B7 Up ${snapshot.uploadText} \u00B7 Down ${snapshot.downloadText}"
+        }
+
+        private fun wrapResponsiveRemoteViews(
+            compact: RemoteViews,
+            normal: RemoteViews,
+            tall: RemoteViews,
+        ): RemoteViews = if (Build.VERSION.SDK_INT >= 31) {
+            RemoteViews(
+                mapOf(
+                    SizeF(COMPACT_MIN_WIDTH_DP, COMPACT_MIN_HEIGHT_DP) to compact,
+                    SizeF(COMPACT_MIN_WIDTH_DP, NORMAL_MIN_HEIGHT_DP) to normal,
+                    SizeF(COMPACT_MIN_WIDTH_DP, TALL_MIN_HEIGHT_DP) to tall,
+                ),
+            )
+        } else {
+            normal
+        }
 
         private val APP_CONTAINER_IDS = intArrayOf(
             R.id.cockpit_widget_app_0,
@@ -343,6 +417,8 @@ class CockpitGlanceWidget {
             )
             val battery = readBatteryMetric(context)
             val ram = readRamMetric(context)
+            val network = cockpit.telemetryMonitor.network.value
+            val todayDataLabel = CockpitQuickControlsController.readTodayMobileDataLabel(context)
 
             val allPinned = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
             val pageCount = CockpitWidgetModel.pageCount(allPinned.size)
@@ -350,7 +426,7 @@ class CockpitGlanceWidget {
             val pinnedPage = CockpitWidgetModel.wrapPage(rawPage, pageCount)
             val pinnedApps = CockpitWidgetModel.pageSlice(allPinned, pinnedPage)
 
-            return renderMasterRemoteViews(
+            fun render(variant: WidgetSizeVariant) = renderMasterRemoteViews(
                 context = context,
                 appWidgetId = appWidgetId,
                 alarm = alarm,
@@ -365,10 +441,36 @@ class CockpitGlanceWidget {
                 pinnedPageIndex = pinnedPage,
                 pinnedPageCount = pageCount,
                 attachPendingIntents = true,
+                variant = variant,
+                networkSpeedLabel = formatWidgetNetworkSpeed(network),
+                todayDataLabel = todayDataLabel,
             )
+
+            return if (Build.VERSION.SDK_INT >= 31) {
+                wrapResponsiveRemoteViews(
+                    compact = render(WidgetSizeVariant.COMPACT),
+                    normal = render(WidgetSizeVariant.NORMAL),
+                    tall = render(WidgetSizeVariant.TALL),
+                )
+            } else {
+                render(WidgetSizeVariant.NORMAL)
+            }
         }
 
-        fun buildPreviewRemoteViews(context: Context): RemoteViews {
+        fun buildPreviewRemoteViews(context: Context): RemoteViews = if (Build.VERSION.SDK_INT >= 31) {
+            wrapResponsiveRemoteViews(
+                compact = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.COMPACT),
+                normal = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.NORMAL),
+                tall = buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.TALL),
+            )
+        } else {
+            buildPreviewRemoteViewsForVariant(context, WidgetSizeVariant.NORMAL)
+        }
+
+        internal fun buildPreviewRemoteViewsForVariant(
+            context: Context,
+            variant: WidgetSizeVariant,
+        ): RemoteViews {
             val nowMs = System.currentTimeMillis()
             val previewAlarm = NextAlarmFormatter.formatNextAlarm(
                 triggerAtMillis = nowMs + 24_045_000L,
@@ -397,6 +499,12 @@ class CockpitGlanceWidget {
                 PinnedAppInfo("com.google.android.deskclock", "Clock"),
                 PinnedAppInfo("com.google.android.apps.photos", "Photos"),
             )
+            val previewNet = IdleNetworkSnapshot(
+                kind = IdleNetworkKind.WIFI,
+                label = "Wi-Fi",
+                uploadBytesPerSec = 12L * 1024L,
+                downloadBytesPerSec = (1.4 * 1024 * 1024).toLong(),
+            )
             return renderMasterRemoteViews(
                 context = context,
                 appWidgetId = AppWidgetManager.INVALID_APPWIDGET_ID,
@@ -412,6 +520,9 @@ class CockpitGlanceWidget {
                 pinnedPageIndex = 0,
                 pinnedPageCount = CockpitWidgetModel.pageCount(previewPinnedAll.size),
                 attachPendingIntents = false,
+                variant = variant,
+                networkSpeedLabel = formatWidgetNetworkSpeed(previewNet),
+                todayDataLabel = "Today 420 MB",
             )
         }
 
@@ -420,10 +531,21 @@ class CockpitGlanceWidget {
             battery: BatteryHudMetric,
             ram: RamHudMetric,
         ): RemoteViews {
-            val views = RemoteViews(context.packageName, R.layout.cockpit_widget_master)
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
-            applyTelemetryToRemoteViews(views, context, battery, ram, density)
-            return views
+            fun partialFor(variant: WidgetSizeVariant): RemoteViews {
+                val views = RemoteViews(context.packageName, variant.layoutResId)
+                applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
+                return views
+            }
+            return if (Build.VERSION.SDK_INT >= 31) {
+                wrapResponsiveRemoteViews(
+                    compact = partialFor(WidgetSizeVariant.COMPACT),
+                    normal = partialFor(WidgetSizeVariant.NORMAL),
+                    tall = partialFor(WidgetSizeVariant.TALL),
+                )
+            } else {
+                partialFor(WidgetSizeVariant.NORMAL)
+            }
         }
 
         /**
@@ -434,15 +556,27 @@ class CockpitGlanceWidget {
             context: Context,
             battery: BatteryHudMetric,
         ): RemoteViews {
-            val views = RemoteViews(context.packageName, R.layout.cockpit_widget_master)
-            applyBatteryCurrentToRemoteViews(views, context, battery)
-            return views
+            fun partialFor(variant: WidgetSizeVariant): RemoteViews {
+                val views = RemoteViews(context.packageName, variant.layoutResId)
+                applyBatteryCurrentToRemoteViews(views, context, battery, variant)
+                return views
+            }
+            return if (Build.VERSION.SDK_INT >= 31) {
+                wrapResponsiveRemoteViews(
+                    compact = partialFor(WidgetSizeVariant.COMPACT),
+                    normal = partialFor(WidgetSizeVariant.NORMAL),
+                    tall = partialFor(WidgetSizeVariant.TALL),
+                )
+            } else {
+                partialFor(WidgetSizeVariant.NORMAL)
+            }
         }
 
         private fun applyBatteryCurrentToRemoteViews(
             views: RemoteViews,
             context: Context,
             battery: BatteryHudMetric,
+            variant: WidgetSizeVariant = WidgetSizeVariant.NORMAL,
         ) {
             views.setTextViewText(R.id.cockpit_widget_battery_current, battery.current.text)
             val currentColor = when (battery.current.tone) {
@@ -453,9 +587,13 @@ class CockpitGlanceWidget {
             views.setTextColor(R.id.cockpit_widget_battery_current, currentColor)
             views.setContentDescription(R.id.cockpit_widget_battery_current, "Battery current ${battery.current.text}")
 
-            views.setViewVisibility(R.id.cockpit_widget_battery_charge, View.VISIBLE)
-            views.setTextViewText(R.id.cockpit_widget_battery_charge, battery.charge.text)
-            views.setContentDescription(R.id.cockpit_widget_battery_charge, "Battery charge ${battery.charge.text}")
+            if (variant.showExtendedTelemetry) {
+                views.setViewVisibility(R.id.cockpit_widget_battery_charge, View.VISIBLE)
+                views.setTextViewText(R.id.cockpit_widget_battery_charge, battery.charge.text)
+                views.setContentDescription(R.id.cockpit_widget_battery_charge, "Battery charge ${battery.charge.text}")
+            } else {
+                views.setViewVisibility(R.id.cockpit_widget_battery_charge, View.GONE)
+            }
         }
 
         private fun applyTelemetryToRemoteViews(
@@ -464,8 +602,9 @@ class CockpitGlanceWidget {
             battery: BatteryHudMetric,
             ram: RamHudMetric,
             density: Float,
+            variant: WidgetSizeVariant = WidgetSizeVariant.NORMAL,
         ) {
-            val gaugePx = (56f * density).toInt()
+            val gaugePx = (variant.gaugeSizeDp * density).toInt()
             val batteryBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
                 sizePx = gaugePx,
                 fraction = battery.fraction,
@@ -486,12 +625,17 @@ class CockpitGlanceWidget {
 
             views.setImageViewBitmap(R.id.cockpit_widget_battery_gauge, batteryBmp)
             views.setContentDescription(R.id.cockpit_widget_battery_gauge, "Battery ${battery.valueText}")
-            applyBatteryCurrentToRemoteViews(views, context, battery)
+            applyBatteryCurrentToRemoteViews(views, context, battery, variant)
 
             views.setImageViewBitmap(R.id.cockpit_widget_ram_gauge, ramBmp)
             views.setContentDescription(R.id.cockpit_widget_ram_gauge, "RAM ${ram.valueText}")
             views.setTextViewText(R.id.cockpit_widget_ram_used, ram.valueText)
-            views.setTextViewText(R.id.cockpit_widget_ram_free, ram.freeText)
+            if (variant.showExtendedTelemetry) {
+                views.setViewVisibility(R.id.cockpit_widget_ram_free, View.VISIBLE)
+                views.setTextViewText(R.id.cockpit_widget_ram_free, ram.freeText)
+            } else {
+                views.setViewVisibility(R.id.cockpit_widget_ram_free, View.GONE)
+            }
         }
 
         private fun renderMasterRemoteViews(
@@ -509,13 +653,21 @@ class CockpitGlanceWidget {
             pinnedPageIndex: Int,
             pinnedPageCount: Int,
             attachPendingIntents: Boolean,
+            variant: WidgetSizeVariant = WidgetSizeVariant.NORMAL,
+            networkSpeedLabel: String = "Wi-Fi \u00B7 Idle",
+            todayDataLabel: String = "Today --",
         ): RemoteViews {
-            val views = RemoteViews(context.packageName, R.layout.cockpit_widget_master)
+            val views = RemoteViews(context.packageName, variant.layoutResId)
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
 
+            val shellHeightDp = when (variant) {
+                WidgetSizeVariant.COMPACT -> 144f
+                WidgetSizeVariant.NORMAL -> 228f
+                WidgetSizeVariant.TALL -> 320f
+            }
             val shellBmp = CockpitHudBitmapRenderer.renderShellBitmap(
                 widthPx = (340f * density).toInt(),
-                heightPx = (228f * density).toInt(),
+                heightPx = (shellHeightDp * density).toInt(),
                 cornerRadiusDp = 26f,
                 density = density,
             )
@@ -526,29 +678,34 @@ class CockpitGlanceWidget {
                 R.id.cockpit_alarm_time_text,
                 if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
             )
-            when {
-                alarm.hasAlarm &&
-                    alarm.countdownMode == AlarmCountdownMode.CHRONOMETER_UNDER_24H &&
-                    alarm.triggerAtMillis != null -> {
-                    val remainingMs = (alarm.triggerAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
-                    val baseElapsed = SystemClock.elapsedRealtime() + remainingMs
-                    views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.VISIBLE)
-                    views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
-                    views.setChronometerCountDown(R.id.cockpit_alarm_chronometer, true)
-                    views.setChronometer(R.id.cockpit_alarm_chronometer, baseElapsed, "Rings in %s", true)
+            if (variant.showExtendedTelemetry) {
+                when {
+                    alarm.hasAlarm &&
+                        alarm.countdownMode == AlarmCountdownMode.CHRONOMETER_UNDER_24H &&
+                        alarm.triggerAtMillis != null -> {
+                        val remainingMs = (alarm.triggerAtMillis - System.currentTimeMillis()).coerceAtLeast(0L)
+                        val baseElapsed = SystemClock.elapsedRealtime() + remainingMs
+                        views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.VISIBLE)
+                        views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
+                        views.setChronometerCountDown(R.id.cockpit_alarm_chronometer, true)
+                        views.setChronometer(R.id.cockpit_alarm_chronometer, baseElapsed, "Rings in %s", true)
+                    }
+                    alarm.hasAlarm -> {
+                        views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
+                        views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.VISIBLE)
+                        views.setTextViewText(R.id.cockpit_alarm_static_countdown, alarm.countdownText)
+                    }
+                    else -> {
+                        views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
+                        views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
+                    }
                 }
-                alarm.hasAlarm -> {
-                    views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
-                    views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.VISIBLE)
-                    views.setTextViewText(R.id.cockpit_alarm_static_countdown, alarm.countdownText)
-                }
-                else -> {
-                    views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
-                    views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
-                }
+            } else {
+                views.setViewVisibility(R.id.cockpit_alarm_chronometer, View.GONE)
+                views.setViewVisibility(R.id.cockpit_alarm_static_countdown, View.GONE)
             }
 
-            // Status pill (Zone 2)
+            // Status pill aligned on the clock row
             val statusPill = CockpitWidgetModel.statusPill(dropLive = dropLive, torchOn = torchOn)
             val (statusBg, statusColor) = when (statusPill.tone) {
                 WidgetStatusTone.READY -> R.drawable.cockpit_widget_status_ready_bg to GlassPalette.SuccessGreen.toArgb()
@@ -561,13 +718,19 @@ class CockpitGlanceWidget {
             views.setTextColor(R.id.cockpit_widget_status_text, statusColor)
 
             // Dual telemetry gauges + readouts (Zone 2)
-            applyTelemetryToRemoteViews(views, context, battery, ram, density)
+            applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
+
+            // Tall-only extra row: live network speed + today's mobile data
+            if (variant.showTallNetworkRow) {
+                views.setTextViewText(R.id.cockpit_widget_net_speed, networkSpeedLabel)
+                views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
+            }
 
             // Sculptural control deck (Zone 3)
             val primaryColor = ContextCompat.getColor(context, R.color.cockpit_on_surface)
             val disabledColor = ContextCompat.getColor(context, R.color.cockpit_on_surface_variant)
             val tileW = (104f * density).toInt()
-            val tileH = (48f * density).toInt()
+            val tileH = (variant.tileHeightDp * density).toInt()
 
             val dropTile = CockpitWidgetModel.dropTile(dropLive = dropLive, available = dropAvailable)
             val dropBmp = CockpitHudBitmapRenderer.renderControlTileBitmap(
@@ -648,9 +811,12 @@ class CockpitGlanceWidget {
                 val paged = pinnedPageCount > 1
                 views.setViewVisibility(R.id.cockpit_widget_btn_prev, if (paged) View.VISIBLE else View.GONE)
                 views.setViewVisibility(R.id.cockpit_widget_btn_next, if (paged) View.VISIBLE else View.GONE)
-                views.setViewVisibility(R.id.cockpit_widget_pager_dots_row, if (paged) View.VISIBLE else View.GONE)
+                views.setViewVisibility(
+                    R.id.cockpit_widget_pager_dots_row,
+                    if (paged && variant.showAppLabels) View.VISIBLE else View.GONE,
+                )
 
-                if (paged) {
+                if (paged && variant.showAppLabels) {
                     val activeDotColor = GlassPalette.PrimaryCyan.toArgb()
                     for (dotIdx in PAGER_DOT_IDS.indices) {
                         if (dotIdx < pinnedPageCount) {
@@ -666,7 +832,7 @@ class CockpitGlanceWidget {
                     }
                 }
 
-                val haloPx = (28f * density).toInt()
+                val haloPx = ((if (variant.showAppLabels) 28f else 24f) * density).toInt()
                 for (slotIndex in APP_CONTAINER_IDS.indices) {
                     val app = pinnedApps.getOrNull(slotIndex)
                     if (app == null) {
@@ -681,6 +847,10 @@ class CockpitGlanceWidget {
                         )
                         views.setImageViewBitmap(APP_ICON_IDS[slotIndex], haloBmp)
                         views.setTextViewText(APP_LABEL_IDS[slotIndex], app.label)
+                        views.setViewVisibility(
+                            APP_LABEL_IDS[slotIndex],
+                            if (variant.showAppLabels) View.VISIBLE else View.GONE,
+                        )
                         views.setContentDescription(APP_CONTAINER_IDS[slotIndex], "Open ${app.label}")
                         if (attachPendingIntents) {
                             views.setOnClickPendingIntent(

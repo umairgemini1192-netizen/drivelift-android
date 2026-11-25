@@ -192,9 +192,15 @@ object Tokens {
         val HudPagerArrowWidth = 26.dp
         val HudPagerDotGap = 3.dp
         val IdleSpeedArrow = 12.dp
+        val IdleStackedSpeedArrow = 8.dp
         val IdleRateCharWidth = 7.dp
+        val IdleStackedRateCharWidth = 6.dp
+        val IdleStackedRateTextSize = 10.sp
+        val IdleStackedRateLineHeight = 11.sp
         val IdleCompactLabelWidth = 29.dp
         val IdleLabelWidth = 42.dp
+        val WifiSsidMarqueeVelocity = 24.dp
+        val PinnedScrollFadeWidth = 28.dp
         val NavProgressHairline = 2.dp
         val NavTripTextSize = 11.sp
         val WidgetClockTextSize = 34.sp

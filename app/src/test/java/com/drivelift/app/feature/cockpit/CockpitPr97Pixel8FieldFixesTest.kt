@@ -46,6 +46,7 @@ import kotlinx.coroutines.test.TestScope
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
+import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -55,6 +56,7 @@ import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.RuntimeEnvironment
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.GraphicsMode
 
@@ -82,7 +84,15 @@ class CockpitPr97Pixel8FieldFixesTest {
 
     @Before
     fun setUp() {
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
+        RuntimeEnvironment.setFontScale(1f)
         WorkManagerTestInitHelper.initializeTestWorkManager(app)
+    }
+
+    @After
+    fun tearDown() {
+        RuntimeEnvironment.setFontScale(1f)
+        RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
     }
 
     // ------------------------------------------------------------------ 1. Idle pill cutout zones
@@ -125,9 +135,9 @@ class CockpitPr97Pixel8FieldFixesTest {
         assertTrue(oneSpeed.rightZoneWidthDp >= IdlePillLayoutMath.singleSpeedFigureWidthDp())
         assertTrue(oneSpeed.totalContentWidthDp <= 200.01f)
 
-        // 2 speed figures beside a 34dp cutout (75dp right zone < 88dp needed for two 4-char figures):
-        // falls back to showing only the larger direction rather than overlapping the punch-hole.
-        val twoSpeedsDownloadLarger = IdlePillLayoutMath.compute(
+        // 2 speed figures beside Pixel 8 Pro 34dp cutout (75dp right zone):
+        // Stacked layout needs only single compact figure width, so BOTH speeds fit at 1.0x and 1.3x!
+        val twoSpeedsAt1x = IdlePillLayoutMath.compute(
             maxContentWidthDp = 200f,
             minContentWidthDp = 124f,
             measuredCutoutWidthDp = 34f,
@@ -136,13 +146,53 @@ class CockpitPr97Pixel8FieldFixesTest {
             hasDownloadTraffic = true,
             uploadBytesPerSec = 120_000L,
             downloadBytesPerSec = 4_800_000L,
+            fontScale = 1.0f,
         )
-        assertEquals(50f, twoSpeedsDownloadLarger.centerGapDp, 0.01f)
-        assertEquals(twoSpeedsDownloadLarger.leftZoneWidthDp, twoSpeedsDownloadLarger.rightZoneWidthDp, 0.01f)
-        assertEquals(IdleSpeedDisplayMode.DOWNLOAD_ONLY, twoSpeedsDownloadLarger.speedDisplayMode)
-        assertTrue(twoSpeedsDownloadLarger.totalContentWidthDp <= 200.01f)
+        assertEquals(50f, twoSpeedsAt1x.centerGapDp, 0.01f)
+        assertEquals(twoSpeedsAt1x.leftZoneWidthDp, twoSpeedsAt1x.rightZoneWidthDp, 0.01f)
+        assertEquals(IdleSpeedDisplayMode.BOTH, twoSpeedsAt1x.speedDisplayMode)
+        assertTrue(twoSpeedsAt1x.isStacked)
+        assertTrue(twoSpeedsAt1x.totalContentWidthDp <= 200.01f)
 
-        val twoSpeedsUploadLarger = IdlePillLayoutMath.compute(
+        val twoSpeedsAt1_3x = IdlePillLayoutMath.compute(
+            maxContentWidthDp = 200f,
+            minContentWidthDp = 124f,
+            measuredCutoutWidthDp = 34f,
+            cutoutWidthDeltaDp = 0f,
+            hasUploadTraffic = true,
+            hasDownloadTraffic = true,
+            uploadBytesPerSec = 120_000L,
+            downloadBytesPerSec = 4_800_000L,
+            fontScale = 1.3f,
+        )
+        assertEquals(50f, twoSpeedsAt1_3x.centerGapDp, 0.01f)
+        assertEquals(twoSpeedsAt1_3x.leftZoneWidthDp, twoSpeedsAt1_3x.rightZoneWidthDp, 0.01f)
+        assertEquals(IdleSpeedDisplayMode.BOTH, twoSpeedsAt1_3x.speedDisplayMode)
+        assertTrue(twoSpeedsAt1_3x.isStacked)
+        assertTrue(twoSpeedsAt1_3x.totalContentWidthDp <= 200.01f)
+
+        // At extreme font scale (2.0x), two stacked lines would exceed PillHeight vertically, so it
+        // degrades cleanly to the larger single direction rather than overlapping, and drops the
+        // connection text label first while keeping speeds visible (never NONE while traffic exists).
+        val extremeDownloadLarger = IdlePillLayoutMath.compute(
+            maxContentWidthDp = 200f,
+            minContentWidthDp = 124f,
+            measuredCutoutWidthDp = 34f,
+            cutoutWidthDeltaDp = 0f,
+            hasUploadTraffic = true,
+            hasDownloadTraffic = true,
+            uploadBytesPerSec = 120_000L,
+            downloadBytesPerSec = 4_800_000L,
+            fontScale = 2.0f,
+        )
+        assertEquals(50f, extremeDownloadLarger.centerGapDp, 0.01f)
+        assertEquals(extremeDownloadLarger.leftZoneWidthDp, extremeDownloadLarger.rightZoneWidthDp, 0.01f)
+        assertEquals(IdleSpeedDisplayMode.DOWNLOAD_ONLY, extremeDownloadLarger.speedDisplayMode)
+        assertFalse(extremeDownloadLarger.isStacked)
+        assertFalse(extremeDownloadLarger.showConnectionLabel)
+        assertTrue(extremeDownloadLarger.showConnectionIcon)
+
+        val extremeUploadLarger = IdlePillLayoutMath.compute(
             maxContentWidthDp = 200f,
             minContentWidthDp = 124f,
             measuredCutoutWidthDp = 34f,
@@ -151,25 +201,26 @@ class CockpitPr97Pixel8FieldFixesTest {
             hasDownloadTraffic = true,
             uploadBytesPerSec = 9_500_000L,
             downloadBytesPerSec = 320_000L,
+            fontScale = 2.0f,
         )
-        assertEquals(IdleSpeedDisplayMode.UPLOAD_ONLY, twoSpeedsUploadLarger.speedDisplayMode)
+        assertEquals(IdleSpeedDisplayMode.UPLOAD_ONLY, extremeUploadLarger.speedDisplayMode)
 
-        // When both 4-char figures fit beside a smaller cutout (e.g. 8dp cutout -> 24dp gap, 88dp right zone),
-        // BOTH are shown symmetrically.
-        val bothFit = IdlePillLayoutMath.compute(
-            maxContentWidthDp = 200f,
+        // Even under an extreme cutout where space is severely constrained, speeds NEVER return NONE
+        // while traffic exists and the connection label is dropped before the icon.
+        val tightCutout = IdlePillLayoutMath.compute(
+            maxContentWidthDp = 160f,
             minContentWidthDp = 124f,
-            measuredCutoutWidthDp = 8f,
+            measuredCutoutWidthDp = 80f,
             cutoutWidthDeltaDp = 0f,
             hasUploadTraffic = true,
             hasDownloadTraffic = true,
-            uploadBytesPerSec = 640_000L,
-            downloadBytesPerSec = 18_000_000L,
+            uploadBytesPerSec = 120_000L,
+            downloadBytesPerSec = 4_800_000L,
+            fontScale = 1.5f,
         )
-        assertEquals(24f, bothFit.centerGapDp, 0.01f)
-        assertEquals(bothFit.leftZoneWidthDp, bothFit.rightZoneWidthDp, 0.01f)
-        assertEquals(IdleSpeedDisplayMode.BOTH, bothFit.speedDisplayMode)
-        assertTrue(bothFit.totalContentWidthDp <= 200.01f)
+        assertTrue(tightCutout.speedDisplayMode != IdleSpeedDisplayMode.NONE)
+        assertFalse(tightCutout.showConnectionLabel)
+        assertTrue(tightCutout.showConnectionIcon)
     }
 
     @Test
@@ -242,9 +293,60 @@ class CockpitPr97Pixel8FieldFixesTest {
                 speedBounds.left >= gapBounds.right,
             )
 
-            // Download (1.4M) is larger than upload (12K); only larger direction renders when both do not fit.
+            // Both upload (12K) and download (1.4M) render stacked in the right zone beside the 34dp cutout.
+            compose.onNodeWithText("12K").assertIsDisplayed()
             compose.onNodeWithText("1.4M").assertIsDisplayed()
-            assertEquals(0, compose.onAllNodesWithText("12K").fetchSemanticsNodes().size)
+        }
+    }
+
+    @Test
+    fun idlePillRealPixel8ProGeometryShowsBothStackedSpeedsAt1xAnd1_3xAndLargerAt2x() {
+        val traffic = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.WIFI,
+            label = "Wi-Fi",
+            uploadBytesPerSec = 12L * 1024L,
+            downloadBytesPerSec = (1.4 * 1024 * 1024).toLong(),
+        )
+        for (scale in listOf(1.0f, 1.3f, 2.0f)) {
+            RuntimeEnvironment.setQualifiers("w412dp-h915dp-xhdpi")
+            RuntimeEnvironment.setFontScale(scale)
+            ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    activity.setContent {
+                        DriveLiftTheme {
+                            GlassBackdrop {
+                                CompositionLocalProvider(LocalIdleNetworkOverride provides traffic) {
+                                    CollapsedSplitIslandRow(
+                                        slotState = CockpitSlotState(),
+                                        widthDeltaDp = 0,
+                                        cutoutWidthDp = 34,
+                                        onTapPrimary = {},
+                                        onTapSecondary = {},
+                                        onLongPressExpand = {},
+                                        onCycleNext = {},
+                                        onCyclePrevious = {},
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+                compose.waitForIdle()
+
+                val netBounds = compose.onNodeWithTag("cockpit-idle-network").assertIsDisplayed().getBoundsInRoot()
+                val gapBounds = compose.onNodeWithTag("cockpit-idle-cutout-gap", useUnmergedTree = true).getBoundsInRoot()
+                val speedBounds = compose.onNodeWithTag("cockpit-idle-speed").assertIsDisplayed().getBoundsInRoot()
+
+                assertTrue("Left zone must stay clear of cutout at ${scale}x", netBounds.right <= gapBounds.left)
+                assertTrue("Speeds must stay clear of cutout at ${scale}x", speedBounds.left >= gapBounds.right)
+
+                // Larger speed (1.4M) is ALWAYS visible across 1.0x, 1.3x, and 2.0x.
+                compose.onNodeWithText("1.4M").assertIsDisplayed()
+                if (scale <= 1.3f) {
+                    // Upload (12K) is also visible (stacked above 1.4M) at 1.0x and 1.3x.
+                    compose.onNodeWithText("12K").assertIsDisplayed()
+                }
+            }
         }
     }
 
