@@ -56,7 +56,7 @@ enum class WidgetSizeVariant(
 ) {
     COMPACT(
         layoutResId = R.layout.cockpit_widget_compact,
-        gaugeSizeDp = 36f,
+        gaugeSizeDp = 30f,
         tileHeightDp = 32f,
         showAppLabels = false,
         showExtendedTelemetry = false,

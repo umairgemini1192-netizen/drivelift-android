@@ -18,7 +18,8 @@
         android:layout_height="match_parent"
         android:orientation="vertical"
         android:paddingHorizontal="8dp"
-        android:paddingVertical="3dp">
+        android:paddingTop="3dp"
+        android:paddingBottom="0dp">
 
         <!-- Compact Top Split: Clock + Aligned Status Badge + Compact Alarm (Left) | Battery & RAM Rings + mA (Right) -->
         <LinearLayout
@@ -60,7 +61,7 @@
                             android:includeFontPadding="false"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="22sp"
+                            android:textSize="20sp"
                             android:textStyle="bold" />
 
                         <TextClock
@@ -190,8 +191,8 @@
 
                     <ImageView
                         android:id="@+id/cockpit_widget_battery_gauge"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
+                        android:layout_width="30dp"
+                        android:layout_height="30dp"
                         android:contentDescription="Battery level"
                         android:scaleType="fitCenter" />
 
@@ -199,7 +200,6 @@
                         android:id="@+id/cockpit_widget_battery_current"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="1dp"
                         android:fontFeatureSettings="tnum"
                         android:includeFontPadding="false"
                         android:maxLines="1"
@@ -225,8 +225,8 @@
 
                     <ImageView
                         android:id="@+id/cockpit_widget_ram_gauge"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
+                        android:layout_width="30dp"
+                        android:layout_height="30dp"
                         android:contentDescription="RAM usage"
                         android:scaleType="fitCenter" />
 
@@ -234,7 +234,6 @@
                         android:id="@+id/cockpit_widget_ram_used"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="1dp"
                         android:fontFeatureSettings="tnum"
                         android:includeFontPadding="false"
                         android:maxLines="1"
@@ -409,16 +408,17 @@
             android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Compact App Dock: icons only (labels hidden so short 4x2 never clips labels) -->
+        <!-- Compact App Dock: 48 dp clickable containers with 34 dp visual tray centred inside -->
         <FrameLayout
             android:id="@+id/cockpit_widget_dock_container"
             android:layout_width="match_parent"
-            android:layout_height="34dp">
+            android:layout_height="48dp">
 
             <ImageView
                 android:id="@+id/cockpit_widget_dock_bg"
                 android:layout_width="match_parent"
-                android:layout_height="match_parent"
+                android:layout_height="34dp"
+                android:layout_gravity="center_vertical"
                 android:contentDescription="@null"
                 android:scaleType="fitXY" />
 

@@ -645,32 +645,22 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 dockContainer.height > 0,
             )
 
-            // Every primary control button retains a >= 48 dp touch target height in all sizes.
+            // Every primary control button and dock target retains a >= 48 dp touch target height in all sizes.
             val minTouchPx = (48f * density).toInt()
             for (btnId in intArrayOf(
                 R.id.cockpit_widget_btn_drop,
                 R.id.cockpit_widget_btn_torch,
                 R.id.cockpit_widget_btn_island,
+                R.id.cockpit_widget_btn_prev,
+                R.id.cockpit_widget_btn_next,
+                R.id.cockpit_widget_app_0,
             )) {
                 val btn = inflated.findViewById<View>(btnId)
-                assertNotNull("Control button missing in ${spec.name}", btn)
+                assertNotNull("Interactive widget target missing in ${spec.name}", btn)
                 assertTrue(
-                    "Control button height ${btn.height}px < ${minTouchPx}px (48dp) in ${spec.name}",
+                    "Interactive widget target height ${btn.height}px < ${minTouchPx}px (48dp) in ${spec.name}",
                     btn.height >= minTouchPx,
                 )
-            }
-            if (variant != WidgetSizeVariant.COMPACT) {
-                for (dockId in intArrayOf(
-                    R.id.cockpit_widget_btn_prev,
-                    R.id.cockpit_widget_btn_next,
-                    R.id.cockpit_widget_app_0,
-                )) {
-                    val v = inflated.findViewById<View>(dockId)
-                    assertTrue(
-                        "Dock interactive target height ${v.height}px < ${minTouchPx}px in ${spec.name}",
-                        v.height >= minTouchPx,
-                    )
-                }
             }
 
             // Compact 4x2 hides app labels so short height never clips them.
