@@ -151,6 +151,11 @@ class DriveLiftApp : Application(), ImageLoaderFactory {
         graph = Graph(this)
         Notifications.ensureChannels(this)
         com.drivelift.app.feature.automode.AdbPairingNotifier.ensureChannel(this)
+        // If a previous Auto Mode run crashed mid-session, close the Wireless debugging port immediately.
+        com.drivelift.app.feature.automode.AdbSilentExecutor.recoverInterruptedSession(
+            preferences = com.drivelift.app.feature.automode.SharedPrefsAutoModePreferences(this),
+            systemGateway = com.drivelift.app.feature.automode.AndroidAutoModeSystemGateway(this),
+        )
         // Pick up anything a reboot, crash or force-stop left unfinished.
         graph.transfers.recover()
         // Turning the screen off ends the unlocked session (owner decision on issue 19) and

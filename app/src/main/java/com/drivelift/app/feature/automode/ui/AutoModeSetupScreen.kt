@@ -1,7 +1,11 @@
 package com.drivelift.app.feature.automode.ui
 
+import android.Manifest
 import android.content.Intent
+import android.os.Build
 import android.provider.Settings
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -17,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.selection.toggleable
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -39,10 +44,13 @@ import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.TopAppBarDefaults
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -53,14 +61,18 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.drivelift.app.Graph
+import com.drivelift.app.feature.automode.AdbPairingNotifier
 import com.drivelift.app.feature.automode.AndroidAutoModeSystemGateway
 import com.drivelift.app.feature.automode.AutoModeWizardState
 import com.drivelift.app.feature.automode.AutoModeWizardStep
+import com.drivelift.app.feature.automode.DeveloperOptionsObserver
+import com.drivelift.app.feature.automode.NotificationAccessState
 import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.GlassPanel
@@ -69,7 +81,8 @@ import com.drivelift.app.ui.Tokens
 
 /**
  * Stateful Built-in Auto Mode one-time setup wizard connected to [Graph.cleanerAndSleep].
- * Automatically re-checks Developer options, Wi-Fi, and permissions on resume.
+ * Automatically re-checks Developer options, Wi-Fi, and permissions on resume and via a live
+ * [DeveloperOptionsObserver] while visible.
  */
 @Composable
 fun AutoModeSetupScreen(
@@ -80,8 +93,46 @@ fun AutoModeSetupScreen(
     val module = remember(context) { Graph.get(context).cleanerAndSleep }
     val state by module.autoModeWizardState.collectAsStateWithLifecycle()
 
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.RequestPermission(),
+    ) { _ ->
+        module.refreshAutoModeStatus()
+    }
+
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) {
         module.refreshAutoModeStatus()
+    }
+
+    DisposableEffect(context, module) {
+        val observer = DeveloperOptionsObserver(
+            context = context,
+            onChanged = { module.refreshAutoModeStatus() },
+        )
+        observer.register()
+        onDispose {
+            observer.unregister()
+            module.stopPairingServiceDiscovery()
+        }
+    }
+
+    LaunchedEffect(state.step, state.isOnWifi) {
+        if (state.step == AutoModeWizardStep.PAIR_WIRELESS_DEBUGGING && state.isOnWifi) {
+            module.startPairingServiceDiscovery()
+        } else {
+            module.stopPairingServiceDiscovery()
+        }
+    }
+
+    fun openDeveloperOptions() {
+        runCatching {
+            context.startActivity(AndroidAutoModeSystemGateway.createDeveloperOptionsIntent())
+        }.onFailure {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                )
+            }
+        }
     }
 
     AutoModeSetupContent(
@@ -99,27 +150,49 @@ fun AutoModeSetupScreen(
                 }
             }
         },
+        onOpenDeveloperOptions = { openDeveloperOptions() },
         onOpenWifiSettings = {
             runCatching {
                 context.startActivity(AndroidAutoModeSystemGateway.createWifiSettingsIntent())
             }
         },
-        onPostNotificationAndOpenWirelessDebugging = {
-            module.postPairingNotification()
-            runCatching {
-                context.startActivity(AndroidAutoModeSystemGateway.createDeveloperOptionsIntent())
-            }.onFailure {
+        onRequestNotificationPermission = {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
                 runCatching {
-                    context.startActivity(
-                        Intent(Settings.ACTION_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                    )
+                    context.startActivity(AdbPairingNotifier.createNotificationSettingsIntent(context))
                 }
             }
         },
+        onOpenNotificationSettings = {
+            runCatching {
+                context.startActivity(AdbPairingNotifier.createNotificationSettingsIntent(context))
+            }
+        },
+        onPostNotificationAndOpenWirelessDebugging = {
+            val access = module.autoModeSystemGateway.notificationAccessState()
+            if (access == NotificationAccessState.NEEDS_RUNTIME_PERMISSION &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU
+            ) {
+                module.postPairingNotification()
+                notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            } else {
+                module.postPairingNotification()
+                openDeveloperOptions()
+            }
+        },
+        onRetryDiscovery = { module.startPairingServiceDiscovery() },
         onSubmitPairingCode = { code ->
             module.submitPairingCodeFromWizard(code)
         },
+        onSubmitPairingCodeWithPort = { code, port ->
+            module.submitPairingCodeFromWizard(code, port)
+        },
         onRetryBootstrap = { module.retryOneTimeBootstrap() },
+        onToggleKeepWirelessDebuggingOn = { enabled ->
+            module.setKeepWirelessDebuggingOn(enabled)
+        },
         onTurnOffAutoMode = { module.turnOffAutoMode() },
         modifier = modifier,
     )
@@ -142,8 +215,15 @@ fun AutoModeSetupContent(
     onRetryBootstrap: () -> Unit,
     onTurnOffAutoMode: () -> Unit,
     modifier: Modifier = Modifier,
+    onOpenDeveloperOptions: () -> Unit = {},
+    onRequestNotificationPermission: () -> Unit = {},
+    onOpenNotificationSettings: () -> Unit = {},
+    onRetryDiscovery: () -> Unit = {},
+    onSubmitPairingCodeWithPort: ((code: String, port: String) -> Unit)? = null,
+    onToggleKeepWirelessDebuggingOn: (Boolean) -> Unit = {},
 ) {
     var inlineCode by remember { mutableStateOf("") }
+    var inlinePort by remember { mutableStateOf("") }
 
     Column(
         modifier = modifier
@@ -197,6 +277,8 @@ fun AutoModeSetupContent(
                 item(key = "ready-card") {
                     AutoModeReadyCard(
                         isOnWifi = state.isOnWifi,
+                        keepWirelessDebuggingOn = state.keepWirelessDebuggingOn,
+                        onToggleKeepWirelessDebuggingOn = onToggleKeepWirelessDebuggingOn,
                         onTurnOff = onTurnOffAutoMode,
                     )
                 }
@@ -259,7 +341,10 @@ fun AutoModeSetupContent(
                 when (state.step) {
                     AutoModeWizardStep.ENABLE_DEVELOPER_OPTIONS -> {
                         item(key = "step-1") {
-                            Step1DeveloperOptionsCard(onOpenAboutPhone = onOpenAboutPhone)
+                            Step1DeveloperOptionsCard(
+                                onOpenAboutPhone = onOpenAboutPhone,
+                                onOpenDeveloperOptions = onOpenDeveloperOptions,
+                            )
                         }
                     }
                     AutoModeWizardStep.PAIR_WIRELESS_DEBUGGING -> {
@@ -268,16 +353,33 @@ fun AutoModeSetupContent(
                                 isOnWifi = state.isOnWifi,
                                 isWorking = state.isWorking,
                                 notificationPosted = state.pairingNotificationPosted,
+                                notificationAccess = state.notificationAccess,
+                                isDiscoveringPairingService = state.isDiscoveringPairingService,
+                                discoveredPairingPort = state.discoveredPairingPort,
+                                discoveryErrorMessage = state.discoveryErrorMessage,
                                 inlineCode = inlineCode,
+                                inlinePort = inlinePort,
                                 onInlineCodeChange = { next ->
                                     inlineCode = next.filter { it in '0'..'9' }.take(6)
                                 },
+                                onInlinePortChange = { next ->
+                                    inlinePort = next.filter { it in '0'..'9' }.take(5)
+                                },
                                 onOpenWifiSettings = onOpenWifiSettings,
+                                onRequestNotificationPermission = onRequestNotificationPermission,
+                                onOpenNotificationSettings = onOpenNotificationSettings,
                                 onPostNotificationAndOpenWirelessDebugging = onPostNotificationAndOpenWirelessDebugging,
+                                onRetryDiscovery = onRetryDiscovery,
                                 onSubmitInlineCode = {
                                     val codeToSubmit = inlineCode
+                                    val portToSubmit = inlinePort
                                     inlineCode = ""
-                                    onSubmitPairingCode(codeToSubmit)
+                                    inlinePort = ""
+                                    if (onSubmitPairingCodeWithPort != null) {
+                                        onSubmitPairingCodeWithPort(codeToSubmit, portToSubmit)
+                                    } else {
+                                        onSubmitPairingCode(codeToSubmit)
+                                    }
                                 },
                             )
                         }
@@ -354,6 +456,7 @@ private fun AutoModeStepHeaderCard(currentStep: AutoModeWizardStep) {
 @Composable
 private fun Step1DeveloperOptionsCard(
     onOpenAboutPhone: () -> Unit,
+    onOpenDeveloperOptions: () -> Unit,
 ) {
     val wellShape = Tokens.concentricShape(Tokens.CardRadius, Tokens.Medium)
     GlassPanel(
@@ -398,17 +501,24 @@ private fun Step1DeveloperOptionsCard(
                     .padding(Tokens.Gutter)
                     .testTag("automode-build-number-hint"),
             ) {
-                Text(
-                    text = "Tap Build number 7 times",
-                    style = MaterialTheme.typography.titleLarge,
-                    color = MaterialTheme.colorScheme.primary,
-                )
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Tiny)) {
+                    Text(
+                        text = "Not unlocked yet?",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Tap Build number 7 times",
+                        style = MaterialTheme.typography.titleLarge,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "Scroll to the bottom of About phone, tap Build number 7 times, enter your screen lock, then come back to DriveLift.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
-            Text(
-                text = "Scroll to the bottom of About phone, tap Build number 7 times, enter your screen lock, then come back to DriveLift.",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
             Button(
                 onClick = onOpenAboutPhone,
                 modifier = Modifier
@@ -417,6 +527,43 @@ private fun Step1DeveloperOptionsCard(
                     .testTag("automode-open-about-phone"),
             ) {
                 Text("Open About phone")
+            }
+
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(wellShape)
+                    .background(GlassPalette.Well)
+                    .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape)
+                    .padding(Tokens.Gutter)
+                    .testTag("automode-developer-options-hint"),
+            ) {
+                Column(verticalArrangement = Arrangement.spacedBy(Tokens.Tiny)) {
+                    Text(
+                        text = "Already a developer?",
+                        style = MaterialTheme.typography.labelLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        text = "Switch on Use developer options at the top",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.primary,
+                    )
+                    Text(
+                        text = "If Android says you are already a developer, open Developer options directly and turn on the master switch. This screen advances automatically once it is on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Button(
+                onClick = onOpenDeveloperOptions,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Tokens.TouchTarget)
+                    .testTag("automode-open-developer-options"),
+            ) {
+                Text("Open Developer options")
             }
         }
     }
@@ -427,10 +574,19 @@ private fun Step2WirelessPairingCard(
     isOnWifi: Boolean,
     isWorking: Boolean,
     notificationPosted: Boolean,
+    notificationAccess: NotificationAccessState,
+    isDiscoveringPairingService: Boolean,
+    discoveredPairingPort: Int?,
+    discoveryErrorMessage: String?,
     inlineCode: String,
+    inlinePort: String,
     onInlineCodeChange: (String) -> Unit,
+    onInlinePortChange: (String) -> Unit,
     onOpenWifiSettings: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationSettings: () -> Unit,
     onPostNotificationAndOpenWirelessDebugging: () -> Unit,
+    onRetryDiscovery: () -> Unit,
     onSubmitInlineCode: () -> Unit,
 ) {
     val wellShape = Tokens.concentricShape(Tokens.CardRadius, Tokens.Medium)
@@ -497,13 +653,142 @@ private fun Step2WirelessPairingCard(
                 }
             }
 
+            if (notificationAccess != NotificationAccessState.ALLOWED) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(wellShape)
+                        .background(GlassPalette.Well)
+                        .border(Tokens.Hairline, GlassPalette.HudAmber.copy(alpha = 0.6f), wellShape)
+                        .padding(Tokens.Medium)
+                        .testTag("automode-notification-permission-banner"),
+                ) {
+                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
+                        Text(
+                            text = "Notifications are blocked for DriveLift",
+                            style = MaterialTheme.typography.titleSmall,
+                            color = GlassPalette.HudAmber,
+                        )
+                        Text(
+                            text = AdbPairingNotifier.BLOCKED_EXPLANATION,
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        if (notificationAccess == NotificationAccessState.NEEDS_RUNTIME_PERMISSION) {
+                            Button(
+                                onClick = onRequestNotificationPermission,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = Tokens.TouchTarget)
+                                    .testTag("automode-request-notification-permission"),
+                            ) {
+                                Text("Allow notifications")
+                            }
+                        } else {
+                            OutlinedButton(
+                                onClick = onOpenNotificationSettings,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = Tokens.TouchTarget)
+                                    .testTag("automode-open-notification-settings"),
+                            ) {
+                                Text("Open notification settings")
+                            }
+                        }
+                    }
+                }
+            }
+
             Text(
-                text = "1. Tap below to post DriveLift's reply notification and open Developer options.\n" +
-                    "2. Turn on Wireless debugging and tap Pair device with pairing code.\n" +
-                    "3. Pull down the notification shade and type the 6-digit code into Enter pairing code without leaving Settings.",
+                text = "1. Open Wireless debugging (tap the row text, not just the switch), turn it on, and allow on this network.\n" +
+                    "2. Tap \"Pair device with pairing code\".\n" +
+                    "3. Type the 6-digit code into the DriveLift notification (or the in-app field below).",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.testTag("automode-step2-instructions"),
             )
+
+            if (isOnWifi) {
+                when {
+                    isDiscoveringPairingService -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(wellShape)
+                                .background(GlassPalette.Well)
+                                .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape)
+                                .padding(Tokens.Medium)
+                                .testTag("automode-pairing-discovery-indicator"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+                        ) {
+                            CircularProgressIndicator(
+                                color = MaterialTheme.colorScheme.primary,
+                                strokeWidth = Tokens.Stroke,
+                                modifier = Modifier.size(Tokens.IconSmall),
+                            )
+                            Text(
+                                text = "Waiting for pairing service on this phone...",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurface,
+                            )
+                        }
+                    }
+                    discoveredPairingPort != null -> {
+                        Row(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(wellShape)
+                                .background(GlassPalette.Well)
+                                .border(Tokens.Hairline, GlassPalette.HudEmerald.copy(alpha = 0.6f), wellShape)
+                                .padding(Tokens.Medium)
+                                .testTag("automode-pairing-discovery-found"),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.CheckCircle,
+                                contentDescription = null,
+                                tint = GlassPalette.HudEmerald,
+                                modifier = Modifier.size(Tokens.IconSmall),
+                            )
+                            Text(
+                                text = "Pairing service found on port $discoveredPairingPort",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = GlassPalette.HudEmerald,
+                            )
+                        }
+                    }
+                    discoveryErrorMessage != null -> {
+                        Column(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .clip(wellShape)
+                                .background(GlassPalette.Well)
+                                .border(Tokens.Hairline, GlassPalette.HudAmber.copy(alpha = 0.6f), wellShape)
+                                .padding(Tokens.Medium)
+                                .testTag("automode-pairing-discovery-error"),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        ) {
+                            Text(
+                                text = discoveryErrorMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = GlassPalette.HudAmber,
+                            )
+                            OutlinedButton(
+                                onClick = onRetryDiscovery,
+                                enabled = !isWorking,
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .heightIn(min = Tokens.TouchTarget)
+                                    .testTag("automode-pairing-discovery-retry"),
+                            ) {
+                                Text("Search again")
+                            }
+                        }
+                    }
+                }
+            }
 
             Button(
                 onClick = onPostNotificationAndOpenWirelessDebugging,
@@ -534,13 +819,19 @@ private fun Step2WirelessPairingCard(
                     .clip(wellShape)
                     .background(GlassPalette.Well)
                     .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape)
-                    .padding(Tokens.Medium),
+                    .padding(Tokens.Medium)
+                    .testTag("automode-inapp-pairing-fallback"),
             ) {
                 Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                     Text(
-                        text = "Or enter the 6-digit pairing code here (split-screen)",
+                        text = "Enter pairing code in DriveLift",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "Use split-screen or quickly switch back from the Wireless debugging pairing dialog so pairing works even without the notification.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     OutlinedTextField(
                         value = inlineCode,
@@ -552,6 +843,17 @@ private fun Step2WirelessPairingCard(
                         modifier = Modifier
                             .fillMaxWidth()
                             .testTag("automode-pairing-code-input"),
+                    )
+                    OutlinedTextField(
+                        value = inlinePort,
+                        onValueChange = onInlinePortChange,
+                        singleLine = true,
+                        enabled = isOnWifi && !isWorking,
+                        label = { Text("Pairing port (optional, e.g. 37111)") },
+                        keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("automode-pairing-port-input"),
                     )
                     OutlinedButton(
                         onClick = onSubmitInlineCode,
@@ -638,8 +940,11 @@ private fun Step3GrantPermissionsCard(
 @Composable
 private fun AutoModeReadyCard(
     isOnWifi: Boolean,
+    keepWirelessDebuggingOn: Boolean,
+    onToggleKeepWirelessDebuggingOn: (Boolean) -> Unit,
     onTurnOff: () -> Unit,
 ) {
+    val wellShape = Tokens.concentricShape(Tokens.HeroRadius, Tokens.Medium)
     GlassSurface(
         level = GlassLevel.Hero,
         shape = Tokens.HeroShape,
@@ -678,10 +983,48 @@ private fun AutoModeReadyCard(
             }
 
             Text(
-                text = "Clean now and Sleep Mode run silently on Wi-Fi with zero prompts, even after a reboot. DriveLift turns Wireless debugging back off after each run so the debug port is never left open.",
+                text = "Clean now and Sleep Mode run silently on Wi-Fi with zero prompts, even after a reboot. By default, DriveLift turns Wireless debugging back off after every run so the debug port is never left open.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .heightIn(min = Tokens.TouchTarget)
+                    .clip(wellShape)
+                    .background(GlassPalette.Well)
+                    .border(Tokens.Hairline, GlassPalette.WellEdge, wellShape)
+                    .toggleable(
+                        value = keepWirelessDebuggingOn,
+                        role = Role.Switch,
+                        onValueChange = onToggleKeepWirelessDebuggingOn,
+                    )
+                    .padding(horizontal = Tokens.Gutter, vertical = Tokens.Medium)
+                    .testTag("automode-keep-wireless-debugging-switch"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Medium),
+            ) {
+                Column(
+                    modifier = Modifier.weight(1f),
+                    verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                ) {
+                    Text(
+                        text = "Keep Wireless debugging on after Auto Mode",
+                        style = MaterialTheme.typography.titleSmall,
+                        color = MaterialTheme.colorScheme.onSurface,
+                    )
+                    Text(
+                        text = "Off by default so DriveLift closes the Wireless debugging port after every Clean and Sleep run.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                Switch(
+                    checked = keepWirelessDebuggingOn,
+                    onCheckedChange = null,
+                )
+            }
 
             if (!isOnWifi) {
                 Text(

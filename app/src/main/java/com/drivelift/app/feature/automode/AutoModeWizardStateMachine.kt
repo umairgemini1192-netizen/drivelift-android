@@ -28,6 +28,8 @@ data class AutoModeEnvironmentSnapshot(
     val hasWriteSecureSettings: Boolean,
     val isBootstrapComplete: Boolean,
     val isAutoModeEnabled: Boolean,
+    val notificationAccess: NotificationAccessState = NotificationAccessState.ALLOWED,
+    val keepWirelessDebuggingOn: Boolean = false,
 )
 
 /**
@@ -43,6 +45,11 @@ data class AutoModeWizardState(
     val isBootstrapComplete: Boolean = false,
     val isWorking: Boolean = false,
     val pairingNotificationPosted: Boolean = false,
+    val notificationAccess: NotificationAccessState = NotificationAccessState.ALLOWED,
+    val keepWirelessDebuggingOn: Boolean = false,
+    val isDiscoveringPairingService: Boolean = false,
+    val discoveredPairingPort: Int? = null,
+    val discoveryErrorMessage: String? = null,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
     val turnOffNotice: String? = null,
@@ -92,6 +99,7 @@ class AutoModeWizardStateMachine {
         val nextStep = evaluateStep(env)
         val clearedError = if (nextStep != current.step) null else current.errorMessage
         val clearedNotice = if (nextStep == AutoModeWizardStep.READY) null else current.turnOffNotice
+        val stillInStep2 = nextStep == AutoModeWizardStep.PAIR_WIRELESS_DEBUGGING
         return current.copy(
             step = nextStep,
             isDeveloperOptionsEnabled = env.isDeveloperOptionsEnabled,
@@ -100,9 +108,14 @@ class AutoModeWizardStateMachine {
             isPaired = env.isPaired,
             hasWriteSecureSettings = env.hasWriteSecureSettings,
             isBootstrapComplete = env.isBootstrapComplete,
+            notificationAccess = env.notificationAccess,
+            keepWirelessDebuggingOn = env.keepWirelessDebuggingOn,
+            isDiscoveringPairingService = if (stillInStep2 && env.isOnWifi) current.isDiscoveringPairingService else false,
+            discoveredPairingPort = if (stillInStep2 && env.isOnWifi) current.discoveredPairingPort else null,
+            discoveryErrorMessage = if (stillInStep2 && env.isOnWifi) current.discoveryErrorMessage else null,
             errorMessage = clearedError,
             turnOffNotice = clearedNotice,
-            pairingNotificationPosted = if (nextStep == AutoModeWizardStep.PAIR_WIRELESS_DEBUGGING) {
+            pairingNotificationPosted = if (stillInStep2) {
                 current.pairingNotificationPosted
             } else {
                 false
@@ -124,6 +137,24 @@ class AutoModeWizardStateMachine {
         return if (digits.length == PAIRING_CODE_LENGTH) digits else null
     }
 
+    /**
+     * Validates an optional Wireless debugging pairing port entered in the in-app fallback field.
+     * Blank input returns `Result.success(null)` (meaning auto-discover via NsdManager).
+     */
+    fun validateOptionalPairingPort(rawInput: String): Result<Int?> {
+        val trimmed = rawInput.trim()
+        if (trimmed.isEmpty()) return Result.success(null)
+        val digits = trimmed.filter { it in '0'..'9' }
+        if (digits.length != trimmed.length) {
+            return Result.failure(IllegalArgumentException("Pairing port must contain digits only (1 to 65535)."))
+        }
+        val port = digits.toIntOrNull()
+        if (port == null || port !in 1..65535) {
+            return Result.failure(IllegalArgumentException("Enter a valid pairing port between 1 and 65535."))
+        }
+        return Result.success(port)
+    }
+
     fun onPairingNotificationPosted(current: AutoModeWizardState): AutoModeWizardState {
         if (!current.isOnWifi) {
             return current.copy(
@@ -131,12 +162,45 @@ class AutoModeWizardStateMachine {
                 errorMessage = "Connect to Wi-Fi first before pairing Wireless debugging.",
             )
         }
+        if (current.notificationAccess != NotificationAccessState.ALLOWED) {
+            return onPairingNotificationBlocked(current, current.notificationAccess)
+        }
         return current.copy(
             pairingNotificationPosted = true,
             errorMessage = null,
             statusMessage = "Pairing notification posted. Open Wireless debugging and reply with the 6-digit code.",
         )
     }
+
+    fun onPairingNotificationBlocked(
+        current: AutoModeWizardState,
+        access: NotificationAccessState,
+    ): AutoModeWizardState = current.copy(
+        pairingNotificationPosted = false,
+        notificationAccess = access,
+        errorMessage = AdbPairingNotifier.BLOCKED_EXPLANATION,
+    )
+
+    fun onPairingDiscoveryStarted(current: AutoModeWizardState): AutoModeWizardState = current.copy(
+        isDiscoveringPairingService = true,
+        discoveredPairingPort = null,
+        discoveryErrorMessage = null,
+    )
+
+    fun onPairingDiscoveryFound(current: AutoModeWizardState, port: Int): AutoModeWizardState = current.copy(
+        isDiscoveringPairingService = false,
+        discoveredPairingPort = port,
+        discoveryErrorMessage = null,
+    )
+
+    fun onPairingDiscoveryTimedOut(
+        current: AutoModeWizardState,
+        message: String = AdbSilentExecutor.PAIRING_DISCOVERY_TIMEOUT_MESSAGE,
+    ): AutoModeWizardState = current.copy(
+        isDiscoveringPairingService = false,
+        discoveredPairingPort = null,
+        discoveryErrorMessage = message.ifBlank { AdbSilentExecutor.PAIRING_DISCOVERY_TIMEOUT_MESSAGE },
+    )
 
     fun onPairingStarted(current: AutoModeWizardState): AutoModeWizardState = current.copy(
         isWorking = true,

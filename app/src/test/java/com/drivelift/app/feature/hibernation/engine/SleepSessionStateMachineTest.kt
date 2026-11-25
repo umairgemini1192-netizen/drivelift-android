@@ -167,4 +167,74 @@ class SleepSessionStateMachineTest {
         assertEquals(SleepSessionPhase.COMPLETED, state.phase)
         assertEquals(0, state.remainingCount)
     }
+
+    @Test
+    fun silentBatchMarksTimeoutAsSkippedAndFormatsExactSummary() = runBlocking {
+        val queue = (1..16).map { i ->
+            if (i == 4) {
+                candidate("com.openai.chatgpt", "ChatGPT")
+            } else {
+                candidate("com.example.app$i", "App $i")
+            }
+        }
+        val initial = machine.startSession("s-16", HibernationMode.AUTO_SILENT, queue, 1000L)
+        val finalState = machine.runSilentBatch(
+            initialState = initial,
+            executor = SleepCommandExecutor { item ->
+                if (item.packageName == "com.openai.chatgpt") {
+                    Result.failure(SleepCommandTimeoutException("ADB shell command timed out after 15s"))
+                } else {
+                    Result.success(listOf("am force-stop ${item.packageName}"))
+                }
+            },
+            clockMs = { 2000L },
+        )
+
+        assertEquals(SleepSessionPhase.COMPLETED, finalState.phase)
+        val report = machine.buildReport(finalState, completedAtMs = 3000L, wirelessDebuggingTurnedOff = true)
+        assertEquals(15, report.sleptPackages.size)
+        assertEquals(listOf("com.openai.chatgpt"), report.skippedPackages)
+        assertEquals(
+            "Slept 15 of 16 apps - ChatGPT skipped (did not respond)",
+            SleepReportFormatter.formatSummary(report),
+        )
+    }
+
+    @Test
+    fun silentBatchCancelAndWatchdogTerminateCleanly() = runBlocking {
+        val queue = listOf(
+            candidate("com.example.one", "One"),
+            candidate("com.example.two", "Two"),
+            candidate("com.example.three", "Three"),
+        )
+        var ran = 0
+        val cancelInitial = machine.startSession("s-cancel-silent", HibernationMode.AUTO_SILENT, queue, 1000L)
+        val cancelled = machine.runSilentBatch(
+            initialState = cancelInitial,
+            executor = SleepCommandExecutor { item ->
+                ran++
+                Result.success(listOf("am force-stop ${item.packageName}"))
+            },
+            clockMs = { 2000L },
+            shouldCancel = { ran >= 1 },
+        )
+        assertEquals(SleepSessionPhase.CANCELLED, cancelled.phase)
+        val cancelReport = machine.buildReport(cancelled)
+        assertEquals(listOf("com.example.one"), cancelReport.sleptPackages)
+        assertEquals(listOf("com.example.two", "com.example.three"), cancelReport.cancelledPackages)
+
+        // Watchdog cap bounds a stalled executor so the batch always terminates.
+        val watchdogInitial = machine.startSession("s-watchdog", HibernationMode.AUTO_SILENT, queue, 1000L)
+        val capped = machine.runSilentBatch(
+            initialState = watchdogInitial,
+            executor = SleepCommandExecutor {
+                kotlinx.coroutines.delay(5_000L)
+                Result.success(emptyList())
+            },
+            clockMs = { 2000L },
+            batchWatchdogMs = 50L,
+        )
+        assertEquals(SleepSessionPhase.COMPLETED, capped.phase)
+        assertEquals(3, machine.buildReport(capped).skippedPackages.size)
+    }
 }

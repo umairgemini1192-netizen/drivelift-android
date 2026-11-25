@@ -140,4 +140,60 @@ class AutoModeWizardStateMachineTest {
         assertEquals(AutoModeWizardStateMachine.TURN_OFF_EXPLANATION, turnedOff.turnOffNotice)
         assertTrue(turnedOff.turnOffNotice!!.contains("WRITE_SECURE_SETTINGS"))
     }
+
+    @Test
+    fun blocksPairingNotificationWhenPermissionMissingOrChannelDisabled() {
+        val envBlocked = AutoModeEnvironmentSnapshot(
+            isDeveloperOptionsEnabled = true,
+            isOnWifi = true,
+            hasStoredKeyPair = false,
+            isPaired = false,
+            hasWriteSecureSettings = false,
+            isBootstrapComplete = false,
+            isAutoModeEnabled = false,
+            notificationAccess = NotificationAccessState.NEEDS_RUNTIME_PERMISSION,
+        )
+        val step2 = machine.onEnvironmentUpdated(AutoModeWizardState(), envBlocked)
+        val attempted = machine.onPairingNotificationPosted(step2)
+        assertFalse(attempted.pairingNotificationPosted)
+        assertEquals(NotificationAccessState.NEEDS_RUNTIME_PERMISSION, attempted.notificationAccess)
+        assertEquals(AdbPairingNotifier.BLOCKED_EXPLANATION, attempted.errorMessage)
+
+        val settingsBlocked = machine.onPairingNotificationBlocked(
+            step2,
+            NotificationAccessState.BLOCKED_IN_SETTINGS,
+        )
+        assertFalse(settingsBlocked.pairingNotificationPosted)
+        assertEquals(NotificationAccessState.BLOCKED_IN_SETTINGS, settingsBlocked.notificationAccess)
+        assertEquals(AdbPairingNotifier.BLOCKED_EXPLANATION, settingsBlocked.errorMessage)
+    }
+
+    @Test
+    fun validatesOptionalPairingPortAndTracksDiscoveryStates() {
+        assertEquals(null, machine.validateOptionalPairingPort("").getOrThrow())
+        assertEquals(null, machine.validateOptionalPairingPort("   ").getOrThrow())
+        assertEquals(37111, machine.validateOptionalPairingPort("37111").getOrThrow())
+        assertTrue(machine.validateOptionalPairingPort("0").isFailure)
+        assertTrue(machine.validateOptionalPairingPort("70000").isFailure)
+        assertTrue(machine.validateOptionalPairingPort("abc").isFailure)
+
+        val base = AutoModeWizardState(
+            step = AutoModeWizardStep.PAIR_WIRELESS_DEBUGGING,
+            isDeveloperOptionsEnabled = true,
+            isOnWifi = true,
+        )
+        val searching = machine.onPairingDiscoveryStarted(base)
+        assertTrue(searching.isDiscoveringPairingService)
+        assertNull(searching.discoveredPairingPort)
+        assertNull(searching.discoveryErrorMessage)
+
+        val timedOut = machine.onPairingDiscoveryTimedOut(searching)
+        assertFalse(timedOut.isDiscoveringPairingService)
+        assertEquals(AdbSilentExecutor.PAIRING_DISCOVERY_TIMEOUT_MESSAGE, timedOut.discoveryErrorMessage)
+
+        val found = machine.onPairingDiscoveryFound(timedOut, 41234)
+        assertFalse(found.isDiscoveringPairingService)
+        assertEquals(41234, found.discoveredPairingPort)
+        assertNull(found.discoveryErrorMessage)
+    }
 }
