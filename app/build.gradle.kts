@@ -84,6 +84,11 @@ android {
                 // Images are written only when asked for: ./gradlew testDebugUnitTest -PrecordScreenshots
                 if (project.hasProperty("recordScreenshots")) {
                     it.systemProperty("roborazzi.test.record", "true")
+                    // Declare the images as task output so a build-cache hit restores them. Without
+                    // this, a PR that changes no app code reuses cached test results and writes
+                    // 0 of the expected screenshots, failing "Require every screenshot".
+                    it.outputs.dir(layout.buildDirectory.dir("outputs/screenshots"))
+                        .withPropertyName("roborazziScreenshots")
                 }
             }
         }
