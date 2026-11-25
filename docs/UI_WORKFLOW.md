@@ -66,4 +66,8 @@ commits to the implementation branch.
 A push makes the evidence stale: record again and update the block.
 
 The **UI contract** check (`.github/gate/ui_contract.py`) validates that the block exists, is
-complete, and names the current head. It cannot judge the images. The reviewer must open them.
+complete, and names the current head. Each screenshot link must be an image (`.png`, `.jpg`,
+`.webp`) in the `evidence` branch folder named after the full current head SHA, for example
+`https://github.com/<owner>/<repo>/blob/evidence/<head sha>/<file>.png`, and the check confirms the
+file really exists there. A pull request page or any other link fails. The check still cannot judge
+what the images show: the reviewer must open them.
