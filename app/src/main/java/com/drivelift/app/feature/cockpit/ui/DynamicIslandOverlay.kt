@@ -200,6 +200,31 @@ internal fun computeSafePillMaxWidthDp(
 }
 
 /**
+ * Returns true when a secondary satellite bubble can be rendered beside the primary pill without
+ * squeezing a cutout-split pill below the width required for compact live speeds (preventing
+ * right-zone clipping). On devices with a physical cutout where the split budget is too tight,
+ * the satellite is suppressed and secondary activities remain accessible via swipe or expansion.
+ */
+internal fun canShowSatelliteBubble(
+    screenWidthDp: Int,
+    widthDeltaDp: Int,
+    cutoutWidthDp: Int,
+    fontScale: Float,
+): Boolean {
+    if (cutoutWidthDp <= 0) return true
+    val splitPrimaryMaxDp = computeSafePillMaxWidthDp(
+        screenWidthDp = screenWidthDp,
+        widthDeltaDp = widthDeltaDp,
+        hasSatelliteBubble = true,
+    ).toFloat()
+    val horizontalPaddingDp = (Tokens.Medium * 2).value
+    val centerGapDp = IdlePillLayoutMath.computeCenterGapDp(cutoutWidthDp.toFloat())
+    val minPerZoneDp = IdlePillLayoutMath.stackedSpeedFigureWidthDp(fontScale)
+    val minRequiredPrimaryDp = horizontalPaddingDp + centerGapDp + (minPerZoneDp * 2f)
+    return splitPrimaryMaxDp >= minRequiredPrimaryDp
+}
+
+/**
  * Formats a TransferActivity subtitle without duplicating identical status text (prevents
  * `"Ready (Ready)"`).
  */
@@ -805,10 +830,17 @@ fun CollapsedSplitIslandRow(
     val secondary = slotState.secondary
     val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val fontScale = LocalDensity.current.fontScale
+    val showSatellite = secondary != null && canShowSatelliteBubble(
+        screenWidthDp = screenWidthDp,
+        widthDeltaDp = widthDeltaDp,
+        cutoutWidthDp = cutoutWidthDp,
+        fontScale = fontScale,
+    )
     val maxPillWidth = computeSafePillMaxWidthDp(
         screenWidthDp = screenWidthDp,
         widthDeltaDp = widthDeltaDp,
-        hasSatelliteBubble = secondary != null,
+        hasSatelliteBubble = showSatellite,
     ).dp
     val minFloorWidth = minOf(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
@@ -853,7 +885,7 @@ fun CollapsedSplitIslandRow(
     ) {
         // Symmetric counterweight when a satellite bubble is visible so the primary pill remains
         // strictly centred on the camera punch-hole cutout rather than shifting left.
-        if (secondary != null) {
+        if (showSatellite) {
             Spacer(
                 modifier = Modifier
                     .width(Tokens.TouchTarget)
@@ -924,7 +956,7 @@ fun CollapsedSplitIslandRow(
         }
 
         // Satellite bubble for simultaneous activities: tap swaps it into the primary slot.
-        if (secondary != null) {
+        if (showSatellite && secondary != null) {
             val (bubblePrimary, bubbleSecondary) = activityAccentPair(secondary)
             Box(
                 modifier = Modifier

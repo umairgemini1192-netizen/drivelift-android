@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.runtime.saveable.SaveableStateRegistry
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -80,6 +81,7 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToString
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
@@ -4169,25 +4171,41 @@ class ScreenshotTest {
      * large font scales and eliminates wall-clock deadline races under CI load.
      */
     private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
-        fun state() = "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
-            "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value}"
+        fun state(): String {
+            val tree = runCatching { compose.onRoot(useUnmergedTree = true).printToString().take(800) }
+                .getOrDefault("<no root>")
+            return "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
+                "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value} tree=$tree"
+        }
+        // Let any clear emission propagate before re-selecting so StateFlow never conflates
+        // [id] -> [] -> [id] synchronously, and advance Robolectric's paused Looper/Choreographer
+        // + Compose Snapshot notifications so collectAsStateWithLifecycle always delivers.
         vm.duplicateSelection.value = emptySet()
+        shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+        Snapshot.sendApplyNotifications()
+        pump(2)
         vm.toggleDuplicate(id)
         assertTrue("The toggle did not select $id. ${state()}", id in vm.duplicateSelection.value)
         val cleanupBar = hasTestTag("storage-cleanup-bar") and hasStateDescription("1 copy selected")
+        shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+        Snapshot.sendApplyNotifications()
         pump(4)
         settle(
             maxPumps = 400,
             describe = { "The cleanup bar never showed 1 copy selected. ${state()}" },
         ) {
+            shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+            Snapshot.sendApplyNotifications()
             compose.onAllNodes(cleanupBar, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     private fun pump(times: Int) = repeat(times) {
         shadowOf(Looper.getMainLooper()).idle()
+        Snapshot.sendApplyNotifications()
         compose.mainClock.advanceTimeBy(64)
         shadowOf(Looper.getMainLooper()).idle()
+        Snapshot.sendApplyNotifications()
         Thread.sleep(10)
     }
 

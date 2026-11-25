@@ -48,6 +48,7 @@ import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.ui.CollapsedSplitIslandRow
 import com.drivelift.app.feature.cockpit.ui.ExpandedCockpitCard
 import com.drivelift.app.feature.cockpit.ui.LocalIdleNetworkOverride
+import com.drivelift.app.feature.cockpit.ui.canShowSatelliteBubble
 import com.drivelift.app.feature.cockpit.ui.computeSafePillMaxWidthDp
 import com.drivelift.app.feature.cockpit.widget.BatteryHudMetric
 import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
@@ -530,6 +531,11 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             "412dp split row ${pixelSplitPrimary + bothCounterweights}dp must respect hard cap",
             pixelSplitPrimary + bothCounterweights <= Tokens.Cockpit.PillHardMaxWidth.value.toInt(),
         )
+        // With a physical cutout where split width would starve speeds, satellite is suppressed so
+        // the primary pill keeps full safe width and renders speeds without clipping.
+        assertFalse(canShowSatelliteBubble(screenWidthDp = 320, widthDeltaDp = 0, cutoutWidthDp = 32, fontScale = 1f))
+        assertFalse(canShowSatelliteBubble(screenWidthDp = 412, widthDeltaDp = 0, cutoutWidthDp = 34, fontScale = 1f))
+        assertTrue(canShowSatelliteBubble(screenWidthDp = 412, widthDeltaDp = 0, cutoutWidthDp = 0, fontScale = 1f))
 
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
