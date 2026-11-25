@@ -726,6 +726,7 @@ internal class CockpitOverlayWindowController(
                                 },
                                 onTapWifi = { cockpit.quickControlsController.openInternetPanel() },
                                 onLongPressWifi = { cockpit.quickControlsController.openWifiSettings() },
+                                onTapWifiLocationHint = { cockpit.quickControlsController.onWifiLocationHintTap() },
                                 onTapMobileData = { cockpit.quickControlsController.onMobileDataTap() },
                                 onLongPressMobileData = { cockpit.quickControlsController.openDataUsageSettings() },
                                 onTapBluetooth = { cockpit.quickControlsController.openBluetoothSettings() },

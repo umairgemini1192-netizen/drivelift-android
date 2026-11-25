@@ -31,6 +31,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.runtime.saveable.SaveableStateRegistry
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshots.Snapshot
 import androidx.compose.ui.geometry.Offset
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
@@ -45,11 +46,10 @@ import androidx.compose.ui.test.SemanticsNodeInteraction
 import androidx.compose.ui.test.click
 import androidx.compose.ui.test.hasAnyDescendant
 import androidx.compose.ui.test.hasAnyAncestor
+import androidx.compose.ui.test.hasStateDescription
 import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasClickAction
 import androidx.compose.ui.test.hasContentDescription
-import androidx.compose.ui.test.hasAnyAncestor
-import androidx.compose.ui.test.hasTestTag
 import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.hasScrollToKeyAction
 import androidx.compose.ui.test.isRoot
@@ -81,6 +81,7 @@ import androidx.compose.ui.test.performScrollToKey
 import androidx.compose.ui.test.performSemanticsAction
 import androidx.compose.ui.test.performTextReplacement
 import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.printToString
 import kotlinx.coroutines.flow.first
 import androidx.compose.ui.text.AnnotatedString
 import androidx.test.core.app.ActivityScenario
@@ -4165,37 +4166,67 @@ class ScreenshotTest {
 
     /**
      * Leaves [id] as the only picked copy, the way a user picks one: through the view model's
-     * toggle, then a wait until the cleanup bar shows it. Writing the selection state directly
-     * left the bar unchecked, so the next tap raced the screen.
+     * toggle, then a deterministic wait until the cleanup bar's semantic node reports 1 copy
+     * selected. Checking the bar's semantic stateDescription avoids text-wrapping mismatches at
+     * large font scales and eliminates wall-clock deadline races under CI load.
      */
     private fun selectOnlyCopy(vm: AppViewModel, id: Long) {
-        fun state() = "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
-            "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value}"
+        fun state(): String {
+            val tree = runCatching { compose.onRoot(useUnmergedTree = true).printToString().take(800) }
+                .getOrDefault("<no root>")
+            return "groups=${vm.duplicateGroups.value.map { g -> g.items.map { it.id } }} " +
+                "scan=${vm.duplicateScan.value.javaClass.simpleName} selected=${vm.duplicateSelection.value} tree=$tree"
+        }
+        // Let any clear emission propagate before re-selecting so StateFlow never conflates
+        // [id] -> [] -> [id] synchronously, and advance Robolectric's paused Looper/Choreographer
+        // + Compose Snapshot notifications so collectAsStateWithLifecycle always delivers.
         vm.duplicateSelection.value = emptySet()
+        shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+        Snapshot.sendApplyNotifications()
+        pump(2)
         vm.toggleDuplicate(id)
         assertTrue("The toggle did not select $id. ${state()}", id in vm.duplicateSelection.value)
+        val cleanupBar = hasTestTag("storage-cleanup-bar") and hasStateDescription("1 copy selected")
+        shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+        Snapshot.sendApplyNotifications()
         pump(4)
-        settle({ "The cleanup bar never showed 1 copy selected. ${state()}" }) {
-            compose.onAllNodesWithText("1 copy selected").fetchSemanticsNodes().isNotEmpty()
+        settle(
+            maxPumps = 400,
+            describe = { "The cleanup bar never showed 1 copy selected. ${state()}" },
+        ) {
+            shadowOf(Looper.getMainLooper()).idleFor(16, TimeUnit.MILLISECONDS)
+            Snapshot.sendApplyNotifications()
+            compose.onAllNodes(cleanupBar, useUnmergedTree = true).fetchSemanticsNodes().isNotEmpty()
         }
     }
 
     private fun pump(times: Int) = repeat(times) {
         shadowOf(Looper.getMainLooper()).idle()
+        Snapshot.sendApplyNotifications()
         compose.mainClock.advanceTimeBy(64)
-        Thread.sleep(25)
+        shadowOf(Looper.getMainLooper()).idle()
+        Snapshot.sendApplyNotifications()
+        Thread.sleep(10)
     }
 
-    /** Runs the UI until [done], so data arriving from the database has reached the screen. */
+    /**
+     * Runs the UI deterministically by pump count (Compose clock + Main Looper idling) until
+     * [done] becomes true, instead of failing on a tight wall-clock deadline under CI CPU load.
+     */
     private fun settle(
         describe: () -> String = { "The screen never reached the expected state" },
+        maxPumps: Int = 320,
         done: () -> Boolean,
     ) {
-        val deadline = System.currentTimeMillis() + 15_000
+        val safetyDeadlineMs = System.currentTimeMillis() + 60_000L
+        var pumps = 0
         while (true) {
             pump(1)
+            pumps++
             if (done()) break
-            if (System.currentTimeMillis() >= deadline) fail(describe())
+            if (pumps >= maxPumps || (pumps >= 120 && System.currentTimeMillis() >= safetyDeadlineMs)) {
+                fail("${describe()} (after $pumps pumps)")
+            }
         }
         pump(4)
     }

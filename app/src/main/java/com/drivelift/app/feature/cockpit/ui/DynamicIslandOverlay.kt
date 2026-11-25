@@ -1,5 +1,7 @@
 package com.drivelift.app.feature.cockpit.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -18,6 +20,7 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.basicMarquee
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
@@ -56,8 +59,10 @@ import androidx.compose.material.icons.outlined.Bluetooth
 import androidx.compose.material.icons.outlined.BluetoothConnected
 import androidx.compose.material.icons.outlined.BluetoothDisabled
 import androidx.compose.material.icons.outlined.Bolt
+import androidx.compose.material.icons.outlined.ChevronRight
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.CloudUpload
+import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Devices
 import androidx.compose.material.icons.outlined.Call
 import androidx.compose.material.icons.outlined.Directions
@@ -65,6 +70,7 @@ import androidx.compose.material.icons.outlined.FiberManualRecord
 import androidx.compose.material.icons.outlined.FlashlightOff
 import androidx.compose.material.icons.outlined.FlashlightOn
 import androidx.compose.material.icons.outlined.KeyboardArrowUp
+import androidx.compose.material.icons.outlined.LocationOn
 import androidx.compose.material.icons.outlined.Mic
 import androidx.compose.material.icons.outlined.MusicNote
 import androidx.compose.material.icons.outlined.Navigation
@@ -101,6 +107,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -119,6 +126,7 @@ import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.progressBarRangeInfo
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.setProgress
@@ -128,15 +136,21 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.lerp
-import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CallState
+import com.drivelift.app.feature.cockpit.activities.CockpitDurationFormat
+import com.drivelift.app.feature.cockpit.activities.CockpitLiveActivity
 import com.drivelift.app.feature.cockpit.activities.CockpitSlotState
 import com.drivelift.app.feature.cockpit.activities.MapsTurnDirection
+import com.drivelift.app.feature.cockpit.activities.TripDistanceFormat
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.CockpitHaptics
+import com.drivelift.app.feature.cockpit.hardware.CockpitNetworkFormat
 import com.drivelift.app.feature.cockpit.hardware.CockpitQuickControlsState
 import com.drivelift.app.feature.cockpit.hardware.CockpitRingerMode
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.feature.cockpit.hardware.TorchUiState
+import com.drivelift.app.feature.cockpit.notifications.CallAudioOutput
 import com.drivelift.app.feature.cockpit.notifications.CallAudioUiState
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.overlay.cockpitSpecularRim
@@ -145,6 +159,7 @@ import com.drivelift.app.ui.CockpitLivePalette
 import com.drivelift.app.ui.GlassLevel
 import com.drivelift.app.ui.GlassPalette
 import com.drivelift.app.ui.LocalReducedMotion
+import com.drivelift.app.ui.TABULAR_DIGITS
 import com.drivelift.app.ui.Tokens
 import com.drivelift.app.ui.destructiveGlowBorder
 import com.drivelift.app.ui.glass
@@ -161,21 +176,52 @@ internal fun computeSafePillMaxWidthDp(
     widthDeltaDp: Int,
     hasSatelliteBubble: Boolean,
 ): Int {
-    val minFloor = (Tokens.Cockpit.PillMinWidth - Tokens.Header).value.toInt()
     val sideMargin = if (screenWidthDp < Tokens.COMPACT_WIDTH_DP) {
         Tokens.Cockpit.StatusBarCompactSideMargin.value.toInt()
     } else {
         Tokens.Cockpit.StatusBarSafeSideMargin.value.toInt()
     }
     val satelliteReserve = if (hasSatelliteBubble) {
-        (Tokens.Cockpit.BubbleSize + Tokens.Cockpit.SplitGap).value.toInt()
+        // Reserve both the end satellite touch container + gap AND the symmetric start
+        // counterweight + gap so the centred split row stays within safe status-bar margins.
+        ((Tokens.TouchTarget + Tokens.Cockpit.SplitGap).value.toInt()) * 2
     } else {
         0
+    }
+    val minFloor = if (hasSatelliteBubble) {
+        (Tokens.Cockpit.PillMinWidth - Tokens.Header - Tokens.Small).value.toInt()
+    } else {
+        (Tokens.Cockpit.PillMinWidth - Tokens.Header).value.toInt()
     }
     val maxForScreen = (screenWidthDp - (sideMargin * 2) - satelliteReserve).coerceAtLeast(minFloor)
     val hardCap = (Tokens.Cockpit.PillHardMaxWidth.value.toInt() - satelliteReserve).coerceAtLeast(minFloor)
     val desired = (Tokens.Cockpit.PillMaxWidth.value.toInt() + widthDeltaDp).coerceAtLeast(minFloor)
     return minOf(desired, maxForScreen, hardCap)
+}
+
+/**
+ * Returns true when a secondary satellite bubble can be rendered beside the primary pill without
+ * squeezing a cutout-split pill below the width required for compact live speeds (preventing
+ * right-zone clipping). On devices with a physical cutout where the split budget is too tight,
+ * the satellite is suppressed and secondary activities remain accessible via swipe or expansion.
+ */
+internal fun canShowSatelliteBubble(
+    screenWidthDp: Int,
+    widthDeltaDp: Int,
+    cutoutWidthDp: Int,
+    fontScale: Float,
+): Boolean {
+    if (cutoutWidthDp <= 0) return true
+    val splitPrimaryMaxDp = computeSafePillMaxWidthDp(
+        screenWidthDp = screenWidthDp,
+        widthDeltaDp = widthDeltaDp,
+        hasSatelliteBubble = true,
+    ).toFloat()
+    val horizontalPaddingDp = (Tokens.Medium * 2).value
+    val centerGapDp = IdlePillLayoutMath.computeCenterGapDp(cutoutWidthDp.toFloat())
+    val minPerZoneDp = IdlePillLayoutMath.stackedSpeedFigureWidthDp(fontScale)
+    val minRequiredPrimaryDp = horizontalPaddingDp + centerGapDp + (minPerZoneDp * 2f)
+    return splitPrimaryMaxDp >= minRequiredPrimaryDp
 }
 
 /**
@@ -231,6 +277,7 @@ fun DynamicIslandOverlay(
     onCollapseAnimationFinished: () -> Unit = {},
     onTapWifi: () -> Unit = {},
     onLongPressWifi: () -> Unit = {},
+    onTapWifiLocationHint: () -> Unit = {},
     onTapMobileData: () -> Unit = {},
     onLongPressMobileData: () -> Unit = {},
     onTapBluetooth: () -> Unit = {},
@@ -419,6 +466,7 @@ fun DynamicIslandOverlay(
                     onSendWhatsAppReply = onSendWhatsAppReply,
                     onTapWifi = onTapWifi,
                     onLongPressWifi = onLongPressWifi,
+                    onTapWifiLocationHint = onTapWifiLocationHint,
                     onTapMobileData = onTapMobileData,
                     onLongPressMobileData = onLongPressMobileData,
                     onTapBluetooth = onTapBluetooth,
@@ -477,8 +525,12 @@ private fun CollapsedPillSurfaceContent(
 }
 
 /**
- * Two clusters inside a pill row: the call, recording and navigation pills have their own layout,
- * every other activity shows its icon and label on the left and one metric on the right.
+ * Collapsed pill body for every activity state:
+ * - Idle delegates directly to [CollapsedIdleNetworkContent].
+ * - Active activities obey the exact same status-pill width cap and symmetric cutout centring as
+ *   the idle pill when a physical cutout is present or live traffic is flowing.
+ * - Whenever an activity is live AND network traffic >= 1K exists, live speeds take priority in
+ *   the right zone over static text such as "LAN ready".
  */
 @Composable
 private fun RowScope.CollapsedPillBody(
@@ -489,16 +541,86 @@ private fun RowScope.CollapsedPillBody(
     minContentWidth: Dp = Tokens.Cockpit.PillMinWidth - (Tokens.Medium * 2),
     maxContentWidth: Dp = Tokens.Cockpit.PillMaxWidth - (Tokens.Medium * 2),
 ) {
-    when (primary) {
-        is CockpitLiveActivity.CallActivity -> CollapsedCallContent(primary)
-        is CockpitLiveActivity.ScreenRecordingActivity -> CollapsedRecordingContent(primary)
-        is CockpitLiveActivity.MapsNavActivity -> CollapsedNavigationContent(primary, accent)
-        is CockpitLiveActivity.IdleQuickDockActivity -> CollapsedIdleNetworkContent(
+    val net = rememberIdleNetworkSnapshot()
+    if (primary is CockpitLiveActivity.IdleQuickDockActivity) {
+        CollapsedIdleNetworkContent(
             cutoutWidthDp = cutoutWidthDp,
             widthDeltaDp = widthDeltaDp,
             minContentWidth = minContentWidth,
             maxContentWidth = maxContentWidth,
+            networkSnapshot = net,
         )
+        return
+    }
+
+    val fontScale = LocalDensity.current.fontScale
+    val showLiveSpeeds = net.hasActiveTraffic
+    val useCutoutZones = cutoutWidthDp > 0 || showLiveSpeeds
+
+    if (useCutoutZones) {
+        val layout = remember(
+            cutoutWidthDp,
+            widthDeltaDp,
+            minContentWidth,
+            maxContentWidth,
+            net.hasUploadTraffic,
+            net.hasDownloadTraffic,
+            net.uploadBytesPerSec,
+            net.downloadBytesPerSec,
+            fontScale,
+        ) {
+            IdlePillLayoutMath.compute(
+                maxContentWidthDp = maxContentWidth.value,
+                minContentWidthDp = minContentWidth.value,
+                measuredCutoutWidthDp = cutoutWidthDp.toFloat(),
+                cutoutWidthDeltaDp = widthDeltaDp.toFloat(),
+                hasUploadTraffic = net.hasUploadTraffic,
+                hasDownloadTraffic = net.hasDownloadTraffic,
+                uploadBytesPerSec = net.uploadBytesPerSec,
+                downloadBytesPerSec = net.downloadBytesPerSec,
+                fontScale = fontScale,
+            )
+        }
+
+        Box(
+            modifier = Modifier
+                .width(layout.leftZoneWidthDp.dp)
+                .clipToBounds(),
+            contentAlignment = Alignment.CenterStart,
+        ) {
+            CollapsedActivityLeftCluster(
+                primary = primary,
+                accent = accent,
+                showLabel = layout.showConnectionLabel,
+            )
+        }
+
+        Spacer(
+            modifier = Modifier
+                .width(layout.centerGapDp.dp)
+                .height(Tokens.IconSmall)
+                .testTag("cockpit-pill-cutout-gap"),
+        )
+
+        Box(
+            modifier = Modifier
+                .width(layout.rightZoneWidthDp.dp)
+                .clipToBounds(),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            if (showLiveSpeeds) {
+                CollapsedLiveSpeedCluster(net = net, layout = layout)
+            } else {
+                CollapsedActivityRightCluster(primary = primary, accent = accent)
+            }
+        }
+        return
+    }
+
+    when (primary) {
+        is CockpitLiveActivity.CallActivity -> CollapsedCallContent(primary)
+        is CockpitLiveActivity.ScreenRecordingActivity -> CollapsedRecordingContent(primary)
+        is CockpitLiveActivity.MapsNavActivity -> CollapsedNavigationContent(primary, accent)
         else -> {
             Row(
                 modifier = Modifier.weight(1f, fill = false),
@@ -525,6 +647,163 @@ private fun RowScope.CollapsedPillBody(
                 style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
                 color = accent,
                 maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+    }
+}
+
+@Composable
+private fun CollapsedActivityLeftCluster(
+    primary: CockpitLiveActivity,
+    accent: Color,
+    showLabel: Boolean,
+) {
+    when (primary) {
+        is CockpitLiveActivity.CallActivity -> {
+            val ringing = primary.state == CallState.INCOMING
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                Icon(
+                    imageVector = Icons.Outlined.Call,
+                    contentDescription = null,
+                    tint = if (ringing) CockpitLivePalette.Answer else CockpitLivePalette.Emerald,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                if (showLabel) {
+                    if (ringing) {
+                        Text(
+                            text = primary.callerName,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    } else {
+                        val now by rememberTickingNowMs()
+                        Text(
+                            text = CockpitDurationFormat.clock(now - primary.startedAtMs),
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            modifier = Modifier.testTag("cockpit-call-timer"),
+                        )
+                    }
+                }
+            }
+        }
+        is CockpitLiveActivity.ScreenRecordingActivity -> {
+            val now by rememberTickingNowMs()
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                PulsingDot(color = CockpitLivePalette.Recording)
+                if (showLabel) {
+                    Text(
+                        text = CockpitDurationFormat.clock(now - primary.startedAtMs),
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = CockpitLivePalette.Recording,
+                        maxLines = 1,
+                        modifier = Modifier.testTag("cockpit-recording-timer"),
+                    )
+                }
+            }
+        }
+        is CockpitLiveActivity.MapsNavActivity -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                Icon(
+                    imageVector = navManeuverIcon(primary.turnDirection),
+                    contentDescription = "Next maneuver",
+                    tint = accent,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                if (showLabel) {
+                    Text(
+                        text = primary.distanceText.ifEmpty { primary.etaText },
+                        style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                        color = CockpitLivePalette.White,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("cockpit-nav-distance"),
+                    )
+                }
+            }
+        }
+        else -> {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            ) {
+                Icon(
+                    imageVector = activityIcon(primary),
+                    contentDescription = null,
+                    tint = accent,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                if (showLabel) {
+                    Text(
+                        text = activityCollapsedLabel(primary),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollapsedActivityRightCluster(
+    primary: CockpitLiveActivity,
+    accent: Color,
+) {
+    when (primary) {
+        is CockpitLiveActivity.CallActivity -> {
+            if (primary.state == CallState.INCOMING) {
+                Text(
+                    text = "Incoming",
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = CockpitLivePalette.Answer,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            } else {
+                VoiceWaveform(modifier = Modifier.testTag("cockpit-call-waveform"))
+            }
+        }
+        is CockpitLiveActivity.ScreenRecordingActivity -> {
+            Box(
+                modifier = Modifier
+                    .size(Tokens.Cockpit.RecordingStopBox)
+                    .clip(RoundedCornerShape(Tokens.Tiny))
+                    .background(CockpitLivePalette.Recording)
+                    .semantics { contentDescription = "Screen recording in progress" },
+            )
+        }
+        is CockpitLiveActivity.MapsNavActivity -> {
+            Text(
+                text = primary.etaText.ifEmpty { primary.distanceText },
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = CockpitLivePalette.White,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        else -> {
+            Text(
+                text = activityCollapsedMetric(primary),
+                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                color = accent,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
             )
         }
     }
@@ -551,13 +830,21 @@ fun CollapsedSplitIslandRow(
     val secondary = slotState.secondary
     val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
+    val fontScale = LocalDensity.current.fontScale
+    val showSatellite = secondary != null && canShowSatelliteBubble(
+        screenWidthDp = screenWidthDp,
+        widthDeltaDp = widthDeltaDp,
+        cutoutWidthDp = cutoutWidthDp,
+        fontScale = fontScale,
+    )
     val maxPillWidth = computeSafePillMaxWidthDp(
         screenWidthDp = screenWidthDp,
         widthDeltaDp = widthDeltaDp,
-        hasSatelliteBubble = secondary != null,
+        hasSatelliteBubble = showSatellite,
     ).dp
+    val minFloorWidth = minOf(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
-        .coerceIn(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
+        .coerceIn(minFloorWidth, maxPillWidth)
     val canSwap = slotState.visibleQueue.size > 1
     val canSwipeUpDismiss = primary is CockpitLiveActivity.WhatsAppAlertActivity
     val dragOffset = remember { Animatable(0f) }
@@ -596,8 +883,20 @@ fun CollapsedSplitIslandRow(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.SplitGap),
     ) {
+        // Symmetric counterweight when a satellite bubble is visible so the primary pill remains
+        // strictly centred on the camera punch-hole cutout rather than shifting left.
+        if (showSatellite) {
+            Spacer(
+                modifier = Modifier
+                    .width(Tokens.TouchTarget)
+                    .height(Tokens.Cockpit.PillHeight),
+            )
+        }
+
         // Primary Pill centered strictly on WindowInsets.displayCutout with zero hardcoded top offset.
         // Outer hit box meets >= 52 dp height below the cutout to clear Pixel status-bar dead zones.
+        val minContentWidth = (minPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset)
+        val maxContentWidth = (maxPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset)
         Box(
             modifier = Modifier
                 .defaultMinSize(minHeight = Tokens.Cockpit.PillTouchTargetHeight)
@@ -639,7 +938,7 @@ fun CollapsedSplitIslandRow(
                     modifier = Modifier.graphicsLayer { translationX = dragOffset.value },
                 ) {
                     Row(
-                        modifier = Modifier.widthIn(min = minPillWidth - Tokens.Medium * 2),
+                        modifier = Modifier.widthIn(min = minContentWidth, max = maxContentWidth),
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
@@ -648,8 +947,8 @@ fun CollapsedSplitIslandRow(
                             accent = primaryAccent,
                             cutoutWidthDp = cutoutWidthDp,
                             widthDeltaDp = widthDeltaDp,
-                            minContentWidth = (minPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
-                            maxContentWidth = (maxPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset),
+                            minContentWidth = minContentWidth,
+                            maxContentWidth = maxContentWidth,
                         )
                     }
                 }
@@ -657,7 +956,7 @@ fun CollapsedSplitIslandRow(
         }
 
         // Satellite bubble for simultaneous activities: tap swaps it into the primary slot.
-        if (secondary != null) {
+        if (showSatellite && secondary != null) {
             val (bubblePrimary, bubbleSecondary) = activityAccentPair(secondary)
             Box(
                 modifier = Modifier
@@ -711,6 +1010,7 @@ fun CollapsedSplitIslandRow(
  * Standalone Expanded Cockpit Card composable kept for direct Roborazzi snapshot verification and
  * shared internal layout with [DynamicIslandOverlay].
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExpandedCockpitCard(
     slotState: CockpitSlotState,
@@ -735,6 +1035,7 @@ fun ExpandedCockpitCard(
     quickControls: CockpitQuickControlsState = CockpitQuickControlsState(),
     onTapWifi: () -> Unit = {},
     onLongPressWifi: () -> Unit = {},
+    onTapWifiLocationHint: () -> Unit = {},
     onTapMobileData: () -> Unit = {},
     onLongPressMobileData: () -> Unit = {},
     onTapBluetooth: () -> Unit = {},
@@ -792,6 +1093,7 @@ fun ExpandedCockpitCard(
             onSendWhatsAppReply = onSendWhatsAppReply,
             onTapWifi = onTapWifi,
             onLongPressWifi = onLongPressWifi,
+            onTapWifiLocationHint = onTapWifiLocationHint,
             onTapMobileData = onTapMobileData,
             onLongPressMobileData = onLongPressMobileData,
             onTapBluetooth = onTapBluetooth,
@@ -830,6 +1132,7 @@ private fun ExpandedCockpitCardContent(
     onSendWhatsAppReply: (notificationKey: String, replyText: String) -> Unit,
     onTapWifi: () -> Unit,
     onLongPressWifi: () -> Unit,
+    onTapWifiLocationHint: () -> Unit,
     onTapMobileData: () -> Unit,
     onLongPressMobileData: () -> Unit,
     onTapBluetooth: () -> Unit,
@@ -912,7 +1215,6 @@ private fun ExpandedCockpitCardContent(
         return
     }
 
-    // Build compact icon-only controls for the header so zero oversized text pills clutter the card.
     val primaryOpenDescription = when (primary) {
         is CockpitLiveActivity.TransferActivity -> if (primary.isDesktopDrop) "Open Drop" else "Open Transfers"
         is CockpitLiveActivity.WhatsAppAlertActivity -> "Open Chat"
@@ -927,16 +1229,9 @@ private fun ExpandedCockpitCardContent(
             onTapActivity(primary)
         }
     }
-    val hasSecondaryActivityAction = (primary is CockpitLiveActivity.TransferActivity && primary.canStop) ||
-        (primary is CockpitLiveActivity.WhatsAppAlertActivity && primary.canInlineReply)
     val hasActiveDismiss = primary !is CockpitLiveActivity.IdleQuickDockActivity
     val hasRestore = slotState.dismissedCount > 0
-    val totalHeaderIcons = 2 + // Open + Collapse
-        (if (hasSecondaryActivityAction) 1 else 0) +
-        (if (canSwap) 1 else 0) +
-        (if (hasRestore) 1 else 0) +
-        (if (hasActiveDismiss) 1 else 0)
-    val splitCompactActionBar = compactWidthStack || totalHeaderIcons > 3
+    val liveNet = rememberIdleNetworkSnapshot()
 
     Column(
         modifier = Modifier
@@ -949,15 +1244,15 @@ private fun ExpandedCockpitCardContent(
             .testTag("cockpit-expanded-card"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        // Header row: active badge, title + subtitle, and sleek compact icon-only controls.
+        // Header: full-width title + single-line subtitle so nothing wraps awkwardly.
         Row(
             modifier = Modifier.fillMaxWidth(),
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
         ) {
             Box(
                 modifier = Modifier
-                    .size(Tokens.Cockpit.AppShortcutTile)
+                    .size(Tokens.Cockpit.HeaderActionWell)
                     .clip(CircleShape)
                     .background(accent.copy(alpha = 0.16f))
                     .border(Tokens.Hairline, accent.copy(alpha = 0.5f), CircleShape),
@@ -967,7 +1262,7 @@ private fun ExpandedCockpitCardContent(
                     imageVector = activityIcon(primary),
                     contentDescription = null,
                     tint = accent,
-                    modifier = Modifier.size(Tokens.Icon),
+                    modifier = Modifier.size(Tokens.IconSmall),
                 )
             }
             Column(Modifier.weight(1f)) {
@@ -982,43 +1277,68 @@ private fun ExpandedCockpitCardContent(
                     text = activitySubtitle(primary, telemetry),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 2,
+                    maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("cockpit-expanded-subtitle"),
                 )
             }
-            if (!splitCompactActionBar) {
-                if (hasRestore) {
-                    CompactHeaderIconButton(
-                        icon = Icons.Outlined.Restore,
-                        contentDescription = "Restore hidden (${slotState.dismissedCount})",
-                        tint = MaterialTheme.colorScheme.secondary,
-                        tag = "cockpit-restore-hidden",
-                        onClick = onRestoreDismissed,
-                    )
-                }
-                CompactHeaderIconButton(
-                    icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                    contentDescription = primaryOpenDescription,
-                    tint = accent,
-                    tag = "cockpit-expanded-open-app",
-                    onClick = onPrimaryOpenClick,
-                )
-                if (canSwap) {
-                    CompactHeaderIconButton(
-                        icon = Icons.Outlined.SwapHoriz,
-                        contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
-                        tint = MaterialTheme.colorScheme.primary,
-                        tag = "cockpit-cycle-next",
-                        onClick = onCycleNext,
-                    )
-                }
-            } else if (!compactWidthStack && canSwap) {
+        }
+
+        // Compact icon-only action row (Open, Stop/Reply, Swap, Restore, Close, Collapse).
+        // Uses FlowRow so normal widths stay on one compact row while narrow 320 dp phones with
+        // all six buttons wrap cleanly instead of fighting parent horizontal swipe gestures.
+        FlowRow(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("cockpit-header-actions"),
+            horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny, Alignment.End),
+            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+        ) {
+            if (canSwap) {
                 CompactHeaderIconButton(
                     icon = Icons.Outlined.SwapHoriz,
                     contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
                     tint = MaterialTheme.colorScheme.primary,
                     tag = "cockpit-cycle-next",
                     onClick = onCycleNext,
+                )
+            }
+            if (hasRestore) {
+                CompactHeaderIconButton(
+                    icon = Icons.Outlined.Restore,
+                    contentDescription = "Restore hidden (${slotState.dismissedCount})",
+                    tint = MaterialTheme.colorScheme.secondary,
+                    tag = "cockpit-restore-hidden",
+                    onClick = onRestoreDismissed,
+                )
+            }
+            CompactHeaderIconButton(
+                icon = Icons.AutoMirrored.Outlined.OpenInNew,
+                contentDescription = primaryOpenDescription,
+                tint = accent,
+                tag = "cockpit-expanded-open-app",
+                onClick = onPrimaryOpenClick,
+            )
+            if ((primary is CockpitLiveActivity.TransferActivity && primary.canStop) ||
+                (primary is CockpitLiveActivity.IdleQuickDockActivity && telemetry.isDesktopDropRunning)
+            ) {
+                CompactHeaderIconButton(
+                    icon = Icons.Outlined.Stop,
+                    contentDescription = "Stop Desktop Drop",
+                    tint = MaterialTheme.colorScheme.error,
+                    destructive = true,
+                    tag = "cockpit-stop-drop",
+                    onClick = onStopDesktopDrop,
+                )
+            }
+            if (primary is CockpitLiveActivity.WhatsAppAlertActivity && primary.canInlineReply) {
+                CompactHeaderIconButton(
+                    icon = Icons.AutoMirrored.Outlined.Reply,
+                    contentDescription = if (slotState.inlineReplyOpen) "Hide Reply" else "Reply",
+                    tint = if (slotState.inlineReplyOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
+                    highlighted = slotState.inlineReplyOpen,
+                    tag = "cockpit-reply-toggle",
+                    onClick = { onToggleInlineReply(!slotState.inlineReplyOpen) },
                 )
             }
             if (hasActiveDismiss) {
@@ -1039,72 +1359,15 @@ private fun ExpandedCockpitCardContent(
             )
         }
 
-        // Sleek compact icon-only action strip (zero oversized text pills) when 4+ actions or compact width.
-        if (splitCompactActionBar) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .testTag("cockpit-header-actions"),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny, Alignment.End),
-            ) {
-                when (primary) {
-                    is CockpitLiveActivity.TimerRecordingActivity ->
-                        StatusChip(label = primary.timeText, accent = accent)
-                    is CockpitLiveActivity.MediaActivity ->
-                        StatusChip(label = primary.artist.ifBlank { "Playing" }, accent = accent)
-                    is CockpitLiveActivity.IdleQuickDockActivity ->
-                        StatusChip(label = telemetry.statusHeadline, accent = accent)
-                    else -> Unit
-                }
-                Spacer(Modifier.weight(1f))
-                if (compactWidthStack && canSwap) {
-                    CompactHeaderIconButton(
-                        icon = Icons.Outlined.SwapHoriz,
-                        contentDescription = "Swap activity (${slotState.activeIndex + 1} of ${slotState.visibleQueue.size})",
-                        tint = MaterialTheme.colorScheme.primary,
-                        tag = "cockpit-cycle-next",
-                        onClick = onCycleNext,
-                    )
-                }
-                if (hasRestore) {
-                    CompactHeaderIconButton(
-                        icon = Icons.Outlined.Restore,
-                        contentDescription = "Restore hidden (${slotState.dismissedCount})",
-                        tint = MaterialTheme.colorScheme.secondary,
-                        tag = "cockpit-restore-hidden",
-                        onClick = onRestoreDismissed,
-                    )
-                }
-                CompactHeaderIconButton(
-                    icon = Icons.AutoMirrored.Outlined.OpenInNew,
-                    contentDescription = primaryOpenDescription,
-                    tint = accent,
-                    tag = "cockpit-expanded-open-app",
-                    onClick = onPrimaryOpenClick,
-                )
-                if (primary is CockpitLiveActivity.TransferActivity && primary.canStop) {
-                    CompactHeaderIconButton(
-                        icon = Icons.Outlined.Stop,
-                        contentDescription = "Stop Desktop Drop",
-                        tint = MaterialTheme.colorScheme.error,
-                        destructive = true,
-                        tag = "cockpit-stop-drop",
-                        onClick = onStopDesktopDrop,
-                    )
-                }
-                if (primary is CockpitLiveActivity.WhatsAppAlertActivity && primary.canInlineReply) {
-                    CompactHeaderIconButton(
-                        icon = Icons.AutoMirrored.Outlined.Reply,
-                        contentDescription = if (slotState.inlineReplyOpen) "Hide Reply" else "Reply",
-                        tint = if (slotState.inlineReplyOpen) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
-                        highlighted = slotState.inlineReplyOpen,
-                        tag = "cockpit-reply-toggle",
-                        onClick = { onToggleInlineReply(!slotState.inlineReplyOpen) },
-                    )
-                }
-            }
-        }
+        // Live, activity-specific info strip (Desktop Drop URL + Copy + PIN + speed + counts,
+        // Navigation ETA/km/speed, Calls duration/audio route, or Default live up/down speed + connection).
+        ExpandedActivityInfoStrip(
+            primary = primary,
+            telemetry = telemetry,
+            callAudio = callAudio,
+            liveNet = liveNet,
+            accent = accent,
+        )
 
         // Active Live Activity minimal body (progress bar or inline reply field only).
         when (primary) {
@@ -1170,18 +1433,18 @@ private fun ExpandedCockpitCardContent(
             is CockpitLiveActivity.IdleQuickDockActivity -> Unit
         }
 
-        // 5-Control Tactile Glass Quick Deck (Android 17 Pixel Style):
+        // Aligned 2-column Quick Deck Grid:
         // Row 1: Wi-Fi (marquee SSID) + Mobile Data (monthly usage)
-        // Row 2: Bluetooth (connected count) + Ringer Mode (3-state) + Icon-Only Flash button
-        // Torch ON springs open full-width Liquid-Glass Pill Brightness Scrubber + SOS chip.
+        // Row 2: Bluetooth (connected count) + Sound (3-state ringer)
+        // Row 3: Labelled Torch tile spanning the same grid edges (expands brightness slider + SOS when ON)
         QuickDeckSection(
             torchState = torchState,
             quickControls = quickControls,
-            stackRow1 = largeFontStack,
-            stackRow2 = compactWidthStack,
+            stackTiles = compactWidthStack,
             reducedMotion = reducedMotion,
             onTapWifi = onTapWifi,
             onLongPressWifi = onLongPressWifi,
+            onTapWifiLocationHint = onTapWifiLocationHint,
             onTapMobileData = onTapMobileData,
             onLongPressMobileData = onLongPressMobileData,
             onTapBluetooth = onTapBluetooth,
@@ -1191,7 +1454,7 @@ private fun ExpandedCockpitCardContent(
             onToggleTorchSos = onToggleTorchSos,
         )
 
-        // Pinned Apps Quick Dock with pre-resolved real app icons.
+        // Pinned Apps Quick Dock with edge fade + scroll chevron whenever items overflow.
         Column(verticalArrangement = Arrangement.spacedBy(Tokens.Snug)) {
             Text(
                 text = "Pinned Apps",
@@ -1205,56 +1468,99 @@ private fun ExpandedCockpitCardContent(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             } else {
-                Row(
+                val pinnedScroll = rememberScrollState()
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        .testTag("cockpit-pinned-apps-row"),
                 ) {
-                    pinnedApps.forEach { app ->
-                        val iconBmp = cachedAppIcons[app.packageName]
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(pinnedScroll)
+                            .padding(end = if (pinnedScroll.canScrollForward) Tokens.Section else Tokens.NoInset),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    ) {
+                        pinnedApps.forEach { app ->
+                            val iconBmp = cachedAppIcons[app.packageName]
+                            Box(
+                                modifier = Modifier
+                                    .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
+                                    .clip(Tokens.PillShape)
+                                    .background(GlassPalette.Well)
+                                    .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
+                                    .clickable(role = Role.Button, onClickLabel = "Open ${app.label}") {
+                                        onLaunchPinnedApp(app.packageName)
+                                    }
+                                    .padding(horizontal = Tokens.Medium, vertical = Tokens.Small)
+                                    .testTag("cockpit-pinned-${app.packageName}"),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                                ) {
+                                    if (iconBmp != null) {
+                                        Image(
+                                            bitmap = iconBmp,
+                                            contentDescription = null,
+                                            contentScale = ContentScale.Crop,
+                                            modifier = Modifier
+                                                .size(Tokens.IconSmall)
+                                                .clip(CircleShape),
+                                        )
+                                    } else {
+                                        Icon(
+                                            imageVector = Icons.Outlined.Apps,
+                                            contentDescription = null,
+                                            tint = MaterialTheme.colorScheme.tertiary,
+                                            modifier = Modifier.size(Tokens.IconSmall),
+                                        )
+                                    }
+                                    Text(
+                                        text = app.label,
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.onSurface,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                    if (pinnedScroll.canScrollBackward) {
                         Box(
                             modifier = Modifier
-                                .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
-                                .clip(Tokens.PillShape)
-                                .background(GlassPalette.Well)
-                                .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.PillShape)
-                                .clickable(role = Role.Button, onClickLabel = "Open ${app.label}") {
-                                    onLaunchPinnedApp(app.packageName)
-                                }
-                                .padding(horizontal = Tokens.Medium, vertical = Tokens.Small)
-                                .testTag("cockpit-pinned-${app.packageName}"),
-                            contentAlignment = Alignment.Center,
-                        ) {
-                            Row(
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
-                            ) {
-                                if (iconBmp != null) {
-                                    Image(
-                                        bitmap = iconBmp,
-                                        contentDescription = null,
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(Tokens.IconSmall)
-                                            .clip(CircleShape),
-                                    )
-                                } else {
-                                    Icon(
-                                        imageVector = Icons.Outlined.Apps,
-                                        contentDescription = null,
-                                        tint = MaterialTheme.colorScheme.tertiary,
-                                        modifier = Modifier.size(Tokens.IconSmall),
-                                    )
-                                }
-                                Text(
-                                    text = app.label,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.onSurface,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis,
+                                .align(Alignment.CenterStart)
+                                .width(Tokens.Cockpit.PinnedScrollFadeWidth)
+                                .height(Tokens.TouchTarget)
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(GlassPalette.HudDockFill, Color.Transparent),
+                                    ),
+                                ),
+                        )
+                    }
+                    if (pinnedScroll.canScrollForward) {
+                        Box(
+                            modifier = Modifier
+                                .align(Alignment.CenterEnd)
+                                .width(Tokens.Cockpit.PinnedScrollFadeWidth)
+                                .height(Tokens.TouchTarget)
+                                .background(
+                                    Brush.horizontalGradient(
+                                        listOf(Color.Transparent, GlassPalette.HudDockFill),
+                                    ),
                                 )
-                            }
+                                .testTag("cockpit-pinned-scroll-hint"),
+                            contentAlignment = Alignment.CenterEnd,
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ChevronRight,
+                                contentDescription = "Scroll for more pinned apps",
+                                tint = MaterialTheme.colorScheme.primary,
+                                modifier = Modifier.size(Tokens.IconSmall),
+                            )
                         }
                     }
                 }
@@ -1263,16 +1569,316 @@ private fun ExpandedCockpitCardContent(
     }
 }
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalLayoutApi::class)
+@Composable
+private fun ExpandedActivityInfoStrip(
+    primary: CockpitLiveActivity,
+    telemetry: DriveLiftTelemetrySummary,
+    callAudio: CallAudioUiState,
+    liveNet: IdleNetworkSnapshot,
+    accent: Color,
+) {
+    val context = LocalContext.current
+    var copiedUrl by remember(telemetry.desktopDropUrl) { mutableStateOf(false) }
+    val showDesktopDropStrip = (primary is CockpitLiveActivity.TransferActivity && primary.isDesktopDrop) ||
+        (primary is CockpitLiveActivity.IdleQuickDockActivity && telemetry.isDesktopDropRunning)
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(Tokens.Cockpit.QuickDeckShape)
+            .background(GlassPalette.Well)
+            .border(Tokens.Hairline, GlassPalette.WellEdge, Tokens.Cockpit.QuickDeckShape)
+            .padding(horizontal = Tokens.Row, vertical = Tokens.Small)
+            .testTag("cockpit-expanded-info-strip"),
+        verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+    ) {
+        when {
+            showDesktopDropStrip -> {
+                val url = telemetry.desktopDropUrl
+                if (!url.isNullOrBlank()) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                    ) {
+                        Text(
+                            text = url,
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.SemiBold,
+                                fontFeatureSettings = TABULAR_DIGITS,
+                            ),
+                            color = MaterialTheme.colorScheme.primary,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("cockpit-drop-url"),
+                        )
+                        Box(
+                            modifier = Modifier
+                                .defaultMinSize(minWidth = Tokens.TouchTarget, minHeight = Tokens.TouchTarget)
+                                .clip(Tokens.PillShape)
+                                .clickable(role = Role.Button, onClickLabel = "Copy Desktop Drop address") {
+                                    runCatching {
+                                        val cm = context.getSystemService(ClipboardManager::class.java)
+                                        cm?.setPrimaryClip(ClipData.newPlainText("Desktop Drop URL", url))
+                                        copiedUrl = true
+                                    }
+                                }
+                                .padding(horizontal = Tokens.Small)
+                                .testTag("cockpit-drop-copy-url"),
+                            contentAlignment = Alignment.Center,
+                        ) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.ContentCopy,
+                                    contentDescription = if (copiedUrl) "Address copied" else "Copy address",
+                                    tint = if (copiedUrl) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
+                                    modifier = Modifier.size(Tokens.IconSmall),
+                                )
+                                Text(
+                                    text = if (copiedUrl) "Copied" else "Copy",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                                    color = if (copiedUrl) MaterialTheme.colorScheme.tertiary else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                )
+                            }
+                        }
+                    }
+                }
+                val upRate = if (telemetry.desktopDropUploadBytesPerSec > 0L) {
+                    telemetry.desktopDropUploadBytesPerSec
+                } else {
+                    liveNet.uploadBytesPerSec
+                }
+                val downRate = if (telemetry.desktopDropDownloadBytesPerSec > 0L) {
+                    telemetry.desktopDropDownloadBytesPerSec
+                } else {
+                    liveNet.downloadBytesPerSec
+                }
+                val stackMetrics = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE
+                val countsAndPinRow: @Composable () -> Unit = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    ) {
+                        if (!telemetry.desktopDropPairingCode.isNullOrBlank()) {
+                            Text(
+                                text = "PIN ${telemetry.desktopDropPairingCode}",
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontWeight = FontWeight.Bold,
+                                    fontFeatureSettings = TABULAR_DIGITS,
+                                ),
+                                color = accent,
+                                maxLines = 1,
+                                modifier = Modifier.testTag("cockpit-drop-pin"),
+                            )
+                        }
+                        Text(
+                            text = "Sent ${telemetry.desktopDropSentCount} · Recv ${telemetry.desktopDropReceivedCount}",
+                            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = TABULAR_DIGITS),
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                            modifier = Modifier.testTag("cockpit-drop-counts"),
+                        )
+                    }
+                }
+                val speedsRow: @Composable () -> Unit = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                    ) {
+                        SpeedFigure(
+                            text = CockpitNetworkFormat.formatRate(upRate),
+                            up = true,
+                            tint = CockpitLivePalette.Cyan,
+                            compact = true,
+                        )
+                        SpeedFigure(
+                            text = CockpitNetworkFormat.formatRate(downRate),
+                            up = false,
+                            tint = CockpitLivePalette.Emerald,
+                            compact = true,
+                        )
+                    }
+                }
+                if (stackMetrics) {
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                    ) {
+                        countsAndPinRow()
+                        speedsRow()
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                    ) {
+                        Box(Modifier.weight(1f)) { countsAndPinRow() }
+                        Spacer(Modifier.width(Tokens.Snug))
+                        speedsRow()
+                    }
+                }
+            }
+            primary is CockpitLiveActivity.MapsNavActivity -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    InfoStripMetric(label = "ETA", value = primary.etaText.ifBlank { "--" }, tint = accent)
+                    InfoStripMetric(
+                        label = "Left",
+                        value = TripDistanceFormat.hudValue(primary.remainingTripKm, primary.tripUsesMiles),
+                        tint = MaterialTheme.colorScheme.onSurface,
+                    )
+                    InfoStripMetric(
+                        label = "Speed",
+                        value = "${TripDistanceFormat.speedValue(primary.speedKmh)} km/h",
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            primary is CockpitLiveActivity.CallActivity -> {
+                val now by rememberTickingNowMs()
+                val routeLabel = when (callAudio.output) {
+                    CallAudioOutput.BLUETOOTH -> "Bluetooth"
+                    CallAudioOutput.WIRED -> "Headset"
+                    CallAudioOutput.SPEAKER -> "Speaker"
+                    CallAudioOutput.EARPIECE -> "Earpiece"
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    InfoStripMetric(
+                        label = "Duration",
+                        value = CockpitDurationFormat.clock(now - primary.startedAtMs),
+                        tint = accent,
+                    )
+                    InfoStripMetric(
+                        label = "Audio",
+                        value = routeLabel,
+                        tint = MaterialTheme.colorScheme.primary,
+                    )
+                }
+            }
+            primary is CockpitLiveActivity.TimerRecordingActivity -> {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    InfoStripMetric(
+                        label = if (primary.isRecording) "Recording" else "Timer",
+                        value = primary.timeText.ifBlank { "--:--" },
+                        tint = accent,
+                    )
+                    InfoStripMetric(
+                        label = "Status",
+                        value = if (primary.isRecording) "Active" else "Running",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            else -> {
+                val connIcon = when (liveNet.kind) {
+                    IdleNetworkKind.WIFI -> Icons.Outlined.Wifi
+                    IdleNetworkKind.CELLULAR -> Icons.Outlined.SignalCellularAlt
+                    IdleNetworkKind.OFFLINE -> Icons.Outlined.WifiOff
+                }
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
+                    ) {
+                        Icon(
+                            imageVector = connIcon,
+                            contentDescription = null,
+                            tint = if (liveNet.kind == IdleNetworkKind.OFFLINE) {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            } else {
+                                MaterialTheme.colorScheme.primary
+                            },
+                            modifier = Modifier.size(Tokens.IconSmall),
+                        )
+                        Text(
+                            text = liveNet.label,
+                            style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        modifier = Modifier.testTag("cockpit-expanded-net-speeds"),
+                    ) {
+                        SpeedFigure(
+                            text = liveNet.uploadText,
+                            up = true,
+                            tint = CockpitLivePalette.Cyan,
+                            compact = true,
+                        )
+                        SpeedFigure(
+                            text = liveNet.downloadText,
+                            up = false,
+                            tint = CockpitLivePalette.Emerald,
+                            compact = true,
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InfoStripMetric(label: String, value: String, tint: Color) {
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelSmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+        )
+        Text(
+            text = value,
+            style = MaterialTheme.typography.labelSmall.copy(
+                fontWeight = FontWeight.Bold,
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = tint,
+            maxLines = 1,
+        )
+    }
+}
+
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun QuickDeckSection(
     torchState: TorchUiState,
     quickControls: CockpitQuickControlsState,
-    stackRow1: Boolean,
-    stackRow2: Boolean,
+    stackTiles: Boolean,
     reducedMotion: Boolean,
     onTapWifi: () -> Unit,
     onLongPressWifi: () -> Unit,
+    onTapWifiLocationHint: () -> Unit,
     onTapMobileData: () -> Unit,
     onLongPressMobileData: () -> Unit,
     onTapBluetooth: () -> Unit,
@@ -1311,14 +1917,27 @@ private fun QuickDeckSection(
         CockpitRingerMode.SILENT -> Icons.Outlined.NotificationsOff to MaterialTheme.colorScheme.secondary
     }
 
+    val torchEnabled = torchState.available
+    val torchIsOn = torchState.isOn && torchEnabled
+    val torchSubtitle = when {
+        !torchEnabled -> "Cam Busy"
+        torchIsOn -> "On"
+        else -> "Off"
+    }
+    val torchClickLabel = when {
+        !torchEnabled -> "Torch unavailable while camera is in use"
+        torchIsOn -> "Turn torch off"
+        else -> "Turn torch on"
+    }
+
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("cockpit-quick-deck"),
         verticalArrangement = Arrangement.spacedBy(Tokens.Small),
     ) {
-        // Row 1: Wi-Fi (left-aligned SSID with end ellipsis) + Mobile Data (monthly consumption)
-        if (stackRow1) {
+        // Row 1: Wi-Fi (marquee SSID respecting reduced motion) + Mobile Data (monthly usage)
+        if (stackTiles) {
             Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                 QuickDeckTile(
                     icon = if (wifiActive) Icons.Outlined.Wifi else Icons.Outlined.WifiOff,
@@ -1326,6 +1945,7 @@ private fun QuickDeckSection(
                     subtitle = quickControls.wifi.label,
                     active = wifiActive,
                     accent = wifiAccent,
+                    marqueeSubtitle = true,
                     onClick = onTapWifi,
                     onLongClick = onLongPressWifi,
                     clickLabel = "Open internet controls",
@@ -1361,6 +1981,7 @@ private fun QuickDeckSection(
                     subtitle = quickControls.wifi.label,
                     active = wifiActive,
                     accent = wifiAccent,
+                    marqueeSubtitle = true,
                     onClick = onTapWifi,
                     onLongClick = onLongPressWifi,
                     clickLabel = "Open internet controls",
@@ -1387,13 +2008,42 @@ private fun QuickDeckSection(
             }
         }
 
-        // Row 2: Bluetooth + Ringer Mode + Icon-Only Flash Toggle
-        if (stackRow2) {
-            FlowRow(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+        // One-tap hint when connected to Wi-Fi without location permission or location services.
+        val locationHint = quickControls.wifi.locationHint
+        if (quickControls.wifi.needsLocationHint && !locationHint.isNullOrBlank()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .defaultMinSize(minHeight = Tokens.TouchTarget)
+                    .clip(Tokens.Cockpit.QuickDeckShape)
+                    .background(GlassPalette.Well)
+                    .border(Tokens.Hairline, MaterialTheme.colorScheme.primary.copy(alpha = 0.45f), Tokens.Cockpit.QuickDeckShape)
+                    .clickable(role = Role.Button, onClickLabel = locationHint, onClick = onTapWifiLocationHint)
+                    .padding(horizontal = Tokens.Row, vertical = Tokens.Small)
+                    .testTag("cockpit-wifi-location-hint"),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
             ) {
+                Icon(
+                    imageVector = Icons.Outlined.LocationOn,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(Tokens.IconSmall),
+                )
+                Text(
+                    text = locationHint,
+                    style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                    color = MaterialTheme.colorScheme.primary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.weight(1f),
+                )
+            }
+        }
+
+        // Row 2: Bluetooth + Sound sharing the exact same 2-column grid edges as Row 1.
+        if (stackTiles) {
+            Column(verticalArrangement = Arrangement.spacedBy(Tokens.Small)) {
                 QuickDeckTile(
                     icon = when {
                         !btActive -> Icons.Outlined.BluetoothDisabled
@@ -1410,28 +2060,18 @@ private fun QuickDeckSection(
                         .fillMaxWidth()
                         .testTag("cockpit-tile-bluetooth"),
                 )
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    QuickDeckTile(
-                        icon = ringerIcon,
-                        title = "Sound",
-                        subtitle = quickControls.ringer.label,
-                        active = true,
-                        accent = ringerAccent,
-                        onClick = onCycleRingerMode,
-                        clickLabel = "Cycle ringer mode",
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("cockpit-tile-ringer"),
-                    )
-                    IconOnlyTorchTile(
-                        torchState = torchState,
-                        onToggleTorch = onToggleTorch,
-                    )
-                }
+                QuickDeckTile(
+                    icon = ringerIcon,
+                    title = "Sound",
+                    subtitle = quickControls.ringer.label,
+                    active = true,
+                    accent = ringerAccent,
+                    onClick = onCycleRingerMode,
+                    clickLabel = "Cycle ringer mode",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cockpit-tile-ringer"),
+                )
             }
         } else {
             Row(
@@ -1467,12 +2107,23 @@ private fun QuickDeckSection(
                         .weight(1f)
                         .testTag("cockpit-tile-ringer"),
                 )
-                IconOnlyTorchTile(
-                    torchState = torchState,
-                    onToggleTorch = onToggleTorch,
-                )
             }
         }
+
+        // Row 3: Full-width labelled Torch tile aligned with the exact outer grid edges (no lone odd square).
+        QuickDeckTile(
+            icon = if (torchIsOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
+            title = "Torch",
+            subtitle = torchSubtitle,
+            active = torchIsOn,
+            enabled = torchEnabled,
+            accent = GlassPalette.PrimaryCyan,
+            onClick = onToggleTorch,
+            clickLabel = torchClickLabel,
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("cockpit-torch-toggle"),
+        )
 
         // Torch ON smoothly reveals Liquid-Glass Pill Brightness Scrubber + SOS chip.
         val sliderEnter = if (reducedMotion) {
@@ -1554,31 +2205,38 @@ private fun QuickDeckTile(
     onClick: () -> Unit,
     clickLabel: String,
     modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    marqueeSubtitle: Boolean = false,
     onLongClick: (() -> Unit)? = null,
     longClickLabel: String? = null,
     isShimmerLoading: Boolean = false,
 ) {
     val haptics = LocalHapticFeedback.current
     val reducedMotion = LocalReducedMotion.current
-    val fillBrush = if (active) {
-        Brush.verticalGradient(
+    val fillBrush = when {
+        !enabled -> SolidColor(GlassPalette.HudTileDisabled)
+        active -> Brush.verticalGradient(
             listOf(
                 accent.copy(alpha = 0.22f),
                 GlassPalette.HudTileRecessed,
             ),
         )
-    } else {
-        Brush.verticalGradient(
+        else -> Brush.verticalGradient(
             listOf(
                 GlassPalette.Well,
                 GlassPalette.HudTileRecessed,
             ),
         )
     }
-    val borderColor = if (active) accent.copy(alpha = 0.55f) else GlassPalette.WellEdge
+    val borderColor = when {
+        !enabled -> GlassPalette.HudTileDisabledBorder
+        active -> accent.copy(alpha = 0.55f)
+        else -> GlassPalette.WellEdge
+    }
 
     val interactiveMod = if (onLongClick != null) {
         Modifier.combinedClickable(
+            enabled = enabled,
             role = Role.Button,
             onClickLabel = clickLabel,
             onLongClickLabel = longClickLabel,
@@ -1593,6 +2251,7 @@ private fun QuickDeckTile(
         )
     } else {
         Modifier.clickable(
+            enabled = enabled,
             role = Role.Button,
             onClickLabel = clickLabel,
         ) {
@@ -1601,6 +2260,7 @@ private fun QuickDeckTile(
         }
     }
 
+    val useMarquee = marqueeSubtitle && !reducedMotion
     Row(
         modifier = modifier
             .defaultMinSize(minHeight = Tokens.Cockpit.QuickTileMinHeight)
@@ -1608,6 +2268,9 @@ private fun QuickDeckTile(
             .background(fillBrush)
             .border(Tokens.Hairline, borderColor, Tokens.Cockpit.QuickDeckShape)
             .then(interactiveMod)
+            .semantics(mergeDescendants = true) {
+                contentDescription = "$title, $subtitle"
+            }
             .padding(horizontal = Tokens.Row, vertical = Tokens.Tiny),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(Tokens.Snug),
@@ -1615,7 +2278,11 @@ private fun QuickDeckTile(
         Icon(
             imageVector = icon,
             contentDescription = null,
-            tint = if (active) accent else MaterialTheme.colorScheme.onSurfaceVariant,
+            tint = when {
+                !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
+                active -> accent
+                else -> MaterialTheme.colorScheme.onSurfaceVariant
+            },
             modifier = Modifier.size(Tokens.IconSmall),
         )
         Column(Modifier.weight(1f)) {
@@ -1634,11 +2301,27 @@ private fun QuickDeckTile(
                 Text(
                     text = subtitle,
                     style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
-                    color = if (active) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = when {
+                        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.55f)
+                        active -> MaterialTheme.colorScheme.onSurface
+                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                    },
                     textAlign = TextAlign.Start,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.fillMaxWidth(),
+                    softWrap = false,
+                    overflow = if (useMarquee) TextOverflow.Clip else TextOverflow.Ellipsis,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .then(
+                            if (useMarquee) {
+                                Modifier.basicMarquee(
+                                    iterations = Int.MAX_VALUE,
+                                    velocity = Tokens.Cockpit.WifiSsidMarqueeVelocity,
+                                )
+                            } else {
+                                Modifier
+                            },
+                        ),
                 )
             }
         }
@@ -1670,65 +2353,6 @@ private fun ShimmerLoadingBar(reducedMotion: Boolean) {
             .clip(Tokens.PillShape)
             .background(MaterialTheme.colorScheme.onSurface.copy(alpha = shimmerAlpha)),
     )
-}
-
-@Composable
-private fun IconOnlyTorchTile(
-    torchState: TorchUiState,
-    onToggleTorch: () -> Unit,
-) {
-    val haptics = LocalHapticFeedback.current
-    val enabled = torchState.available
-    val isOn = torchState.isOn && enabled
-    val bgColor = when {
-        !enabled -> GlassPalette.HudTileDisabled
-        isOn -> GlassPalette.PrimaryCyan.copy(alpha = 0.24f)
-        else -> GlassPalette.Well
-    }
-    val borderColor = when {
-        !enabled -> GlassPalette.HudTileDisabledBorder
-        isOn -> GlassPalette.PrimaryCyan
-        else -> GlassPalette.WellEdge
-    }
-    val iconTint = when {
-        !enabled -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.45f)
-        isOn -> GlassPalette.PrimaryCyan
-        else -> MaterialTheme.colorScheme.onSurface
-    }
-    val contentDesc = when {
-        !enabled -> "Flashlight unavailable while camera is in use"
-        isOn -> "Turn flashlight off"
-        else -> "Turn flashlight on"
-    }
-
-    Box(
-        modifier = Modifier
-            .size(Tokens.Cockpit.QuickTileMinHeight)
-            .clip(Tokens.Cockpit.QuickDeckShape)
-            .background(bgColor)
-            .border(
-                width = if (isOn) Tokens.Stroke else Tokens.Hairline,
-                color = borderColor,
-                shape = Tokens.Cockpit.QuickDeckShape,
-            )
-            .clickable(
-                enabled = enabled,
-                role = Role.Button,
-                onClickLabel = contentDesc,
-            ) {
-                haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                onToggleTorch()
-            }
-            .testTag("cockpit-torch-toggle"),
-        contentAlignment = Alignment.Center,
-    ) {
-        Icon(
-            imageVector = if (isOn) Icons.Outlined.FlashlightOn else Icons.Outlined.FlashlightOff,
-            contentDescription = contentDesc,
-            tint = iconTint,
-            modifier = Modifier.size(Tokens.Icon),
-        )
-    }
 }
 
 @Composable
@@ -1922,24 +2546,6 @@ private fun CompactHeaderIconButton(
                 modifier = Modifier.size(Tokens.IconSmall),
             )
         }
-    }
-}
-
-@Composable
-private fun StatusChip(label: String, accent: Color) {
-    Box(
-        modifier = Modifier
-            .clip(Tokens.PillShape)
-            .background(accent.copy(alpha = 0.14f))
-            .border(Tokens.Hairline, accent.copy(alpha = 0.45f), Tokens.PillShape)
-            .padding(horizontal = Tokens.Medium, vertical = Tokens.Snug),
-    ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelMedium,
-            color = accent,
-            maxLines = 1,
-        )
     }
 }
 
