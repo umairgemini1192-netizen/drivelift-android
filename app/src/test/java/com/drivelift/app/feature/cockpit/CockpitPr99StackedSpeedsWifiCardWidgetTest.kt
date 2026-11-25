@@ -9,7 +9,11 @@ import android.widget.FrameLayout
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.width
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.test.assertHeightIsAtLeast
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getBoundsInRoot
@@ -378,6 +382,79 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         }
     }
 
+    @Test
+    fun expandedCardWrapsSixHeaderActionsOnCompact320DpSoCollapseRemainsTappable() {
+        val drop = CockpitLiveActivity.TransferActivity(
+            id = CockpitLiveActivity.ID_DESKTOP_DROP,
+            title = "Desktop Drop",
+            subtitle = "Waiting for transfer",
+            speedText = "LAN ready",
+            progressFraction = null,
+            isDesktopDrop = true,
+            canStop = true,
+        )
+        val nav = CockpitLiveActivity.MapsNavActivity(
+            id = "nav:compact",
+            instruction = "Turn left",
+            distanceText = "300 m",
+            etaText = "4 min",
+        )
+        var collapsedCount = 0
+
+        ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.setContent {
+                    DriveLiftTheme {
+                        GlassBackdrop {
+                            Box(modifier = Modifier.width(320.dp)) {
+                                ExpandedCockpitCard(
+                                    slotState = CockpitSlotState(
+                                        primary = drop,
+                                        secondary = nav,
+                                        visibleQueue = listOf(drop, nav),
+                                        dismissedCount = 1,
+                                    ),
+                                    telemetry = DriveLiftTelemetrySummary(
+                                        isDesktopDropRunning = true,
+                                        desktopDropUrl = "http://192.168.1.42:8080",
+                                    ),
+                                    torchState = TorchUiState(available = true, isOn = false),
+                                    pinnedApps = emptyList(),
+                                    onCollapse = { collapsedCount++ },
+                                    onCycleNext = {},
+                                    onCyclePrevious = {},
+                                    onSoftDismiss = {},
+                                    onRestoreDismissed = {},
+                                    onTapActivity = {},
+                                    onStopDesktopDrop = {},
+                                    onOpenDriveLiftCockpit = {},
+                                    onToggleInlineReply = {},
+                                    onSendWhatsAppReply = { _, _ -> },
+                                    onToggleTorch = {},
+                                    onTorchBrightnessChange = {},
+                                    onToggleTorchSos = {},
+                                    onLaunchPinnedApp = {},
+                                )
+                            }
+                        }
+                    }
+                }
+            }
+            compose.waitForIdle()
+
+            // All 6 header buttons (Swap, Restore, Open, Stop, Close, Collapse) must be reachable
+            // without horizontal scrolling even inside a 320 dp viewport.
+            compose.onNodeWithTag("cockpit-cycle-next").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-restore-hidden").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-expanded-open-app").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-stop-drop").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-soft-dismiss").assertIsDisplayed()
+            compose.onNodeWithTag("cockpit-collapse").assertIsDisplayed().performClick()
+            compose.waitForIdle()
+            assertEquals(1, collapsedCount)
+        }
+    }
+
     // ------------------------------------------------------------------ 5. Activity pill cap & speeds
 
     @Test
@@ -398,6 +475,18 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             downloadBytesPerSec = (2.6 * 1024 * 1024).toLong(),
         )
         val capDp = computeSafePillMaxWidthDp(screenWidthDp = 412, widthDeltaDp = 0, hasSatelliteBubble = false)
+        // With a satellite bubble + symmetric start counterweight, total split row width stays within safe margins.
+        val bothCounterweights = ((Tokens.TouchTarget + Tokens.Cockpit.SplitGap).value.toInt()) * 2
+        val compactSplitPrimary = computeSafePillMaxWidthDp(screenWidthDp = 320, widthDeltaDp = 0, hasSatelliteBubble = true)
+        assertTrue(
+            "320dp split row ${compactSplitPrimary + bothCounterweights}dp must preserve 48dp side margins",
+            compactSplitPrimary + bothCounterweights <= 320 - 96,
+        )
+        val pixelSplitPrimary = computeSafePillMaxWidthDp(screenWidthDp = 412, widthDeltaDp = 0, hasSatelliteBubble = true)
+        assertTrue(
+            "412dp split row ${pixelSplitPrimary + bothCounterweights}dp must respect hard cap",
+            pixelSplitPrimary + bothCounterweights <= Tokens.Cockpit.PillHardMaxWidth.value.toInt(),
+        )
 
         ActivityScenario.launch(ComponentActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->

@@ -176,16 +176,22 @@ internal fun computeSafePillMaxWidthDp(
     widthDeltaDp: Int,
     hasSatelliteBubble: Boolean,
 ): Int {
-    val minFloor = (Tokens.Cockpit.PillMinWidth - Tokens.Header).value.toInt()
     val sideMargin = if (screenWidthDp < Tokens.COMPACT_WIDTH_DP) {
         Tokens.Cockpit.StatusBarCompactSideMargin.value.toInt()
     } else {
         Tokens.Cockpit.StatusBarSafeSideMargin.value.toInt()
     }
     val satelliteReserve = if (hasSatelliteBubble) {
-        (Tokens.Cockpit.BubbleSize + Tokens.Cockpit.SplitGap).value.toInt()
+        // Reserve both the end satellite touch container + gap AND the symmetric start
+        // counterweight + gap so the centred split row stays within safe status-bar margins.
+        ((Tokens.TouchTarget + Tokens.Cockpit.SplitGap).value.toInt()) * 2
     } else {
         0
+    }
+    val minFloor = if (hasSatelliteBubble) {
+        (Tokens.Cockpit.PillMinWidth - Tokens.Header - Tokens.Small).value.toInt()
+    } else {
+        (Tokens.Cockpit.PillMinWidth - Tokens.Header).value.toInt()
     }
     val maxForScreen = (screenWidthDp - (sideMargin * 2) - satelliteReserve).coerceAtLeast(minFloor)
     val hardCap = (Tokens.Cockpit.PillHardMaxWidth.value.toInt() - satelliteReserve).coerceAtLeast(minFloor)
@@ -804,8 +810,9 @@ fun CollapsedSplitIslandRow(
         widthDeltaDp = widthDeltaDp,
         hasSatelliteBubble = secondary != null,
     ).dp
+    val minFloorWidth = minOf(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
-        .coerceIn(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
+        .coerceIn(minFloorWidth, maxPillWidth)
     val canSwap = slotState.visibleQueue.size > 1
     val canSwipeUpDismiss = primary is CockpitLiveActivity.WhatsAppAlertActivity
     val dragOffset = remember { Animatable(0f) }
@@ -971,6 +978,7 @@ fun CollapsedSplitIslandRow(
  * Standalone Expanded Cockpit Card composable kept for direct Roborazzi snapshot verification and
  * shared internal layout with [DynamicIslandOverlay].
  */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 fun ExpandedCockpitCard(
     slotState: CockpitSlotState,
@@ -1244,14 +1252,15 @@ private fun ExpandedCockpitCardContent(
             }
         }
 
-        // Single compact icon-only action row (Open, Stop/Reply, Swap, Restore, Close, Collapse).
-        Row(
+        // Compact icon-only action row (Open, Stop/Reply, Swap, Restore, Close, Collapse).
+        // Uses FlowRow so normal widths stay on one compact row while narrow 320 dp phones with
+        // all six buttons wrap cleanly instead of fighting parent horizontal swipe gestures.
+        FlowRow(
             modifier = Modifier
                 .fillMaxWidth()
-                .horizontalScroll(rememberScrollState())
                 .testTag("cockpit-header-actions"),
-            verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(Tokens.Tiny, Alignment.End),
+            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
         ) {
             if (canSwap) {
                 CompactHeaderIconButton(
