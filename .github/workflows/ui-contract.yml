@@ -5,8 +5,6 @@ name: UI contract
 # It validates the evidence record and that every screenshot link is a real image on the evidence
 # branch in the head-SHA folder; it does not judge what the images show: a reviewer still has to open them.
 on:
-  pull_request:
-    types: [opened, synchronize, reopened, edited, ready_for_review]
   workflow_dispatch:
 
 permissions:

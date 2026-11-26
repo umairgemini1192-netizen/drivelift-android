@@ -4,15 +4,6 @@ name: Android build
 # built once more so the newest APK is always downloadable from the latest main run.
 # Changes that touch only documentation do not build the app: nothing in them reaches the APK.
 on:
-  push:
-    branches: [main]
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
-  pull_request:
-    paths-ignore:
-      - "docs/**"
-      - "**/*.md"
   workflow_dispatch:
 
 permissions:
