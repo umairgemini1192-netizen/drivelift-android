@@ -86,7 +86,7 @@ class CockpitPhase13bWidgetRemoteViewsHotfixTest {
     @After
     fun tearDown() {
         Graph.get(app).cockpit.pinnedAppsRepo.seedForTest(null)
-        Graph.get(app).cockpit.prefsRepo.seedForTest(CockpitPrefsState())
+        Graph.get(app).cockpit.prefsRepo.seedForTest(null)
         RuntimeEnvironment.setFontScale(1f)
         RuntimeEnvironment.setQualifiers("w360dp-h780dp-xhdpi")
     }
@@ -503,6 +503,8 @@ class CockpitPhase13bWidgetRemoteViewsHotfixTest {
             )
             assertEquals(expectedPackages, coldRepo.state.value.pinnedPackages)
             assertEquals(expectedPackages, coldRepo.readPinnedPackagesForWidget())
+            writerScope.cancel()
+            coldScope.cancel()
 
             // Also verify upgrade path when SharedPreferences mirror key is absent (pre-13b install):
             // copy the persisted DataStore file to a distinct path and confirm

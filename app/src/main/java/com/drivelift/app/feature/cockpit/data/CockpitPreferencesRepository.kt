@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.catch
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
@@ -96,17 +95,21 @@ class CockpitPreferencesRepository(
                     if (error is IOException) emit(androidx.datastore.preferences.core.emptyPreferences())
                     else throw error
                 }
-                .map(::fromPreferences)
-                .collect { loaded ->
+                .collect { prefs ->
+                    val loaded = fromPreferences(prefs)
                     val overrideMaster = explicitMasterWrite
                     val resolvedMaster = overrideMaster ?: loaded.masterEnabled
                     val overridePinned = explicitPinnedWrite
                     val resolvedPinned = overridePinned ?: loaded.pinnedPackages
                     val previousPinned = _state.value.pinnedPackages
-                    mirrorPrefs.edit()
-                        .putBoolean(KEY_MIRROR_MASTER_ENABLED, resolvedMaster)
-                        .putString(KEY_MIRROR_PINNED_PACKAGES, resolvedPinned.joinToString(PINNED_DELIMITER))
-                        .apply()
+                    mirrorPrefs.edit().apply {
+                        if (overrideMaster != null || prefs.contains(KEY_MASTER_ENABLED)) {
+                            putBoolean(KEY_MIRROR_MASTER_ENABLED, resolvedMaster)
+                        }
+                        if (overridePinned != null || prefs.contains(KEY_PINNED_PACKAGES)) {
+                            putString(KEY_MIRROR_PINNED_PACKAGES, resolvedPinned.joinToString(PINNED_DELIMITER))
+                        }
+                    }.apply()
                     _state.value = loaded.copy(
                         masterEnabled = resolvedMaster,
                         pinnedPackages = resolvedPinned,
@@ -208,7 +211,7 @@ class CockpitPreferencesRepository(
         scope.launch { togglePinnedPackage(packageName) }
     }
 
-    fun readPinnedPackagesForWidget(timeoutMs: Long = 250L): List<String> {
+    fun readPinnedPackagesForWidget(timeoutMs: Long = 1_500L): List<String> {
         explicitPinnedWrite?.let { return it }
         val current = _state.value.pinnedPackages
         if (current.isNotEmpty()) return current
@@ -245,7 +248,17 @@ class CockpitPreferencesRepository(
         }
     }
 
-    fun seedForTest(state: CockpitPrefsState) {
+    fun seedForTest(state: CockpitPrefsState?) {
+        if (state == null) {
+            explicitMasterWrite = null
+            explicitPinnedWrite = null
+            mirrorPrefs.edit()
+                .remove(KEY_MIRROR_MASTER_ENABLED)
+                .remove(KEY_MIRROR_PINNED_PACKAGES)
+                .commit()
+            _state.value = CockpitPrefsState()
+            return
+        }
         explicitMasterWrite = state.masterEnabled
         explicitPinnedWrite = state.pinnedPackages
         mirrorPrefs.edit()
