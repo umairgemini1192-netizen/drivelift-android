@@ -21,7 +21,8 @@ permissions:
 # A newer run on the same branch replaces an older one still running.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # Cancel superseded PR runs only; never cancel a main build, because Night-Shift releases from it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
   build:
