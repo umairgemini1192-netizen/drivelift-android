@@ -38,7 +38,14 @@ class CockpitModule(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
 
     val prefsRepo: CockpitPreferencesRepository by lazy {
-        CockpitPreferencesRepository(app)
+        CockpitPreferencesRepository(
+            context = app,
+            onPinnedPackagesSynced = {
+                if (CockpitGlanceWidget.hasBoundWidgets(app)) {
+                    refreshWidgetsAsync()
+                }
+            },
+        )
     }
 
     val pinnedAppsRepo: PinnedAppsRepository by lazy {

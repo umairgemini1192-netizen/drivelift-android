@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="utf-8"?>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- Active Island glass tile matching GlassWidgetStyle (SecondaryViolet #A78BFA). -->
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:angle="315"
+                android:endColor="@color/cockpit_glass_panel_fill_bottom"
+                android:startColor="@color/cockpit_glass_well_fill" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:angle="315"
+                android:endColor="#00A78BFA"
+                android:startColor="@color/cockpit_glass_tile_active_violet_fill" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <gradient
+                android:centerX="0.5"
+                android:centerY="0.45"
+                android:endColor="#00A78BFA"
+                android:gradientRadius="72dp"
+                android:startColor="@color/cockpit_glass_tile_active_violet_glow"
+                android:type="radial" />
+        </shape>
+    </item>
+    <item>
+        <shape android:shape="rectangle">
+            <corners android:radius="16dp" />
+            <stroke
+                android:width="1.5dp"
+                android:color="@color/cockpit_glass_tile_active_violet_stroke" />
+        </shape>
+    </item>
+</layer-list>

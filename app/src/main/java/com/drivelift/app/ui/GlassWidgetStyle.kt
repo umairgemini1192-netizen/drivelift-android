@@ -26,12 +26,40 @@ enum class GlassWidgetLevel {
 }
 
 /**
+ * Accent tones for RemoteViews widget action pills backed by XML [GlassWidgetStyle] drawables.
+ */
+enum class GlassWidgetTileAccent {
+    DESTRUCTIVE_RED,
+    PRIMARY_CYAN,
+    SECONDARY_VIOLET,
+}
+
+/**
  * Shared Glance RemoteViews glass styling matching [GlassSurface]:
  * - Deep navy/charcoal translucent gradient (70-85% opacity)
  * - Soft top-left specular highlight
  * - 1-1.5 dp top-left lit hairline border
  */
 object GlassWidgetStyle {
+
+    @DrawableRes
+    fun shellDrawableRes(): Int = R.drawable.cockpit_widget_card_bg
+
+    @DrawableRes
+    fun dockDrawableRes(): Int = R.drawable.cockpit_widget_dock_bg
+
+    @DrawableRes
+    fun controlTileDrawableRes(
+        active: Boolean,
+        enabled: Boolean,
+        accent: GlassWidgetTileAccent,
+    ): Int = when {
+        !enabled -> R.drawable.cockpit_widget_tile_disabled_bg
+        !active -> R.drawable.cockpit_widget_tile_inactive_bg
+        accent == GlassWidgetTileAccent.DESTRUCTIVE_RED -> R.drawable.cockpit_widget_tile_active_red_bg
+        accent == GlassWidgetTileAccent.PRIMARY_CYAN -> R.drawable.cockpit_widget_tile_active_cyan_bg
+        else -> R.drawable.cockpit_widget_tile_active_violet_bg
+    }
 
     private const val MAX_SYSTEM_WIDGET_RADIUS_DP = 28f
 

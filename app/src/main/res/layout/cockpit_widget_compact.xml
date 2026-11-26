@@ -277,6 +277,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="32dp"
                     android:layout_gravity="center_vertical"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -323,6 +324,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="32dp"
                     android:layout_gravity="center_vertical"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -369,6 +371,7 @@
                     android:layout_width="match_parent"
                     android:layout_height="32dp"
                     android:layout_gravity="center_vertical"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -420,6 +423,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="34dp"
                 android:layout_gravity="center_vertical"
+                android:background="@drawable/cockpit_widget_dock_bg"
                 android:contentDescription="@null"
                 android:scaleType="fitXY" />
 

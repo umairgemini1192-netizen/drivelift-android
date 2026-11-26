@@ -18,10 +18,24 @@
     <!-- Translucent navy/charcoal glass fills, top-left highlights, and hairline borders matching GlassWidgetStyle. -->
     <color name="cockpit_glass_fill_top">#B80E1428</color>
     <color name="cockpit_glass_fill_bottom">#D9050811</color>
+    <color name="cockpit_glass_panel_fill_bottom">#C7090D1C</color>
+    <color name="cockpit_glass_dock_fill_top">#BF070B14</color>
     <color name="cockpit_glass_highlight_top_left">#28FFFFFF</color>
     <color name="cockpit_glass_card_stroke">#5CFFFFFF</color>
+    <color name="cockpit_glass_tile_stroke">#47FFFFFF</color>
     <color name="cockpit_glass_well_fill">#A6101628</color>
     <color name="cockpit_glass_well_stroke">#33FFFFFF</color>
+    <color name="cockpit_glass_tile_disabled_fill">#590B101C</color>
+    <color name="cockpit_glass_tile_disabled_stroke">#22FFFFFF</color>
+    <color name="cockpit_glass_tile_active_red_fill">#3DFF4D6D</color>
+    <color name="cockpit_glass_tile_active_red_glow">#57FF4D6D</color>
+    <color name="cockpit_glass_tile_active_red_stroke">#EBFF4D6D</color>
+    <color name="cockpit_glass_tile_active_cyan_fill">#3D00D4FF</color>
+    <color name="cockpit_glass_tile_active_cyan_glow">#5700D4FF</color>
+    <color name="cockpit_glass_tile_active_cyan_stroke">#EB00D4FF</color>
+    <color name="cockpit_glass_tile_active_violet_fill">#3DA78BFA</color>
+    <color name="cockpit_glass_tile_active_violet_glow">#57A78BFA</color>
+    <color name="cockpit_glass_tile_active_violet_stroke">#EBA78BFA</color>
     <color name="cockpit_pill_cyan_fill">#FF003B4D</color>
     <color name="cockpit_pill_coral_fill">#FF5E1429</color>
     <color name="cockpit_pill_violet_fill">#FF332366</color>

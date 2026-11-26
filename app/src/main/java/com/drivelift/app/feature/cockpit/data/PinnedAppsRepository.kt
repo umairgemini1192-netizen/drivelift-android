@@ -58,15 +58,36 @@ class PinnedAppsRepository(
 
     fun resolvePinnedApps(pinnedPackages: List<String>): List<PinnedAppInfo> {
         if (pinnedPackages.isEmpty()) return emptyList()
-        val byPkg = listLaunchableApps(excludeSelf = false).associateBy { it.packageName }
-        return pinnedPackages.mapNotNull { pkg ->
-            byPkg[pkg] ?: resolveSinglePackage(pkg)
+        testAppsOverride?.let { override ->
+            val byPkg = override.associateBy { it.packageName }
+            return pinnedPackages.mapNotNull { pkg -> byPkg[pkg] ?: resolveSinglePackage(pkg) }
         }
+        // Resolve only the requested pinned packages directly instead of scanning and rendering
+        // bitmaps for every installed app on the device during widget broadcasts.
+        return pinnedPackages.mapNotNull { pkg -> resolveSinglePackage(pkg) }
     }
 
     private fun resolveSinglePackage(packageName: String): PinnedAppInfo? {
         testAppsOverride?.firstOrNull { it.packageName == packageName }?.let { return it }
         val pm = context.packageManager
+        val launchIntent = runCatching { pm.getLaunchIntentForPackage(packageName) }.getOrNull()
+        val resolvedActivity = launchIntent?.let { intent ->
+            runCatching {
+                if (Build.VERSION.SDK_INT >= 33) {
+                    pm.resolveActivity(intent, PackageManager.ResolveInfoFlags.of(0L))
+                } else {
+                    @Suppress("DEPRECATION")
+                    pm.resolveActivity(intent, 0)
+                }
+            }.getOrNull()
+        }
+        if (resolvedActivity != null) {
+            val label = runCatching { resolvedActivity.loadLabel(pm).toString() }
+                .getOrDefault(packageName).ifBlank { packageName }
+            val icon = runCatching { resolvedActivity.loadIcon(pm) }.getOrNull()
+            val bitmap = cachedBitmap(packageName, icon)
+            return PinnedAppInfo(packageName = packageName, label = label, icon = icon, iconBitmap = bitmap)
+        }
         val appInfo = runCatching {
             if (Build.VERSION.SDK_INT >= 33) {
                 pm.getApplicationInfo(packageName, PackageManager.ApplicationInfoFlags.of(0L))
@@ -75,7 +96,8 @@ class PinnedAppsRepository(
                 pm.getApplicationInfo(packageName, 0)
             }
         }.getOrNull() ?: return null
-        val label = runCatching { pm.getApplicationLabel(appInfo).toString() }.getOrDefault(packageName)
+        val label = runCatching { pm.getApplicationLabel(appInfo).toString() }
+            .getOrDefault(packageName).ifBlank { packageName }
         val icon = runCatching { pm.getApplicationIcon(appInfo) }.getOrNull()
         val bitmap = cachedBitmap(packageName, icon)
         return PinnedAppInfo(packageName = packageName, label = label, icon = icon, iconBitmap = bitmap)
@@ -91,9 +113,17 @@ class PinnedAppsRepository(
     private fun drawableToBitmap(drawable: Drawable?): Bitmap? {
         if (drawable == null) return null
         if (drawable is BitmapDrawable && drawable.bitmap != null && !drawable.bitmap.isRecycled) {
-            return runCatching {
-                Bitmap.createScaledBitmap(drawable.bitmap, ICON_BITMAP_PX, ICON_BITMAP_PX, true)
-            }.getOrNull()
+            val src = drawable.bitmap
+            val softwareSrc = if (Build.VERSION.SDK_INT >= 26 && src.config == Bitmap.Config.HARDWARE) {
+                runCatching { src.copy(Bitmap.Config.ARGB_8888, false) }.getOrNull()
+            } else {
+                src
+            }
+            if (softwareSrc != null) {
+                return runCatching {
+                    Bitmap.createScaledBitmap(softwareSrc, ICON_BITMAP_PX, ICON_BITMAP_PX, true)
+                }.getOrNull()
+            }
         }
         return runCatching {
             val bitmap = Bitmap.createBitmap(ICON_BITMAP_PX, ICON_BITMAP_PX, Bitmap.Config.ARGB_8888)
