@@ -17,6 +17,8 @@ import com.drivelift.app.DriveLiftApp
 import com.drivelift.app.R
 import com.drivelift.app.feature.cockpit.data.PinnedAppInfo
 import com.drivelift.app.feature.cockpit.hardware.AlarmCountdownMode
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkKind
+import com.drivelift.app.feature.cockpit.hardware.IdleNetworkSnapshot
 import com.drivelift.app.feature.cockpit.hardware.NextAlarmUiModel
 import com.drivelift.app.feature.cockpit.notifications.DriveLiftTelemetrySummary
 import com.drivelift.app.feature.cockpit.ui.CockpitMasterWidgetCard
@@ -25,6 +27,7 @@ import com.drivelift.app.feature.cockpit.widget.CockpitGlanceWidget
 import com.drivelift.app.feature.cockpit.widget.CockpitHudBitmapRenderer
 import com.drivelift.app.feature.cockpit.widget.CockpitWidgetModel
 import com.drivelift.app.feature.cockpit.widget.WidgetSizeVariant
+import com.drivelift.app.feature.cockpit.widget.WidgetStatusTone
 import com.drivelift.app.ui.DriveLiftTheme
 import com.drivelift.app.ui.GlassBackdrop
 import com.drivelift.app.ui.Tokens
@@ -132,18 +135,22 @@ class CockpitPhase13WidgetAlignmentTest {
         val pxPerDp = density
         fun dp(value: Float): Int = (value * pxPerDp).roundToInt()
 
-        // 6. Outer frame: uniform 14dp inner padding.
+        // Outer frame: uniform 14dp inner padding.
         val content = root.findViewById<View>(R.id.cockpit_widget_content)
         assertEquals(dp(14f), content.paddingLeft)
         assertEquals(dp(14f), content.paddingTop)
         assertEquals(dp(14f), content.paddingRight)
         assertEquals(dp(14f), content.paddingBottom)
 
-        // 1. Header row: baseline-aligned AM/PM badge + vertically centered DROP LIVE pill.
+        // Row 1: baseline-aligned AM/PM badge, status pill under date (not floating top-right),
+        // and battery/RAM rings vertically centered with the clock+date+status block.
         val timeView = root.findViewById<TextView>(R.id.cockpit_widget_time)
         val ampmView = root.findViewById<TextView>(R.id.cockpit_widget_ampm)
-        val clockContainer = root.findViewById<View>(R.id.cockpit_widget_clock_container)
+        val dateView = root.findViewById<TextView>(R.id.cockpit_widget_date)
+        val topRow = root.findViewById<View>(R.id.cockpit_widget_top_row)
+        val clockRow = root.findViewById<View>(R.id.cockpit_widget_clock_row)
         val statusPill = root.findViewById<View>(R.id.cockpit_widget_status_pill)
+        val gaugesBlock = root.findViewById<View>(R.id.cockpit_widget_telemetry_gauges)
 
         assertTrue("Time view baseline must be valid", timeView.baseline > 0)
         assertTrue("AM/PM view baseline must be valid", ampmView.baseline > 0)
@@ -153,78 +160,51 @@ class CockpitPhase13WidgetAlignmentTest {
             "AM/PM baseline ($ampmBaselineY) must align with clock digits baseline ($timeBaselineY)",
             abs(timeBaselineY - ampmBaselineY) <= 2,
         )
-        assertEquals(dp(4f), ampmView.paddingLeft)
-        assertEquals(dp(4f), ampmView.paddingRight)
-        assertEquals(dp(1f), ampmView.paddingTop)
-        assertEquals(dp(1f), ampmView.paddingBottom)
-
-        val clockCenterY = topInRoot(clockContainer, root) + clockContainer.height / 2f
-        val statusCenterY = topInRoot(statusPill, root) + statusPill.height / 2f
+        assertTrue("Status pill must sit under date", topInRoot(statusPill, root) >= topInRoot(dateView, root) + dateView.height)
         assertTrue(
-            "DROP LIVE pill center ($statusCenterY) must vertically center on clock+date block ($clockCenterY)",
-            abs(clockCenterY - statusCenterY) <= 3f,
+            "Status pill must stay inside left clock column, not floating right",
+            leftInRoot(statusPill, root) + statusPill.width <= leftInRoot(gaugesBlock, root),
         )
+        val topLeftCenterY = topInRoot(clockRow, root) + clockRow.height / 2f
+        val gaugesCenterY = topInRoot(gaugesBlock, root) + gaugesBlock.height / 2f
+        assertTrue(
+            "Gauges ($gaugesCenterY) must vertically center with clock column ($topLeftCenterY) in Row 1",
+            abs(topLeftCenterY - gaugesCenterY) <= 4f,
+        )
+        assertEquals(topRow, gaugesBlock.parent)
 
-        // 2. Alarm + Telemetry row: exact matched height, 64dp gauges, 6dp caption gap, 55/45 split with 10dp gutter.
+        // Row 2: compact content-width alarm chip + network chip side-by-side.
+        val chipsRow = root.findViewById<View>(R.id.cockpit_widget_chips_row)
         val alarmCard = root.findViewById<View>(R.id.cockpit_widget_alarm_container)
-        val gaugesBlock = root.findViewById<View>(R.id.cockpit_widget_telemetry_gauges)
-        val batteryGauge = root.findViewById<View>(R.id.cockpit_widget_battery_gauge)
-        val ramGauge = root.findViewById<View>(R.id.cockpit_widget_ram_gauge)
-        val batteryCurrent = root.findViewById<View>(R.id.cockpit_widget_battery_current)
-        val ramUsed = root.findViewById<View>(R.id.cockpit_widget_ram_used)
-
-        assertEquals(
-            "Alarm card height must match full telemetry gauge + captions block height",
-            gaugesBlock.height,
-            alarmCard.height,
-        )
-        assertEquals(dp(64f), batteryGauge.width)
-        assertEquals(dp(64f), batteryGauge.height)
-        assertEquals(dp(64f), ramGauge.width)
-        assertEquals(dp(64f), ramGauge.height)
-        assertEquals(dp(6f), topInRoot(batteryCurrent, root) - (topInRoot(batteryGauge, root) + batteryGauge.height))
-        assertEquals(dp(6f), topInRoot(ramUsed, root) - (topInRoot(ramGauge, root) + ramGauge.height))
-
-        val gutterPx = leftInRoot(gaugesBlock, root) - (leftInRoot(alarmCard, root) + alarmCard.width)
-        assertEquals(dp(10f), gutterPx)
-        val alarmShare = alarmCard.width.toFloat() / (alarmCard.width + gaugesBlock.width).toFloat()
-        assertEquals(0.55f, alarmShare, 0.02f)
-
-        // 3. Wi-Fi status bar: 36dp height, 12dp horizontal padding, equal spacing above & below.
-        val telemetryRow = root.findViewById<View>(R.id.cockpit_widget_telemetry_row)
         val netRow = root.findViewById<View>(R.id.cockpit_widget_net_row)
-        val controlsRow = root.findViewById<View>(R.id.cockpit_widget_controls_row)
-        assertEquals(dp(36f), netRow.height)
-        assertEquals(dp(12f), netRow.paddingLeft)
-        assertEquals(dp(12f), netRow.paddingRight)
-
-        val gapAboveWifi = topInRoot(netRow, root) - (topInRoot(telemetryRow, root) + telemetryRow.height)
-        val gapBelowWifi = topInRoot(controlsRow, root) - (topInRoot(netRow, root) + netRow.height)
+        assertEquals(chipsRow, alarmCard.parent)
+        assertEquals(chipsRow, netRow.parent)
         assertTrue(
-            "Spacing above Wi-Fi ($gapAboveWifi) and below Wi-Fi ($gapBelowWifi) must be equal",
-            abs(gapAboveWifi - gapBelowWifi) <= 2,
+            "Alarm chip (${alarmCard.width}px) must be content-width, not stretched full-width (${chipsRow.width}px)",
+            alarmCard.width < chipsRow.width * 0.65f,
         )
-        assertTrue("Spacing around Wi-Fi must be >= 10dp", gapAboveWifi >= dp(10f) - 1)
+        assertTrue(
+            "Network chip must sit to the right of alarm chip on Row 2",
+            leftInRoot(netRow, root) >= leftInRoot(alarmCard, root) + alarmCard.width,
+        )
 
-        // 4. Action buttons: 54dp height, 20dp icons, 4dp icon-to-label gap, 3 equal columns with 10dp gaps.
+        // Row 3: 3 equal action buttons, compact visual height (46dp inside 48dp touch container), 10dp gaps.
         val btnDrop = root.findViewById<View>(R.id.cockpit_widget_btn_drop)
         val btnTorch = root.findViewById<View>(R.id.cockpit_widget_btn_torch)
         val btnIsland = root.findViewById<View>(R.id.cockpit_widget_btn_island)
         val dropIcon = root.findViewById<View>(R.id.cockpit_widget_drop_icon)
-        val dropLabel = root.findViewById<View>(R.id.cockpit_widget_drop_label)
+        val dropBg = root.findViewById<View>(R.id.cockpit_widget_drop_bg)
 
-        assertEquals(dp(54f), btnDrop.height)
-        assertEquals(dp(54f), btnTorch.height)
-        assertEquals(dp(54f), btnIsland.height)
+        assertTrue(btnDrop.height >= dp(48f))
+        assertEquals(dp(46f), dropBg.height)
         assertTrue(abs(btnDrop.width - btnTorch.width) <= 2)
         assertTrue(abs(btnTorch.width - btnIsland.width) <= 2)
         assertEquals(dp(10f), leftInRoot(btnTorch, root) - (leftInRoot(btnDrop, root) + btnDrop.width))
         assertEquals(dp(10f), leftInRoot(btnIsland, root) - (leftInRoot(btnTorch, root) + btnTorch.width))
-        assertEquals(dp(20f), dropIcon.width)
-        assertEquals(dp(20f), dropIcon.height)
-        assertEquals(dp(4f), topInRoot(dropLabel, root) - (topInRoot(dropIcon, root) + dropIcon.height))
+        assertEquals(dp(18f), dropIcon.width)
+        assertEquals(dp(18f), dropIcon.height)
 
-        // 5. App dock: >= 8dp bottom clearance below pagination dots + chevrons aligned with app icon centers.
+        // Row 4: App dock with aligned chevrons, >= 48dp touch targets, and zero bottom clipping.
         val dockContainer = root.findViewById<View>(R.id.cockpit_widget_dock_container)
         val dotsRow = root.findViewById<View>(R.id.cockpit_widget_pager_dots_row)
         val btnPrev = root.findViewById<View>(R.id.cockpit_widget_btn_prev)
@@ -232,12 +212,6 @@ class CockpitPhase13WidgetAlignmentTest {
         val appIcon0 = root.findViewById<View>(R.id.cockpit_widget_app_icon_0)
 
         assertEquals(View.VISIBLE, dotsRow.visibility)
-        val dotsBottomClearance =
-            (topInRoot(dockContainer, root) + dockContainer.height) - (topInRoot(dotsRow, root) + dotsRow.height)
-        assertTrue(
-            "Pagination dots bottom clearance (${dotsBottomClearance}px) must be >= ${dp(8f)}px (8dp)",
-            dotsBottomClearance >= dp(8f),
-        )
         assertTrue("Previous chevron must keep >= 48dp touch height", btnPrev.height >= dp(48f))
         assertTrue("Next chevron must keep >= 48dp touch height", btnNext.height >= dp(48f))
 
@@ -254,13 +228,6 @@ class CockpitPhase13WidgetAlignmentTest {
             "Next chevron visual center ($nextContentCenterY) must align with app icon center ($iconCenterY)",
             abs(nextContentCenterY - iconCenterY) <= 2f,
         )
-
-        // Consistent inter-row spacing across all 4 row gaps and zero bottom clipping.
-        val clockRow = root.findViewById<View>(R.id.cockpit_widget_clock_row)
-        val gap1 = topInRoot(telemetryRow, root) - (topInRoot(clockRow, root) + clockRow.height)
-        val gap4 = topInRoot(dockContainer, root) - (topInRoot(controlsRow, root) + controlsRow.height)
-        assertTrue("All inter-row gaps must be uniform", abs(gap1 - gapAboveWifi) <= 2)
-        assertTrue("All inter-row gaps must be uniform", abs(gapBelowWifi - gap4) <= 2)
         assertTrue(
             "Expanded dock must not clip past widget bottom",
             topInRoot(dockContainer, root) + dockContainer.height <= root.height,
@@ -268,13 +235,13 @@ class CockpitPhase13WidgetAlignmentTest {
     }
 
     @Test
-    fun tallAndNormalWidgetsPreserveMatchedAlarmHeightAlignedChevronsAndZeroClipping() {
+    fun tallAndNormalWidgetsPreserveRow1RingsRow2ChipsAndZeroClipping() {
         for ((variant, size) in listOf(
             WidgetSizeVariant.TALL to (276f to 310f),
             WidgetSizeVariant.NORMAL to (276f to 220f),
             WidgetSizeVariant.COMPACT to (276f to 140f),
         )) {
-            val (root, density) = inflateAndLayout(variant, widthDp = size.first, heightDp = size.second)
+            val (root, _) = inflateAndLayout(variant, widthDp = size.first, heightDp = size.second)
             val dockContainer = root.findViewById<View>(R.id.cockpit_widget_dock_container)
             assertNotNull(dockContainer)
             assertTrue(
@@ -285,22 +252,35 @@ class CockpitPhase13WidgetAlignmentTest {
             // Baseline-aligned AM/PM across every size bucket.
             val timeView = root.findViewById<TextView>(R.id.cockpit_widget_time)
             val ampmView = root.findViewById<TextView>(R.id.cockpit_widget_ampm)
+            val dateView = root.findViewById<View>(R.id.cockpit_widget_date)
+            val statusPill = root.findViewById<View>(R.id.cockpit_widget_status_pill)
+            val gaugesBlock = root.findViewById<View>(R.id.cockpit_widget_telemetry_gauges)
+            val topRow = root.findViewById<View>(R.id.cockpit_widget_top_row)
             val timeBaselineY = topInRoot(timeView, root) + timeView.baseline
             val ampmBaselineY = topInRoot(ampmView, root) + ampmView.baseline
             assertTrue(
                 "$variant AM/PM baseline must align with clock digits",
                 abs(timeBaselineY - ampmBaselineY) <= 2,
             )
+            assertEquals("$variant rings must sit in Row 1", topRow, gaugesBlock.parent)
+            assertTrue(
+                "$variant status pill must sit below date",
+                topInRoot(statusPill, root) >= topInRoot(dateView, root) + dateView.height - 2,
+            )
 
             if (variant != WidgetSizeVariant.COMPACT) {
-                // Matched Alarm height + 55/45 split + 10dp gutter.
+                val chipsRow = root.findViewById<View>(R.id.cockpit_widget_chips_row)
                 val alarmCard = root.findViewById<View>(R.id.cockpit_widget_alarm_container)
-                val gaugesBlock = root.findViewById<View>(R.id.cockpit_widget_telemetry_gauges)
-                assertEquals("$variant alarm card must match telemetry height", gaugesBlock.height, alarmCard.height)
-                val gutterPx = leftInRoot(gaugesBlock, root) - (leftInRoot(alarmCard, root) + alarmCard.width)
-                assertEquals((10f * density).roundToInt(), gutterPx)
+                val netRow = root.findViewById<View>(R.id.cockpit_widget_net_row)
+                assertTrue(
+                    "$variant alarm chip must be content-width",
+                    alarmCard.width < chipsRow.width * 0.65f,
+                )
+                assertTrue(
+                    "$variant network chip must sit beside alarm chip",
+                    leftInRoot(netRow, root) >= leftInRoot(alarmCard, root) + alarmCard.width,
+                )
 
-                // Chevrons vertically centered on app icons while retaining 48dp touch height.
                 val btnPrev = root.findViewById<View>(R.id.cockpit_widget_btn_prev)
                 val appIcon0 = root.findViewById<View>(R.id.cockpit_widget_app_icon_0)
                 val iconCenterY = topInRoot(appIcon0, root) + appIcon0.height / 2f
@@ -315,7 +295,36 @@ class CockpitPhase13WidgetAlignmentTest {
     }
 
     @Test
-    fun composeMasterWidgetPreviewMatchesExpandedProportionsAndAlignedAlarmHeight() {
+    fun networkFormattingHidesIdleAndZeroMbAndStatusPillCoversAllThreeStates() {
+        val idleWifi = IdleNetworkSnapshot(kind = IdleNetworkKind.WIFI, label = "Wi-Fi")
+        assertEquals("HomeNet", CockpitGlanceWidget.formatWidgetNetworkSpeed(idleWifi, wifiSsid = "HomeNet"))
+        assertEquals("Wi-Fi", CockpitGlanceWidget.formatWidgetNetworkSpeed(idleWifi, wifiSsid = null))
+        assertTrue(!CockpitGlanceWidget.formatWidgetNetworkSpeed(idleWifi).contains("Idle"))
+
+        val active5g = IdleNetworkSnapshot(
+            kind = IdleNetworkKind.CELLULAR,
+            label = "5G",
+            uploadBytesPerSec = 128L * 1024L,
+            downloadBytesPerSec = (2.4 * 1024 * 1024).toLong(),
+        )
+        val text5g = CockpitGlanceWidget.formatWidgetNetworkSpeed(active5g)
+        assertTrue(text5g.contains("5G"))
+        assertTrue(text5g.contains("2.4M"))
+        assertTrue(text5g.contains("128K"))
+
+        assertEquals(false, CockpitGlanceWidget.shouldShowTodayData(null))
+        assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("Today --"))
+        assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("Today 0 MB"))
+        assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("0 MB"))
+        assertEquals(true, CockpitGlanceWidget.shouldShowTodayData("Today 420 MB"))
+
+        assertEquals("READY", CockpitWidgetModel.statusPill(dropLive = false, torchOn = false).text)
+        assertEquals(WidgetStatusTone.DROP_LIVE, CockpitWidgetModel.statusPill(dropLive = true, torchOn = true).tone)
+        assertEquals("TORCH ON", CockpitWidgetModel.statusPill(dropLive = false, torchOn = true).text)
+    }
+
+    @Test
+    fun composeMasterWidgetPreviewMatchesCompactHudLayoutAndTargets() {
         val alarm = NextAlarmUiModel(
             hasAlarm = true,
             formattedTime = "06:30 AM",
@@ -369,21 +378,22 @@ class CockpitPhase13WidgetAlignmentTest {
             }
             compose.waitForIdle()
 
+            val cardBounds = compose.onNodeWithTag("cockpit-master-widget-card").getBoundsInRoot()
+            val statusBounds = compose.onNodeWithTag("cockpit-widget-status-badge").assertIsDisplayed().getBoundsInRoot()
             val alarmBounds = compose.onNodeWithTag("cockpit-widget-alarm-pill").assertIsDisplayed().getBoundsInRoot()
+            val netBounds = compose.onNodeWithTag("cockpit-widget-network-chip").assertIsDisplayed().getBoundsInRoot()
             val batteryGaugeBounds = compose.onNodeWithTag("cockpit-widget-battery-gauge").getBoundsInRoot()
-            val batteryChargeBounds = compose.onNodeWithTag("cockpit-widget-battery-charge").getBoundsInRoot()
             val dropBounds = compose.onNodeWithTag("cockpit-widget-toggle-drop").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight).getBoundsInRoot()
             val torchBounds = compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight).getBoundsInRoot()
             val islandBounds = compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight).getBoundsInRoot()
 
-            assertEquals(64f, (batteryGaugeBounds.right - batteryGaugeBounds.left).value, 1f)
-            assertEquals(54f, (dropBounds.bottom - dropBounds.top).value, 1.5f)
+            assertEquals(44f, (batteryGaugeBounds.right - batteryGaugeBounds.left).value, 1f)
+            assertTrue("Drop button height must be >= 48dp", (dropBounds.bottom - dropBounds.top).value >= 48f)
             assertEquals(10f, (torchBounds.left - dropBounds.right).value, 1.5f)
             assertEquals(10f, (islandBounds.left - torchBounds.right).value, 1.5f)
-            assertTrue(
-                "Alarm card height (${alarmBounds.bottom - alarmBounds.top}) must match telemetry block height (${batteryChargeBounds.bottom - batteryGaugeBounds.top})",
-                abs((alarmBounds.bottom - alarmBounds.top).value - (batteryChargeBounds.bottom - batteryGaugeBounds.top).value) <= 2f,
-            )
+            assertTrue("Status badge must stay left of battery gauge", statusBounds.right <= batteryGaugeBounds.left)
+            assertTrue("Alarm pill must stay content-width", (alarmBounds.right - alarmBounds.left) < (cardBounds.right - cardBounds.left) * 0.65f)
+            assertTrue("Network chip must sit right of alarm pill", netBounds.left >= alarmBounds.right)
         }
     }
 }

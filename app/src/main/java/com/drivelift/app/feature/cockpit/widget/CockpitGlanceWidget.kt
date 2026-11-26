@@ -60,28 +60,28 @@ enum class WidgetSizeVariant(
         tileHeightDp = 32f,
         showAppLabels = false,
         showExtendedTelemetry = false,
-        showTallNetworkRow = false,
+        showTallNetworkRow = true,
     ),
     NORMAL(
         layoutResId = R.layout.cockpit_widget_master,
-        gaugeSizeDp = 38f,
+        gaugeSizeDp = 36f,
         tileHeightDp = 44f,
         showAppLabels = true,
         showExtendedTelemetry = true,
-        showTallNetworkRow = false,
+        showTallNetworkRow = true,
     ),
     TALL(
         layoutResId = R.layout.cockpit_widget_tall,
         gaugeSizeDp = 44f,
-        tileHeightDp = 48f,
+        tileHeightDp = 44f,
         showAppLabels = true,
         showExtendedTelemetry = true,
         showTallNetworkRow = true,
     ),
     EXPANDED(
         layoutResId = R.layout.cockpit_widget_expanded,
-        gaugeSizeDp = 64f,
-        tileHeightDp = 54f,
+        gaugeSizeDp = 52f,
+        tileHeightDp = 46f,
         showAppLabels = true,
         showExtendedTelemetry = true,
         showTallNetworkRow = true,
@@ -243,11 +243,47 @@ class CockpitGlanceWidget {
             else -> WidgetSizeVariant.TALL
         }
 
-        /** Formats live network connection + throughput for the Tall home screen widget row. */
-        fun formatWidgetNetworkSpeed(snapshot: IdleNetworkSnapshot): String = when {
-            snapshot.kind == IdleNetworkKind.OFFLINE -> "Offline"
-            !snapshot.hasActiveTraffic -> "${snapshot.label} \u00B7 Idle"
-            else -> "${snapshot.label} \u00B7 Up ${snapshot.uploadText} \u00B7 Down ${snapshot.downloadText}"
+        /** Formats live network connection + throughput for the widget network chip, hiding idle text. */
+        fun formatWidgetNetworkSpeed(
+            snapshot: IdleNetworkSnapshot,
+            wifiSsid: String? = null,
+            compact: Boolean = false,
+        ): String {
+            if (snapshot.kind == IdleNetworkKind.OFFLINE) return "Offline"
+            val baseLabel = if (snapshot.kind == IdleNetworkKind.WIFI && !wifiSsid.isNullOrBlank()) {
+                wifiSsid
+            } else {
+                snapshot.label
+            }
+            if (!snapshot.hasActiveTraffic) return baseLabel
+            if (compact) {
+                return if (snapshot.downloadBytesPerSec >= snapshot.uploadBytesPerSec && snapshot.hasDownloadTraffic) {
+                    "$baseLabel \u2193 ${snapshot.downloadText}"
+                } else {
+                    "$baseLabel \u2191 ${snapshot.uploadText}"
+                }
+            }
+            return buildString {
+                append(baseLabel)
+                if (snapshot.hasDownloadTraffic) {
+                    append(" \u2193 ")
+                    append(snapshot.downloadText)
+                }
+                if (snapshot.hasUploadTraffic) {
+                    append(" \u2191 ")
+                    append(snapshot.uploadText)
+                }
+            }
+        }
+
+        /** Hides `"0 MB"`, `"Today 0 MB"`, and placeholder `"--"` mobile-data labels on the widget chip. */
+        fun shouldShowTodayData(todayDataLabel: String?): Boolean {
+            val trimmed = todayDataLabel?.trim().orEmpty()
+            if (trimmed.isEmpty() || trimmed == "--" || trimmed.equals("Today --", ignoreCase = true)) {
+                return false
+            }
+            return !Regex("""(?:^|\s)0(?:\.0+)?\s*(?:B|KB|MB)\b""", RegexOption.IGNORE_CASE)
+                .containsMatchIn(trimmed)
         }
 
         private fun wrapResponsiveRemoteViews(
@@ -385,8 +421,18 @@ class CockpitGlanceWidget {
                 isLoadingInitial = false,
             )
             val network = runCatching { Graph.get(appContext).cockpit.telemetryMonitor.network.value }.getOrNull()
-            pushTelemetryUpdate(appContext, snapshot, batteryCurrentOnly = false, network = network)
+            pushTelemetryUpdate(
+                context = appContext,
+                snapshot = snapshot,
+                batteryCurrentOnly = false,
+                network = network,
+                wifiSsid = readCurrentWifiSsid(appContext),
+            )
         }
+
+        private fun readCurrentWifiSsid(context: Context): String? = runCatching {
+            Graph.get(context).cockpit.quickControlsController.state.value.wifi.ssid.takeIf { it.isNotBlank() }
+        }.getOrNull()
 
         /**
          * Pushes an already-sampled [TelemetryHudSnapshot] without re-sampling the rolling current
@@ -400,6 +446,7 @@ class CockpitGlanceWidget {
             batteryCurrentOnly: Boolean = false,
             network: IdleNetworkSnapshot? = null,
             networkOnly: Boolean = false,
+            wifiSsid: String? = null,
         ) {
             val appContext = context.applicationContext ?: context
             if (networkOnly && (network == null || Build.VERSION.SDK_INT < 31)) return
@@ -409,21 +456,26 @@ class CockpitGlanceWidget {
             }.getOrDefault(IntArray(0))
             if (ids.isEmpty()) return
 
+            val resolvedSsid = wifiSsid ?: readCurrentWifiSsid(appContext)
+
             val partial = when {
                 networkOnly && network != null -> buildNetworkPartialRemoteViews(
                     context = appContext,
                     network = network,
+                    wifiSsid = resolvedSsid,
                 )
                 batteryCurrentOnly -> buildBatteryCurrentPartialRemoteViews(
                     context = appContext,
                     battery = snapshot.battery,
                     network = network,
+                    wifiSsid = resolvedSsid,
                 )
                 else -> buildTelemetryPartialRemoteViews(
                     context = appContext,
                     battery = snapshot.battery,
                     ram = snapshot.ram,
                     network = network,
+                    wifiSsid = resolvedSsid,
                 )
             }
             runCatching { manager.partiallyUpdateAppWidget(ids, partial) }
@@ -492,6 +544,7 @@ class CockpitGlanceWidget {
             val battery = readBatteryMetric(context)
             val ram = readRamMetric(context)
             val network = cockpit.telemetryMonitor.network.value
+            val wifiSsid = readCurrentWifiSsid(context)
             val todayDataLabel = readCachedTodayMobileDataLabel(context, forceRefresh = true)
 
             val allPinned = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
@@ -516,7 +569,11 @@ class CockpitGlanceWidget {
                 pinnedPageCount = pageCount,
                 attachPendingIntents = true,
                 variant = variant,
-                networkSpeedLabel = formatWidgetNetworkSpeed(network),
+                networkSpeedLabel = formatWidgetNetworkSpeed(
+                    snapshot = network,
+                    wifiSsid = wifiSsid,
+                    compact = variant == WidgetSizeVariant.COMPACT,
+                ),
                 todayDataLabel = todayDataLabel,
             )
 
@@ -597,7 +654,10 @@ class CockpitGlanceWidget {
                 pinnedPageCount = CockpitWidgetModel.pageCount(previewPinnedAll.size),
                 attachPendingIntents = false,
                 variant = variant,
-                networkSpeedLabel = formatWidgetNetworkSpeed(previewNet),
+                networkSpeedLabel = formatWidgetNetworkSpeed(
+                    snapshot = previewNet,
+                    compact = variant == WidgetSizeVariant.COMPACT,
+                ),
                 todayDataLabel = "Today 420 MB",
             )
         }
@@ -608,6 +668,7 @@ class CockpitGlanceWidget {
             ram: RamHudMetric,
             network: IdleNetworkSnapshot? = null,
             todayDataLabel: String? = null,
+            wifiSsid: String? = null,
         ): RemoteViews {
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
             val resolvedToday = if (network != null) {
@@ -615,10 +676,11 @@ class CockpitGlanceWidget {
             } else {
                 todayDataLabel
             }
+            val resolvedSsid = wifiSsid ?: readCurrentWifiSsid(context)
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
                 applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
-                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant)
+                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant, resolvedSsid)
                 return views
             }
             return if (Build.VERSION.SDK_INT >= 31) {
@@ -643,16 +705,18 @@ class CockpitGlanceWidget {
             battery: BatteryHudMetric,
             network: IdleNetworkSnapshot? = null,
             todayDataLabel: String? = null,
+            wifiSsid: String? = null,
         ): RemoteViews {
             val resolvedToday = if (network != null) {
                 todayDataLabel ?: readCachedTodayMobileDataLabel(context)
             } else {
                 todayDataLabel
             }
+            val resolvedSsid = wifiSsid ?: readCurrentWifiSsid(context)
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
                 applyBatteryCurrentToRemoteViews(views, context, battery, variant)
-                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant)
+                applyTallNetworkRowToRemoteViews(views, network, resolvedToday, variant, resolvedSsid)
                 return views
             }
             return if (Build.VERSION.SDK_INT >= 31) {
@@ -676,10 +740,12 @@ class CockpitGlanceWidget {
             context: Context,
             network: IdleNetworkSnapshot,
             todayDataLabel: String = readCachedTodayMobileDataLabel(context),
+            wifiSsid: String? = null,
         ): RemoteViews {
+            val resolvedSsid = wifiSsid ?: readCurrentWifiSsid(context)
             fun partialFor(variant: WidgetSizeVariant): RemoteViews {
                 val views = RemoteViews(context.packageName, variant.layoutResId)
-                applyTallNetworkRowToRemoteViews(views, network, todayDataLabel, variant)
+                applyTallNetworkRowToRemoteViews(views, network, todayDataLabel, variant, resolvedSsid)
                 return views
             }
             return if (Build.VERSION.SDK_INT >= 31) {
@@ -709,13 +775,26 @@ class CockpitGlanceWidget {
             network: IdleNetworkSnapshot?,
             todayDataLabel: String?,
             variant: WidgetSizeVariant,
+            wifiSsid: String? = null,
         ) {
             if (!variant.showTallNetworkRow) return
             if (network != null) {
-                views.setTextViewText(R.id.cockpit_widget_net_speed, formatWidgetNetworkSpeed(network))
+                views.setTextViewText(
+                    R.id.cockpit_widget_net_speed,
+                    formatWidgetNetworkSpeed(
+                        snapshot = network,
+                        wifiSsid = wifiSsid,
+                        compact = variant == WidgetSizeVariant.COMPACT,
+                    ),
+                )
             }
             if (todayDataLabel != null) {
-                views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
+                if (variant != WidgetSizeVariant.COMPACT && shouldShowTodayData(todayDataLabel)) {
+                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.VISIBLE)
+                    views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
+                } else {
+                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
+                }
             }
         }
 
@@ -801,8 +880,8 @@ class CockpitGlanceWidget {
             pinnedPageCount: Int,
             attachPendingIntents: Boolean,
             variant: WidgetSizeVariant = WidgetSizeVariant.NORMAL,
-            networkSpeedLabel: String = "Wi-Fi \u00B7 Idle",
-            todayDataLabel: String = "Today --",
+            networkSpeedLabel: String = "Wi-Fi",
+            todayDataLabel: String = "",
         ): RemoteViews {
             val views = RemoteViews(context.packageName, variant.layoutResId)
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
@@ -821,11 +900,14 @@ class CockpitGlanceWidget {
             )
             views.setImageViewBitmap(R.id.cockpit_widget_shell_bg, shellBmp)
 
-            // Alarm pill (Zone 1)
-            views.setTextViewText(
-                R.id.cockpit_alarm_time_text,
-                if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
-            )
+            // Alarm pill (Row 2, or compact chip in Row 1 for 4x2)
+            val alarmLabel = when {
+                !alarm.hasAlarm && variant == WidgetSizeVariant.COMPACT -> "No alarm"
+                !alarm.hasAlarm -> "No alarm set"
+                variant == WidgetSizeVariant.COMPACT -> alarm.formattedTime
+                else -> "Alarm ${alarm.formattedTime}"
+            }
+            views.setTextViewText(R.id.cockpit_alarm_time_text, alarmLabel)
             if (variant.showExtendedTelemetry) {
                 when {
                     alarm.hasAlarm &&
@@ -868,10 +950,15 @@ class CockpitGlanceWidget {
             // Dual telemetry gauges + readouts (Zone 2)
             applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
 
-            // Tall-only extra row: live network speed + today's mobile data
+            // Row 2 network chip: Wi-Fi SSID or 5G + live speeds; hide "0 MB" / idle text
             if (variant.showTallNetworkRow) {
                 views.setTextViewText(R.id.cockpit_widget_net_speed, networkSpeedLabel)
-                views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
+                if (variant != WidgetSizeVariant.COMPACT && shouldShowTodayData(todayDataLabel)) {
+                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.VISIBLE)
+                    views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
+                } else {
+                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
+                }
             }
 
             // Sculptural control deck (Zone 3)

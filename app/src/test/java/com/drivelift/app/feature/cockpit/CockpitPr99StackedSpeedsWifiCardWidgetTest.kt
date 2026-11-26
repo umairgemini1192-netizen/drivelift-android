@@ -674,10 +674,19 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             assertNotNull("controlsRow missing in ${spec.name}", controlsRow)
             assertNotNull("dockContainer missing in ${spec.name}", dockContainer)
 
-            // DROP LIVE status pill must live inside the clock row (aligned with clock, not floating).
+            // DROP LIVE status pill must sit under date inside the clock column (not floating top-right).
+            var parentView = statusPill.parent
+            var insideClockCol = false
+            while (parentView is View) {
+                if (parentView === clockRow) {
+                    insideClockCol = true
+                    break
+                }
+                parentView = parentView.parent
+            }
             assertTrue(
-                "Status pill must be inside clock row in ${spec.name}",
-                statusPill.parent === clockRow,
+                "Status pill must sit inside clock column in ${spec.name}",
+                insideClockCol,
             )
             assertEquals(
                 "DROP LIVE",
