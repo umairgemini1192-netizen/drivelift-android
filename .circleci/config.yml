@@ -10,9 +10,9 @@ jobs:
   android-build:
     docker:
       - image: cimg/android:2024.11.1
-    resource_class: large
+    resource_class: xlarge
     environment:
-      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx3g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dkotlin.compiler.execution.strategy=in-process"
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dkotlin.compiler.execution.strategy=in-process"
     steps:
       - checkout
       - restore_cache:
