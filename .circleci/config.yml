@@ -3,11 +3,11 @@ version: 2.1
 workflows:
   android-ci:
     jobs:
-      - build
-      - ui-contract
+      - android-build
+      - android-ui-contract
 
 jobs:
-  build:
+  android-build:
     docker:
       - image: cimg/android:2024.11.1
     resource_class: large
@@ -67,7 +67,7 @@ jobs:
           path: app/build/outputs/apk/debug/app-debug.apk
           destination: drivelift-debug-apk/app-debug.apk
 
-  ui-contract:
+  android-ui-contract:
     docker:
       - image: cimg/python:3.12
     resource_class: small
