@@ -1,5 +1,6 @@
 package com.drivelift.app.feature.cockpit.activities
 
+import com.drivelift.app.feature.cockpit.alerts.CockpitSystemAlert
 import com.drivelift.app.feature.cockpit.data.CockpitPrefsState
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
@@ -20,6 +21,11 @@ import kotlinx.coroutines.launch
  * the one on screen takes focus; when it ends, the activity the user had focused is restored.
  * An incoming call expands the island on arrival and collapses it again once it connects or ends.
  * Soft-dismiss never touches the source notification.
+ *
+ * A transient system alert ([setSystemAlert]) is layered on top of the queue, never inside it. It
+ * is shown only while the island is collapsed, switched on in the prefs and no call is ringing, and
+ * it leaves the queue, focus and expanded state untouched, so the island returns to the live
+ * activity (or the idle island) the moment the alert ends.
  */
 class CockpitStateCoordinator(
     private val scope: CoroutineScope? = null,
@@ -42,9 +48,23 @@ class CockpitStateCoordinator(
     private var emptyDebounceJob: Job? = null
     private var latestNavSpeedKmh: Int? = null
     private val tripTracker = NavigationTripTracker()
+    private var systemAlert: CockpitSystemAlert? = null
 
     private val _slotState = MutableStateFlow(CockpitSlotState())
     val slotState: StateFlow<CockpitSlotState> = _slotState.asStateFlow()
+
+    private val _activeSystemAlert = MutableStateFlow<CockpitSystemAlert?>(null)
+
+    /** The system alert the island is showing right now, or null when none is shown. */
+    val activeSystemAlert: StateFlow<CockpitSystemAlert?> = _activeSystemAlert.asStateFlow()
+
+    /** Sets the alert raised by the system alerts monitor, or clears it with null. */
+    fun setSystemAlert(alert: CockpitSystemAlert?) {
+        synchronized(lock) {
+            systemAlert = alert
+            recomputeLocked()
+        }
+    }
 
     /** Cancels any pending auto-collapse timer when the user touches or interacts with the Island. */
     fun onUserInteraction() {
@@ -333,6 +353,7 @@ class CockpitStateCoordinator(
             pendingSwapDirection = 0
             expanded = false
             inlineReplyOpen = false
+            systemAlert = null
             recomputeLocked()
         }
     }
@@ -496,6 +517,10 @@ class CockpitStateCoordinator(
         val swapDirection = pendingSwapDirection
         pendingSwapDirection = 0
         val visible = sortedVisibleLocked()
+        val surfacedAlert = systemAlert?.takeIf {
+            currentPrefs.systemAlertsEnabled && !expanded && visible.none { activity -> isRingingCall(activity) }
+        }
+        _activeSystemAlert.value = surfacedAlert
         val dismissedEnabledCount = activitiesById.values.count { activity ->
             val categoryEnabled = activity.category?.let { currentPrefs.isCategoryEnabled(it) } ?: true
             categoryEnabled && activity.id in softDismissedIds
@@ -512,6 +537,7 @@ class CockpitStateCoordinator(
                 inlineReplyOpen = false,
                 activeIndex = 0,
                 swapDirection = 0,
+                transientAlert = surfacedAlert,
             )
             return
         }
@@ -531,6 +557,7 @@ class CockpitStateCoordinator(
             inlineReplyOpen = inlineReplyOpen,
             activeIndex = focusedIndex,
             swapDirection = swapDirection,
+            transientAlert = surfacedAlert,
         )
     }
 

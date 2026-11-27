@@ -1,6 +1,7 @@
 package com.drivelift.app.feature.cockpit.activities
 
 import android.graphics.Bitmap
+import com.drivelift.app.feature.cockpit.alerts.CockpitSystemAlert
 import com.drivelift.app.feature.cockpit.data.CockpitActivityCategory
 
 enum class MapsTurnDirection {
@@ -128,10 +129,22 @@ sealed interface CockpitLiveActivity {
         val speedKmh: Int? = null,
         /** True when the source app shows miles, so the footer uses the same unit. */
         val tripUsesMiles: Boolean = false,
+        /** The trip distance exactly as the source app wrote it, for example "20 km". Empty when it names none. */
+        val tripDistanceText: String = "",
         override val updatedAtMs: Long = 0L,
     ) : CockpitLiveActivity {
         override val priority: Int = PRIORITY_NAVIGATION
         override val category: CockpitActivityCategory = CockpitActivityCategory.MAPS_NAVIGATION
+
+        /**
+         * The lead figure for the pill and the card: the distance to the next turn when the
+         * notification gives one, otherwise the time and distance left on the trip ("38 min · 20 km").
+         * Empty only when the notification carries none of them.
+         */
+        val headlineText: String
+            get() = distanceText.ifEmpty {
+                listOf(etaText, tripDistanceText).filter { it.isNotBlank() }.joinToString(HEADLINE_SEPARATOR)
+            }
     }
 
     data class WhatsAppAlertActivity(
@@ -166,6 +179,9 @@ sealed interface CockpitLiveActivity {
         const val PRIORITY_WHATSAPP = 6
         const val PRIORITY_IDLE = 7
 
+        /** Middle dot between two facts on one line, for example "38 min · 20 km". */
+        const val HEADLINE_SEPARATOR = " \u00B7 "
+
         const val ID_TRANSFER = "drivelift_transfer"
         const val ID_DESKTOP_DROP = "drivelift_desktop_drop"
         const val ID_MAPS = "google_maps_nav"
@@ -192,4 +208,9 @@ data class CockpitSlotState(
     val inlineReplyOpen: Boolean = false,
     val activeIndex: Int = 0,
     val swapDirection: Int = 0,
+    /**
+     * A transient system alert (battery, earbuds, ringer, biometric and so on) shown over the
+     * collapsed island. It never replaces [primary]: when it ends the island returns to it.
+     */
+    val transientAlert: CockpitSystemAlert? = null,
 )

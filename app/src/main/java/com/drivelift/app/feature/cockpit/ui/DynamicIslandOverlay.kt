@@ -347,7 +347,9 @@ fun DynamicIslandOverlay(
     val (accent, secondaryAccent) = activityAccentPair(primary)
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
         .coerceAtLeast(Tokens.Cockpit.PillMinWidth - Tokens.Header)
-    val collapsedSurfaceWidth = if (slotState.secondary != null) {
+    val hasBubble = slotState.secondary != null ||
+        (slotState.transientAlert != null && primary !is CockpitLiveActivity.IdleQuickDockActivity)
+    val collapsedSurfaceWidth = if (hasBubble) {
         minPillWidth + Tokens.Cockpit.SplitGap + Tokens.Cockpit.BubbleSize
     } else {
         minPillWidth
@@ -839,10 +841,22 @@ fun CollapsedSplitIslandRow(
     val scope = rememberCoroutineScope()
     val primary = slotState.primary
     val secondary = slotState.secondary
-    val (primaryAccent, secondaryAccent) = activityAccentPair(primary)
+    // A transient system alert takes the pill for a few seconds. The activity underneath keeps its
+    // place in the queue and returns, or shows as the satellite bubble while the alert is up.
+    val alert = slotState.transientAlert
+    val (primaryAccent, secondaryAccent) = if (alert != null) {
+        systemAlertAccentPair(alert.accent)
+    } else {
+        activityAccentPair(primary)
+    }
+    val bubbleActivity = if (alert != null && primary !is CockpitLiveActivity.IdleQuickDockActivity) {
+        primary
+    } else {
+        secondary
+    }
     val screenWidthDp = LocalConfiguration.current.screenWidthDp
     val fontScale = LocalDensity.current.fontScale
-    val showSatellite = secondary != null && canShowSatelliteBubble(
+    val showSatellite = bubbleActivity != null && canShowSatelliteBubble(
         screenWidthDp = screenWidthDp,
         widthDeltaDp = widthDeltaDp,
         cutoutWidthDp = cutoutWidthDp,
@@ -856,8 +870,11 @@ fun CollapsedSplitIslandRow(
     val minFloorWidth = minOf(Tokens.Cockpit.PillMinWidth - Tokens.Header, maxPillWidth)
     val minPillWidth = (Tokens.Cockpit.PillMinWidth + widthDeltaDp.dp)
         .coerceIn(minFloorWidth, maxPillWidth)
-    val canSwap = slotState.visibleQueue.size > 1
-    val canSwipeUpDismiss = primary is CockpitLiveActivity.WhatsAppAlertActivity
+    // Navigation and alert pills use a slightly tighter side padding so their text fits the safe width.
+    val clearsStatusIcons = alert != null || primary is CockpitLiveActivity.MapsNavActivity
+    val pillPadding = if (clearsStatusIcons) Tokens.Row else Tokens.Medium
+    val canSwap = slotState.visibleQueue.size > 1 && alert == null
+    val canSwipeUpDismiss = primary is CockpitLiveActivity.WhatsAppAlertActivity && alert == null
     val dragOffset = remember { Animatable(0f) }
 
     Row(
@@ -906,8 +923,8 @@ fun CollapsedSplitIslandRow(
 
         // Primary Pill centered strictly on WindowInsets.displayCutout with zero hardcoded top offset.
         // Outer hit box meets >= 52 dp height below the cutout to clear Pixel status-bar dead zones.
-        val minContentWidth = (minPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset)
-        val maxContentWidth = (maxPillWidth - Tokens.Medium * 2).coerceAtLeast(Tokens.NoInset)
+        val minContentWidth = (minPillWidth - pillPadding * 2).coerceAtLeast(Tokens.NoInset)
+        val maxContentWidth = (maxPillWidth - pillPadding * 2).coerceAtLeast(Tokens.NoInset)
         Box(
             modifier = Modifier
                 .defaultMinSize(minHeight = Tokens.Cockpit.PillTouchTargetHeight)
@@ -940,11 +957,11 @@ fun CollapsedSplitIslandRow(
                         intensity = if (primary is CockpitLiveActivity.IdleQuickDockActivity) 0.55f else 1.0f,
                         animateOnActive = primary !is CockpitLiveActivity.IdleQuickDockActivity,
                     )
-                    .padding(horizontal = Tokens.Medium),
+                    .padding(horizontal = pillPadding),
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 SwapTransition(
-                    key = primary.id,
+                    key = alert?.id ?: primary.id,
                     direction = slotState.swapDirection,
                     modifier = Modifier.graphicsLayer { translationX = dragOffset.value },
                 ) {
@@ -953,22 +970,26 @@ fun CollapsedSplitIslandRow(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        CollapsedPillBody(
-                            primary = primary,
-                            accent = primaryAccent,
-                            cutoutWidthDp = cutoutWidthDp,
-                            widthDeltaDp = widthDeltaDp,
-                            minContentWidth = minContentWidth,
-                            maxContentWidth = maxContentWidth,
-                        )
+                        if (alert != null) {
+                            CollapsedSystemAlertContent(alert = alert, accent = primaryAccent)
+                        } else {
+                            CollapsedPillBody(
+                                primary = primary,
+                                accent = primaryAccent,
+                                cutoutWidthDp = cutoutWidthDp,
+                                widthDeltaDp = widthDeltaDp,
+                                minContentWidth = minContentWidth,
+                                maxContentWidth = maxContentWidth,
+                            )
+                        }
                     }
                 }
             }
         }
 
         // Satellite bubble for simultaneous activities: tap swaps it into the primary slot.
-        if (showSatellite && secondary != null) {
-            val (bubblePrimary, bubbleSecondary) = activityAccentPair(secondary)
+        if (showSatellite && bubbleActivity != null) {
+            val (bubblePrimary, bubbleSecondary) = activityAccentPair(bubbleActivity)
             Box(
                 modifier = Modifier
                     .defaultMinSize(
@@ -976,11 +997,15 @@ fun CollapsedSplitIslandRow(
                         minHeight = Tokens.Cockpit.PillTouchTargetHeight,
                     )
                     .combinedClickable(
-                        onClickLabel = "Switch to ${activityTitle(secondary)}",
+                        onClickLabel = if (alert != null) {
+                            "Expand ${activityTitle(bubbleActivity)}"
+                        } else {
+                            "Switch to ${activityTitle(bubbleActivity)}"
+                        },
                         onLongClickLabel = "Expand DriveLift Cockpit",
                         onClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.TextHandleMove)
-                            onTapSecondary(secondary)
+                            if (alert != null) onTapPrimary(primary) else onTapSecondary(bubbleActivity)
                         },
                         onLongClick = {
                             haptics.performHapticFeedback(HapticFeedbackType.LongPress)
@@ -1006,8 +1031,8 @@ fun CollapsedSplitIslandRow(
                     contentAlignment = Alignment.Center,
                 ) {
                     Icon(
-                        imageVector = activityIcon(secondary),
-                        contentDescription = activityTitle(secondary),
+                        imageVector = activityIcon(bubbleActivity),
+                        contentDescription = activityTitle(bubbleActivity),
                         tint = bubblePrimary,
                         modifier = Modifier.size(Tokens.IconSmall),
                     )
@@ -2637,8 +2662,7 @@ private fun activitySubtitle(
         if (activity.isRecording) "Recording active" else "Timer running"
     is CockpitLiveActivity.MediaActivity -> activity.artist
     is CockpitLiveActivity.MapsNavActivity ->
-        listOf(activity.distanceText, activity.etaText).filter { it.isNotBlank() }.joinToString(" | ")
-            .ifEmpty { "Navigation active" }
+        activity.headlineText.ifEmpty { "Navigation active" }
     is CockpitLiveActivity.WhatsAppAlertActivity -> activity.messageSnippet
     is CockpitLiveActivity.IdleQuickDockActivity -> "DriveLift: ${telemetry.statusHeadline}"
 }
@@ -2660,7 +2684,7 @@ private fun activityCollapsedMetric(activity: CockpitLiveActivity): String = whe
     is CockpitLiveActivity.TransferActivity -> activity.speedText
     is CockpitLiveActivity.TimerRecordingActivity -> activity.timeText
     is CockpitLiveActivity.MediaActivity -> "Playing"
-    is CockpitLiveActivity.MapsNavActivity -> activity.distanceText.ifEmpty { activity.etaText }
+    is CockpitLiveActivity.MapsNavActivity -> activity.headlineText
     is CockpitLiveActivity.WhatsAppAlertActivity -> if (activity.canInlineReply) "Reply" else "Msg"
     is CockpitLiveActivity.IdleQuickDockActivity -> "Ready"
 }

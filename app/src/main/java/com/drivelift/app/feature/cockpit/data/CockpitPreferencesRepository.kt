@@ -39,6 +39,12 @@ data class CockpitPrefsState(
     val cutoutOffsetY: Int = 0,
     val cutoutWidthDelta: Int = 0,
     val pinnedPackages: List<String> = emptyList(),
+    /** Transient Dynamic Island pills for battery, earbuds, ringer, airplane, biometric and DriveLift events. */
+    val systemAlertsEnabled: Boolean = true,
+    /** Rear LED flash for a ringing call, an urgent alert and a finished transfer. Opt-in, default off. */
+    val ledFlashEnabled: Boolean = false,
+    /** When true the LED flash stays dark while the screen is on. */
+    val ledFlashSuppressWhenScreenOn: Boolean = true,
 ) {
     fun isCategoryEnabled(category: CockpitActivityCategory): Boolean = when (category) {
         CockpitActivityCategory.TRANSFERS_AND_DROP -> transfersEnabled
@@ -195,6 +201,33 @@ class CockpitPreferencesRepository(
         }
     }
 
+    suspend fun setSystemAlertsEnabled(enabled: Boolean) {
+        _state.value = _state.value.copy(systemAlertsEnabled = enabled)
+        dataStore.edit { prefs -> prefs[KEY_SYSTEM_ALERTS_ENABLED] = enabled }
+    }
+
+    fun setSystemAlertsEnabledAsync(enabled: Boolean) {
+        scope.launch { setSystemAlertsEnabled(enabled) }
+    }
+
+    suspend fun setLedFlashEnabled(enabled: Boolean) {
+        _state.value = _state.value.copy(ledFlashEnabled = enabled)
+        dataStore.edit { prefs -> prefs[KEY_LED_FLASH_ENABLED] = enabled }
+    }
+
+    fun setLedFlashEnabledAsync(enabled: Boolean) {
+        scope.launch { setLedFlashEnabled(enabled) }
+    }
+
+    suspend fun setLedFlashSuppressWhenScreenOn(suppress: Boolean) {
+        _state.value = _state.value.copy(ledFlashSuppressWhenScreenOn = suppress)
+        dataStore.edit { prefs -> prefs[KEY_LED_SUPPRESS_SCREEN_ON] = suppress }
+    }
+
+    fun setLedFlashSuppressWhenScreenOnAsync(suppress: Boolean) {
+        scope.launch { setLedFlashSuppressWhenScreenOn(suppress) }
+    }
+
     fun seedForTest(state: CockpitPrefsState) {
         explicitMasterWrite = state.masterEnabled
         mirrorPrefs.edit().putBoolean(KEY_MIRROR_MASTER_ENABLED, state.masterEnabled).commit()
@@ -224,6 +257,9 @@ class CockpitPreferencesRepository(
             cutoutOffsetY = (prefs[KEY_CUTOUT_OFFSET_Y] ?: 0).coerceIn(MIN_OFFSET_Y, MAX_OFFSET_Y),
             cutoutWidthDelta = (prefs[KEY_CUTOUT_WIDTH_DELTA] ?: 0).coerceIn(MIN_WIDTH_DELTA, MAX_WIDTH_DELTA),
             pinnedPackages = pinned,
+            systemAlertsEnabled = prefs[KEY_SYSTEM_ALERTS_ENABLED] ?: true,
+            ledFlashEnabled = prefs[KEY_LED_FLASH_ENABLED] ?: false,
+            ledFlashSuppressWhenScreenOn = prefs[KEY_LED_SUPPRESS_SCREEN_ON] ?: true,
         )
     }
 
@@ -250,5 +286,8 @@ class CockpitPreferencesRepository(
         private val KEY_CUTOUT_OFFSET_Y = intPreferencesKey("cutout_offset_y")
         private val KEY_CUTOUT_WIDTH_DELTA = intPreferencesKey("cutout_width_delta")
         private val KEY_PINNED_PACKAGES = stringPreferencesKey("pinned_packages_ordered")
+        private val KEY_SYSTEM_ALERTS_ENABLED = booleanPreferencesKey("system_alerts_enabled")
+        private val KEY_LED_FLASH_ENABLED = booleanPreferencesKey("led_flash_enabled")
+        private val KEY_LED_SUPPRESS_SCREEN_ON = booleanPreferencesKey("led_flash_suppress_screen_on")
     }
 }

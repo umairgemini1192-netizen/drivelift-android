@@ -69,6 +69,7 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -510,10 +511,7 @@ internal fun RowScope.CollapsedRecordingContent(recording: CockpitLiveActivity.S
 
 @Composable
 internal fun RowScope.CollapsedNavigationContent(nav: CockpitLiveActivity.MapsNavActivity, accent: Color) {
-    Row(
-        modifier = Modifier.weight(1f, fill = false),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
         Icon(
             imageVector = navManeuverIcon(nav.turnDirection),
             contentDescription = "Next maneuver",
@@ -522,12 +520,17 @@ internal fun RowScope.CollapsedNavigationContent(nav: CockpitLiveActivity.MapsNa
         )
     }
     Spacer(Modifier.width(Tokens.Small))
+    // The next-turn distance when there is one, else the time and distance left ("38 min · 20 km"),
+    // so a notification with no turn distance still shows a live figure and never drops the distance.
     Text(
-        text = nav.distanceText.ifEmpty { nav.etaText },
+        text = nav.headlineText,
         style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
         color = CockpitLivePalette.White,
         maxLines = 1,
-        modifier = Modifier.testTag("cockpit-nav-distance"),
+        overflow = TextOverflow.Ellipsis,
+        modifier = Modifier
+            .weight(1f, fill = false)
+            .testTag("cockpit-nav-distance"),
     )
 }
 
@@ -944,6 +947,11 @@ private fun NavigationCard(
     val maneuverImage = remember(nav.maneuverIcon) {
         nav.maneuverIcon?.takeIf { !it.isRecycled }?.asImageBitmap()
     }
+    // Google Maps sends a dark arrow on transparent, which vanishes on the black tile.
+    val maneuverStyle = remember(nav.maneuverIcon) {
+        nav.maneuverIcon?.takeIf { !it.isRecycled }?.let { ManeuverIconContrast.classify(it) }
+            ?: ManeuverIconStyle.AS_IS
+    }
     val stackHud = LocalDensity.current.fontScale >= Tokens.STACK_AT_FONT_SCALE ||
         LocalConfiguration.current.screenWidthDp < Tokens.COMPACT_WIDTH_DP
 
@@ -980,7 +988,13 @@ private fun NavigationCard(
                 modifier = Modifier
                     .size(Tokens.Cockpit.NavTurnBadgeSize)
                     .clip(RoundedCornerShape(Tokens.RowLoose))
-                    .background(CockpitLivePalette.Charcoal)
+                    .background(
+                        if (maneuverStyle == ManeuverIconStyle.LIGHT_BADGE) {
+                            CockpitLivePalette.White
+                        } else {
+                            CockpitLivePalette.Charcoal
+                        },
+                    )
                     .border(
                         width = Tokens.Hairline,
                         color = MaterialTheme.colorScheme.tertiary.copy(alpha = 0.55f),
@@ -994,6 +1008,11 @@ private fun NavigationCard(
                         bitmap = maneuverImage,
                         contentDescription = "Next maneuver",
                         contentScale = ContentScale.Fit,
+                        colorFilter = if (maneuverStyle == ManeuverIconStyle.WHITE_TINT) {
+                            ColorFilter.tint(CockpitLivePalette.White)
+                        } else {
+                            null
+                        },
                         modifier = Modifier.size(Tokens.Cockpit.NavTurnBadgeSize - Tokens.Small),
                     )
                 } else {
@@ -1007,7 +1026,7 @@ private fun NavigationCard(
             }
             Column(modifier = Modifier.weight(1f)) {
                 Text(
-                    text = nav.distanceText.ifEmpty { "Navigating" },
+                    text = nav.headlineText.ifEmpty { "Navigating" },
                     style = MaterialTheme.typography.titleLarge.copy(
                         fontWeight = FontWeight.Bold,
                         fontFeatureSettings = TABULAR_DIGITS,
