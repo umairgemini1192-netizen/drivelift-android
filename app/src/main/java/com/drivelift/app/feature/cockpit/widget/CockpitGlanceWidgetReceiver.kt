@@ -127,6 +127,13 @@ class CockpitGlanceWidgetReceiver : AppWidgetProvider() {
                 }
             }
 
+            Intent.ACTION_MY_PACKAGE_REPLACED -> {
+                if (CockpitGlanceWidget.hasBoundWidgets(context)) {
+                    runCatching { Graph.get(context).cockpit.telemetryMonitor.setWidgetBound(true) }
+                    CockpitGlanceWidget.updateAllWidgets(context)
+                }
+            }
+
             else -> super.onReceive(context, intent)
         }
     }
@@ -183,7 +190,8 @@ class CockpitGlanceWidgetReceiver : AppWidgetProvider() {
 
     private fun handlePageStep(context: Context, appWidgetId: Int, delta: Int) {
         val cockpit = Graph.get(context).cockpit
-        val total = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages).size
+        val pinnedPackages = cockpit.prefsRepo.readPinnedPackagesForWidget()
+        val total = cockpit.pinnedAppsRepo.resolvePinnedApps(pinnedPackages).size
         val count = CockpitWidgetModel.pageCount(total)
         val current = CockpitGlanceWidget.readSavedPage(context, appWidgetId)
         val nextPage = CockpitWidgetModel.wrapPage(current + delta, count)

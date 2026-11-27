@@ -386,6 +386,7 @@
                     android:id="@+id/cockpit_widget_drop_bg"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -430,6 +431,7 @@
                     android:id="@+id/cockpit_widget_torch_bg"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -474,6 +476,7 @@
                     android:id="@+id/cockpit_widget_island_bg"
                     android:layout_width="match_parent"
                     android:layout_height="match_parent"
+                    android:background="@drawable/cockpit_widget_tile_inactive_bg"
                     android:contentDescription="@null"
                     android:scaleType="fitXY" />
 
@@ -518,14 +521,8 @@
         <FrameLayout
             android:id="@+id/cockpit_widget_dock_container"
             android:layout_width="match_parent"
-            android:layout_height="wrap_content">
-
-            <ImageView
-                android:id="@+id/cockpit_widget_dock_bg"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:contentDescription="@null"
-                android:scaleType="fitXY" />
+            android:layout_height="wrap_content"
+            android:background="@drawable/cockpit_widget_dock_bg">
 
             <LinearLayout
                 android:layout_width="match_parent"

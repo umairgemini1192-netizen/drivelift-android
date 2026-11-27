@@ -340,6 +340,12 @@ object CockpitHudBitmapRenderer {
         val cy = size * 0.5f
         val outerR = size * 0.48f
 
+        val baseDiscPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+            style = Paint.Style.FILL
+            color = GlassPalette.HudTileRecessed.toArgb()
+        }
+        canvas.drawCircle(cx, cy, outerR, baseDiscPaint)
+
         val haloPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
             style = Paint.Style.FILL
             shader = RadialGradient(
@@ -348,7 +354,7 @@ object CockpitHudBitmapRenderer {
                 outerR,
                 intArrayOf(
                     accentColor.copy(alpha = 0.24f).toArgb(),
-                    GlassPalette.HudTileRecessed.toArgb(),
+                    android.graphics.Color.TRANSPARENT,
                 ),
                 floatArrayOf(0f, 1f),
                 Shader.TileMode.CLAMP,
@@ -368,6 +374,30 @@ object CockpitHudBitmapRenderer {
             val dst = RectF(iconMargin, iconMargin, size - iconMargin, size - iconMargin)
             val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             canvas.drawBitmap(appIcon, null, dst, bmpPaint)
+        } else {
+            // Clean 2x2 rounded app-grid fallback glyph matching Compose HudPinnedAppDockItem.
+            val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                style = Paint.Style.FILL
+                color = accentColor.toArgb()
+            }
+            val cellSize = size * 0.17f
+            val gap = size * 0.08f
+            val corner = cellSize * 0.28f
+            val total = cellSize * 2f + gap
+            val startX = cx - total * 0.5f
+            val startY = cy - total * 0.5f
+            for (row in 0..1) {
+                for (col in 0..1) {
+                    val left = startX + col * (cellSize + gap)
+                    val top = startY + row * (cellSize + gap)
+                    canvas.drawRoundRect(
+                        RectF(left, top, left + cellSize, top + cellSize),
+                        corner,
+                        corner,
+                        glyphPaint,
+                    )
+                }
+            }
         }
         return bitmap
     }

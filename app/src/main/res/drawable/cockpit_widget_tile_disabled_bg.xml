@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    <!-- Disabled glass control tile matching GlassWidgetStyle (GlassWidgetLevel.Tile). -->
+    <corners android:radius="16dp" />
+    <solid android:color="@color/cockpit_glass_tile_disabled_fill" />
+    <stroke
+        android:width="1dp"
+        android:color="@color/cockpit_glass_tile_disabled_stroke" />
+</shape>
