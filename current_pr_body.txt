@@ -1,0 +1,71 @@
+{
+  "handoff_version": 2,
+  "task": "Phase 13b: Fix real Android home screen widget RemoteViews regressions from preview.48",
+  "pr_number": 103,
+  "branch": "feat/phase-13b-widget-remoteviews-hotfix",
+  "updated_utc": "2026-11-27T01:30:00Z",
+  "stance_for": "Umair",
+  "status": "BLOCKED",
+  "head_sha": "eff321fa594ff2ebc26317c78d67bafd6668d60c",
+  "last_reviewed_sha": "",
+  "implementer": "NightShift",
+  "reviewers": [
+    "ChatGPT"
+  ],
+  "objective": "Restore GlassWidgetStyle pill containers and borders on Drop, Torch, and Island buttons and restore the App Dock container, pinned app icons/labels, and pagination dots with 8dp bottom clearance on the real Android RemoteViews home screen widget without regressing the Cockpit Hub preview or top half.",
+  "decisions": [
+    "Replaced multi-megabyte shell, control tile, and dock tray ARGB_8888 bitmaps in RemoteViews with 0-byte XML GlassWidgetStyle layer-list drawables, cutting 4-variant responsive RemoteViews bitmap memory from ~18.8 MB to < 1.1 MB so AppWidgetService no longer rejects updateAppWidget().",
+    "Moved dock background onto cockpit_widget_dock_container for NORMAL, TALL, and EXPANDED to eliminate the AOSP FrameLayout match_parent-inside-wrap_content measurement bug, keeping 34dp centered dock_bg on COMPACT.",
+    "Mirrored pinnedPackages synchronously in SharedPreferences (with bounded 1500ms DataStore upgrade fallback, guard against empty DataStore overwriting existing mirrors, and ACTION_MY_PACKAGE_REPLACED refresh) and resolved only pinned packages directly instead of scanning all installed apps on the widget broadcast main thread.",
+    "Hardened CockpitPreferencesRepository.seedForTest(null) reset and cold-start scope teardown in CockpitPhase13bWidgetRemoteViewsHotfixTest so empty DataStore background collectors cannot race with upgrade-path verification."
+  ],
+  "files_changed": [
+    "app/src/main/AndroidManifest.xml",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/CockpitModule.kt",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/data/CockpitPreferencesRepository.kt",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/data/PinnedAppsRepository.kt",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/widget/CockpitGlanceWidget.kt",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/widget/CockpitGlanceWidgetReceiver.kt",
+    "app/src/main/java/com/drivelift/app/feature/cockpit/widget/CockpitHudBitmapRenderer.kt",
+    "app/src/main/java/com/drivelift/app/ui/GlassWidgetStyle.kt",
+    "app/src/main/res/drawable/cockpit_widget_dock_bg.xml",
+    "app/src/main/res/drawable/cockpit_widget_tile_active_cyan_bg.xml",
+    "app/src/main/res/drawable/cockpit_widget_tile_active_red_bg.xml",
+    "app/src/main/res/drawable/cockpit_widget_tile_active_violet_bg.xml",
+    "app/src/main/res/drawable/cockpit_widget_tile_disabled_bg.xml",
+    "app/src/main/res/drawable/cockpit_widget_tile_inactive_bg.xml",
+    "app/src/main/res/layout/cockpit_widget_compact.xml",
+    "app/src/main/res/layout/cockpit_widget_expanded.xml",
+    "app/src/main/res/layout/cockpit_widget_master.xml",
+    "app/src/main/res/layout/cockpit_widget_tall.xml",
+    "app/src/main/res/values/cockpit_colors.xml",
+    "app/src/test/java/com/drivelift/app/feature/cockpit/CockpitPhase13bWidgetRemoteViewsHotfixTest.kt"
+  ],
+  "validation": {
+    "commands": [
+      "python .github/gate/glass_lint.py",
+      "python -m unittest discover -s .github/gate -p test_*.py",
+      "gh api repos/umairgemini1192-netizen/drivelift-android/check-runs/140241396346/annotations",
+      "gh run rerun 45917888398 --repo umairgemini1192-netizen/drivelift-android"
+    ],
+    "results": [
+      "glass_lint.py passed with zero violations on 56e4c7872931bb8009cd01e2cb17a034b8f98761 (tree identical in empty trigger commit 65b3a9c3e425e363a88f3c3582ea5a46cd4392d2)",
+      "28/28 .github/gate unit tests passed on 56e4c7872931bb8009cd01e2cb17a034b8f98761 (tree identical in empty trigger commit 65b3a9c3e425e363a88f3c3582ea5a46cd4392d2)",
+      "GitHub Actions Android build (run 45917888408 / job 140241396346) and UI contract (run 45917888398 / job 140241396482 and live rerun job 140254390593 at 2026-11-27T01:19:37Z) failed in 2s before any runner started (log not found): The job was not started because your account is locked due to a billing issue.",
+      "Local ./gradlew intentionally not executed per NightShift guardrails"
+    ],
+    "active_blockers": [
+      "GitHub account umairgemini1192-netizen has an active billing lock blocking all GitHub Actions jobs ('The job was not started because your account is locked due to a billing issue.'). Resolve GitHub billing/Actions lock, then re-run Android build and UI contract workflows on eff321fa594ff2ebc26317c78d67bafd6668d60c. Live rerun of UI contract (run 45917888398 / job 140254390593) at 2026-11-27T01:19:37Z confirmed the lock is still active; no further empty commits pushed."
+    ],
+    "not_verified": [
+      "GitHub Actions testDebugUnitTest -PrecordScreenshots, screenshot evidence publishing, and assembleDebug blocked by GitHub account billing lock",
+      "Physical Pixel 8 Pro Android 17 home screen launcher retest pending after preview release"
+    ],
+    "open_risks": [
+      "On-device Pixel Launcher re-inflation across APK upgrade still requires physical retest on Pixel 8 Pro"
+    ]
+  },
+  "next_action": "Owner resolves GitHub Actions billing lock on account umairgemini1192-netizen, then re-runs CI workflows on eff321fa594ff2ebc26317c78d67bafd6668d60c and restarts NightShift.",
+  "requires_owner_decision": true
+}
+
