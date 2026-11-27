@@ -332,6 +332,7 @@ object CockpitHudBitmapRenderer {
         appIcon: Bitmap?,
         accentColor: Color = GlassPalette.HudElectricCyan,
         density: Float = 2.5f,
+        fallbackLabel: String = "",
     ): Bitmap {
         val size = sizePx.coerceAtLeast(32)
         val bitmap = Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888)
@@ -368,6 +369,17 @@ object CockpitHudBitmapRenderer {
             val dst = RectF(iconMargin, iconMargin, size - iconMargin, size - iconMargin)
             val bmpPaint = Paint(Paint.ANTI_ALIAS_FLAG or Paint.FILTER_BITMAP_FLAG)
             canvas.drawBitmap(appIcon, null, dst, bmpPaint)
+        } else {
+            val initial = fallbackLabel.trim().firstOrNull()?.uppercaseChar()?.toString() ?: "A"
+            val glyphPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                color = accentColor.toArgb()
+                textAlign = Paint.Align.CENTER
+                textSize = size * 0.44f
+                typeface = Typeface.create(Typeface.DEFAULT, Typeface.BOLD)
+            }
+            val fm = glyphPaint.fontMetrics
+            val baseline = cy - (fm.ascent + fm.descent) * 0.5f
+            canvas.drawText(initial, cx, baseline, glyphPaint)
         }
         return bitmap
     }

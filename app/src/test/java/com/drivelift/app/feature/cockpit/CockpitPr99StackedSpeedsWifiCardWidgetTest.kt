@@ -740,9 +740,9 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 assertNotNull("Tall widget must have network/data row", netRow)
                 assertEquals(View.VISIBLE, netRow.visibility)
                 val netSpeedText = inflated.findViewById<TextView>(R.id.cockpit_widget_net_speed).text.toString()
-                val todayDataText = inflated.findViewById<TextView>(R.id.cockpit_widget_today_data).text.toString()
-                assertTrue("Expected live speed in tall row, got '$netSpeedText'", netSpeedText.contains("1.4M"))
-                assertEquals("Today 420 MB", todayDataText)
+                val todayDataView = inflated.findViewById<View>(R.id.cockpit_widget_today_data)
+                assertTrue("Expected live speed in network chip, got '$netSpeedText'", netSpeedText.contains("1.4M"))
+                assertEquals(View.GONE, todayDataView.visibility)
 
                 val topGapFraction = clockRow.top.toFloat() / heightPx.toFloat()
                 val bottomGapFraction = (heightPx - dockContainer.bottom).toFloat() / heightPx.toFloat()
@@ -840,9 +840,9 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         )
         partial.reapply(app, inflated)
         val netText = inflated.findViewById<TextView>(R.id.cockpit_widget_net_speed).text.toString()
-        val dataText = inflated.findViewById<TextView>(R.id.cockpit_widget_today_data).text.toString()
+        val dataView = inflated.findViewById<View>(R.id.cockpit_widget_today_data)
         assertTrue("Expected live download speed in patched Tall row, got '$netText'", netText.contains("2.4M"))
-        assertEquals("Today 512 MB", dataText)
+        assertEquals(View.GONE, dataView.visibility)
 
         // Unbinding cleanly stops both telemetry and speed tickers.
         monitor.setWidgetBound(false)

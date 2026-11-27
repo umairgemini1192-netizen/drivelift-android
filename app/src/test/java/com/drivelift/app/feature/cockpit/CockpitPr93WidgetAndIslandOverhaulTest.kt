@@ -217,6 +217,8 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
         assertEquals(0, CockpitGlanceWidget.readSavedPage(app, widgetId))
 
         val resolvedCount = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages).size
+        val fallbackDockApps = CockpitGlanceWidget.resolveDockApps(app)
+        assertEquals(4, fallbackDockApps.size)
         val pageCount = CockpitWidgetModel.pageCount(resolvedCount)
         val nextIntent = Intent(app, CockpitGlanceWidgetReceiver::class.java).apply {
             action = CockpitWidgetActions.ACTION_PINNED_NEXT

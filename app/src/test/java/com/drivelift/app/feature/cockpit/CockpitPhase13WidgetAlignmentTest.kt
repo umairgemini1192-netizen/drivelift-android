@@ -2,6 +2,7 @@ package com.drivelift.app.feature.cockpit
 
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.TextView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
@@ -238,15 +239,37 @@ class CockpitPhase13WidgetAlignmentTest {
     fun tallAndNormalWidgetsPreserveRow1RingsRow2ChipsAndZeroClipping() {
         for ((variant, size) in listOf(
             WidgetSizeVariant.TALL to (276f to 310f),
+            WidgetSizeVariant.NORMAL to (276f to 270f),
             WidgetSizeVariant.NORMAL to (276f to 220f),
             WidgetSizeVariant.COMPACT to (276f to 140f),
         )) {
-            val (root, _) = inflateAndLayout(variant, widthDp = size.first, heightDp = size.second)
+            val (root, density) = inflateAndLayout(variant, widthDp = size.first, heightDp = size.second)
+            val heightPx = (size.second * density).roundToInt()
             val dockContainer = root.findViewById<View>(R.id.cockpit_widget_dock_container)
             assertNotNull(dockContainer)
+            assertEquals(View.VISIBLE, dockContainer.visibility)
             assertTrue(
                 "$variant dock must not clip bottom",
                 topInRoot(dockContainer, root) + dockContainer.height <= root.height,
+            )
+
+            // Visible action-button pill backgrounds and recessed dock tray must always have drawables.
+            for (bgId in intArrayOf(
+                R.id.cockpit_widget_drop_bg,
+                R.id.cockpit_widget_torch_bg,
+                R.id.cockpit_widget_island_bg,
+                R.id.cockpit_widget_dock_bg,
+            )) {
+                val bgView = root.findViewById<ImageView>(bgId)
+                assertNotNull("Background view missing in $variant", bgView)
+                assertNotNull("Background drawable missing in $variant", bgView.drawable)
+            }
+
+            // Bottom empty band under dock must stay <= 10% (no dead bottom gap).
+            val bottomGapFraction = (heightPx - (topInRoot(dockContainer, root) + dockContainer.height)).toFloat() / heightPx.toFloat()
+            assertTrue(
+                "$variant (${size.second}dp) bottom gap ${(bottomGapFraction * 100).toInt()}% > 10%",
+                bottomGapFraction <= 0.10f,
             )
 
             // Baseline-aligned AM/PM across every size bucket.
@@ -269,9 +292,29 @@ class CockpitPhase13WidgetAlignmentTest {
             )
 
             if (variant != WidgetSizeVariant.COMPACT) {
+                val batteryGauge = root.findViewById<View>(R.id.cockpit_widget_battery_gauge)
+                assertTrue(
+                    "$variant battery ring must be >= 56dp",
+                    batteryGauge.width >= (55f * density).roundToInt(),
+                )
+                for (telemetryId in intArrayOf(
+                    R.id.cockpit_widget_battery_current,
+                    R.id.cockpit_widget_battery_charge,
+                    R.id.cockpit_widget_ram_used,
+                    R.id.cockpit_widget_ram_free,
+                )) {
+                    val tv = root.findViewById<TextView>(telemetryId)
+                    assertTrue(
+                        "$variant telemetry text ${tv.textSize / density}sp must be >= 11sp",
+                        (tv.textSize / density) >= 10.9f,
+                    )
+                }
+
                 val chipsRow = root.findViewById<View>(R.id.cockpit_widget_chips_row)
                 val alarmCard = root.findViewById<View>(R.id.cockpit_widget_alarm_container)
                 val netRow = root.findViewById<View>(R.id.cockpit_widget_net_row)
+                val todayData = root.findViewById<View>(R.id.cockpit_widget_today_data)
+                assertEquals(View.GONE, todayData.visibility)
                 assertTrue(
                     "$variant alarm chip must be content-width",
                     alarmCard.width < chipsRow.width * 0.65f,
@@ -316,7 +359,7 @@ class CockpitPhase13WidgetAlignmentTest {
         assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("Today --"))
         assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("Today 0 MB"))
         assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("0 MB"))
-        assertEquals(true, CockpitGlanceWidget.shouldShowTodayData("Today 420 MB"))
+        assertEquals(false, CockpitGlanceWidget.shouldShowTodayData("Today 420 MB"))
 
         assertEquals("READY", CockpitWidgetModel.statusPill(dropLive = false, torchOn = false).text)
         assertEquals(WidgetStatusTone.DROP_LIVE, CockpitWidgetModel.statusPill(dropLive = true, torchOn = true).tone)
@@ -387,7 +430,7 @@ class CockpitPhase13WidgetAlignmentTest {
             val torchBounds = compose.onNodeWithTag("cockpit-widget-toggle-torch").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight).getBoundsInRoot()
             val islandBounds = compose.onNodeWithTag("cockpit-widget-toggle-island").assertHeightIsAtLeast(Tokens.Cockpit.HudControlHeight).getBoundsInRoot()
 
-            assertEquals(44f, (batteryGaugeBounds.right - batteryGaugeBounds.left).value, 1f)
+            assertEquals(56f, (batteryGaugeBounds.right - batteryGaugeBounds.left).value, 1f)
             assertTrue("Drop button height must be >= 48dp", (dropBounds.bottom - dropBounds.top).value >= 48f)
             assertEquals(10f, (torchBounds.left - dropBounds.right).value, 1.5f)
             assertEquals(10f, (islandBounds.left - torchBounds.right).value, 1.5f)

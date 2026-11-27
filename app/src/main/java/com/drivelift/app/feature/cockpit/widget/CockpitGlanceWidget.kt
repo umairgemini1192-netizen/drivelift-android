@@ -57,14 +57,14 @@ enum class WidgetSizeVariant(
     COMPACT(
         layoutResId = R.layout.cockpit_widget_compact,
         gaugeSizeDp = 30f,
-        tileHeightDp = 32f,
+        tileHeightDp = 36f,
         showAppLabels = false,
         showExtendedTelemetry = false,
         showTallNetworkRow = true,
     ),
     NORMAL(
         layoutResId = R.layout.cockpit_widget_master,
-        gaugeSizeDp = 36f,
+        gaugeSizeDp = 56f,
         tileHeightDp = 44f,
         showAppLabels = true,
         showExtendedTelemetry = true,
@@ -72,7 +72,7 @@ enum class WidgetSizeVariant(
     ),
     TALL(
         layoutResId = R.layout.cockpit_widget_tall,
-        gaugeSizeDp = 44f,
+        gaugeSizeDp = 60f,
         tileHeightDp = 44f,
         showAppLabels = true,
         showExtendedTelemetry = true,
@@ -80,7 +80,7 @@ enum class WidgetSizeVariant(
     ),
     EXPANDED(
         layoutResId = R.layout.cockpit_widget_expanded,
-        gaugeSizeDp = 52f,
+        gaugeSizeDp = 64f,
         tileHeightDp = 46f,
         showAppLabels = true,
         showExtendedTelemetry = true,
@@ -276,14 +276,46 @@ class CockpitGlanceWidget {
             }
         }
 
-        /** Hides `"0 MB"`, `"Today 0 MB"`, and placeholder `"--"` mobile-data labels on the widget chip. */
-        fun shouldShowTodayData(todayDataLabel: String?): Boolean {
-            val trimmed = todayDataLabel?.trim().orEmpty()
-            if (trimmed.isEmpty() || trimmed == "--" || trimmed.equals("Today --", ignoreCase = true)) {
-                return false
+        /**
+         * Resolves pinned apps for the widget dock, falling back to up to 4 installed default
+         * launchable apps (or 4 default entries if headless) so the dock is never empty.
+         */
+        fun resolveDockApps(context: Context): List<PinnedAppInfo> {
+            val cockpit = Graph.get(context).cockpit
+            val pinned = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages)
+            if (pinned.isNotEmpty()) return pinned
+
+            val launchable = cockpit.pinnedAppsRepo.listLaunchableApps(excludeSelf = true)
+            if (launchable.isNotEmpty()) {
+                val byPkg = launchable.associateBy { it.packageName }
+                val preferred = DEFAULT_DOCK_PACKAGES.mapNotNull { byPkg[it] }
+                val combined = (preferred + launchable).distinctBy { it.packageName }
+                return combined.take(CockpitWidgetModel.PINNED_PER_PAGE)
             }
-            return !Regex("""(?:^|\s)0(?:\.0+)?\s*(?:B|KB|MB)\b""", RegexOption.IGNORE_CASE)
-                .containsMatchIn(trimmed)
+            return HEADLESS_DEFAULT_DOCK_APPS
+        }
+
+        private val DEFAULT_DOCK_PACKAGES = listOf(
+            "com.google.android.dialer",
+            "com.google.android.apps.messaging",
+            "com.android.chrome",
+            "com.google.android.apps.maps",
+            "com.google.android.GoogleCamera",
+            "com.google.android.deskclock",
+            "com.google.android.apps.photos",
+            "com.android.settings",
+        )
+
+        private val HEADLESS_DEFAULT_DOCK_APPS = listOf(
+            PinnedAppInfo("com.google.android.apps.maps", "Maps"),
+            PinnedAppInfo("com.android.chrome", "Chrome"),
+            PinnedAppInfo("com.google.android.deskclock", "Clock"),
+            PinnedAppInfo("com.google.android.apps.photos", "Photos"),
+        )
+
+        /** Data-usage labels are hidden on the widget network chip per HUD spec. */
+        fun shouldShowTodayData(todayDataLabel: String?): Boolean {
+            return false
         }
 
         private fun wrapResponsiveRemoteViews(
@@ -547,7 +579,7 @@ class CockpitGlanceWidget {
             val wifiSsid = readCurrentWifiSsid(context)
             val todayDataLabel = readCachedTodayMobileDataLabel(context, forceRefresh = true)
 
-            val allPinned = cockpit.pinnedAppsRepo.resolvePinnedApps(prefs.pinnedPackages)
+            val allPinned = resolveDockApps(context)
             val pageCount = CockpitWidgetModel.pageCount(allPinned.size)
             val rawPage = overridePageIndex ?: readSavedPage(context, appWidgetId)
             val pinnedPage = CockpitWidgetModel.wrapPage(rawPage, pageCount)
@@ -788,14 +820,7 @@ class CockpitGlanceWidget {
                     ),
                 )
             }
-            if (todayDataLabel != null) {
-                if (variant != WidgetSizeVariant.COMPACT && shouldShowTodayData(todayDataLabel)) {
-                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.VISIBLE)
-                    views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
-                } else {
-                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
-                }
-            }
+            views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
         }
 
         private fun applyBatteryCurrentToRemoteViews(
@@ -830,14 +855,15 @@ class CockpitGlanceWidget {
             density: Float,
             variant: WidgetSizeVariant = WidgetSizeVariant.NORMAL,
         ) {
-            val gaugePx = (variant.gaugeSizeDp * density).toInt()
+            val bitmapDensity = density.coerceIn(1.5f, 2f)
+            val gaugePx = (variant.gaugeSizeDp * bitmapDensity).toInt()
             val batteryBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
                 sizePx = gaugePx,
                 fraction = battery.fraction,
                 valueText = battery.valueText,
                 subLabel = battery.label,
                 accentColor = CockpitHudBitmapRenderer.batteryArcColor(battery.percent, battery.isCharging),
-                density = density,
+                density = bitmapDensity,
                 isCharging = battery.isCharging,
             )
             val ramBmp = CockpitHudBitmapRenderer.renderArcGaugeBitmap(
@@ -846,7 +872,7 @@ class CockpitGlanceWidget {
                 valueText = ram.usedPercentText,
                 subLabel = ram.label,
                 accentColor = GlassPalette.HudElectricCyan,
-                density = density,
+                density = bitmapDensity,
             )
 
             views.setImageViewBitmap(R.id.cockpit_widget_battery_gauge, batteryBmp)
@@ -885,20 +911,9 @@ class CockpitGlanceWidget {
         ): RemoteViews {
             val views = RemoteViews(context.packageName, variant.layoutResId)
             val density = context.resources.displayMetrics.density.coerceIn(2f, 3f)
+            val iconBitmapDensity = density.coerceIn(1.5f, 2f)
 
-            val shellHeightDp = when (variant) {
-                WidgetSizeVariant.COMPACT -> 144f
-                WidgetSizeVariant.NORMAL -> 228f
-                WidgetSizeVariant.TALL -> 320f
-                WidgetSizeVariant.EXPANDED -> 390f
-            }
-            val shellBmp = CockpitHudBitmapRenderer.renderShellBitmap(
-                widthPx = (340f * density).toInt(),
-                heightPx = (shellHeightDp * density).toInt(),
-                cornerRadiusDp = 26f,
-                density = density,
-            )
-            views.setImageViewBitmap(R.id.cockpit_widget_shell_bg, shellBmp)
+            views.setImageViewResource(R.id.cockpit_widget_shell_bg, R.drawable.cockpit_widget_card_bg)
 
             // Alarm pill (Row 2, or compact chip in Row 1 for 4x2)
             val alarmLabel = when {
@@ -950,38 +965,30 @@ class CockpitGlanceWidget {
             // Dual telemetry gauges + readouts (Zone 2)
             applyTelemetryToRemoteViews(views, context, battery, ram, density, variant)
 
-            // Row 2 network chip: Wi-Fi SSID or 5G + live speeds; hide "0 MB" / idle text
+            // Row 2 network chip: Wi-Fi SSID or 5G + live speeds; mobile-data usage label hidden
             if (variant.showTallNetworkRow) {
                 views.setTextViewText(R.id.cockpit_widget_net_speed, networkSpeedLabel)
-                if (variant != WidgetSizeVariant.COMPACT && shouldShowTodayData(todayDataLabel)) {
-                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.VISIBLE)
-                    views.setTextViewText(R.id.cockpit_widget_today_data, todayDataLabel)
-                } else {
-                    views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
-                }
+                views.setViewVisibility(R.id.cockpit_widget_today_data, View.GONE)
             }
 
-            // Sculptural control deck (Zone 3)
+            // Sculptural control deck (Zone 3) using lightweight XML drawables so Binder stays small
             val primaryColor = ContextCompat.getColor(context, R.color.cockpit_on_surface)
             val disabledColor = ContextCompat.getColor(context, R.color.cockpit_on_surface_variant)
-            val tileW = (104f * density).toInt()
-            val tileH = (variant.tileHeightDp * density).toInt()
 
             val dropTile = CockpitWidgetModel.dropTile(dropLive = dropLive, available = dropAvailable)
-            val dropBmp = CockpitHudBitmapRenderer.renderControlTileBitmap(
-                widthPx = tileW,
-                heightPx = tileH,
-                active = dropTile.active,
-                accentColor = GlassPalette.DestructiveRed,
-                density = density,
-                enabled = dropTile.enabled,
-            )
             val dropFg = when {
                 !dropTile.enabled -> disabledColor
                 dropTile.active -> GlassPalette.DestructiveRed.toArgb()
                 else -> primaryColor
             }
-            views.setImageViewBitmap(R.id.cockpit_widget_drop_bg, dropBmp)
+            views.setImageViewResource(
+                R.id.cockpit_widget_drop_bg,
+                if (dropTile.active) {
+                    R.drawable.cockpit_widget_pill_active_coral_bg
+                } else {
+                    R.drawable.cockpit_widget_pill_inactive_bg
+                },
+            )
             views.setImageViewResource(
                 R.id.cockpit_widget_drop_icon,
                 if (dropLive) R.drawable.ic_cockpit_stop else R.drawable.ic_cockpit_devices,
@@ -990,14 +997,6 @@ class CockpitGlanceWidget {
             views.setTextViewText(R.id.cockpit_widget_drop_label, dropTile.label)
             views.setTextColor(R.id.cockpit_widget_drop_label, dropFg)
 
-            val torchBmp = CockpitHudBitmapRenderer.renderControlTileBitmap(
-                widthPx = tileW,
-                heightPx = tileH,
-                active = torchOn,
-                accentColor = GlassPalette.PrimaryCyan,
-                density = density,
-                enabled = torchAvailable,
-            )
             val torchFg = when {
                 !torchAvailable -> disabledColor
                 torchOn -> GlassPalette.PrimaryCyan.toArgb()
@@ -1008,7 +1007,14 @@ class CockpitGlanceWidget {
                 torchOn -> "Torch On"
                 else -> "Torch"
             }
-            views.setImageViewBitmap(R.id.cockpit_widget_torch_bg, torchBmp)
+            views.setImageViewResource(
+                R.id.cockpit_widget_torch_bg,
+                if (torchOn && torchAvailable) {
+                    R.drawable.cockpit_widget_pill_active_cyan_bg
+                } else {
+                    R.drawable.cockpit_widget_pill_inactive_bg
+                },
+            )
             views.setImageViewResource(
                 R.id.cockpit_widget_torch_icon,
                 if (torchOn) R.drawable.ic_cockpit_torch_on else R.drawable.ic_cockpit_torch_off,
@@ -1017,16 +1023,15 @@ class CockpitGlanceWidget {
             views.setTextViewText(R.id.cockpit_widget_torch_label, torchLabel)
             views.setTextColor(R.id.cockpit_widget_torch_label, torchFg)
 
-            val islandBmp = CockpitHudBitmapRenderer.renderControlTileBitmap(
-                widthPx = tileW,
-                heightPx = tileH,
-                active = islandOn,
-                accentColor = GlassPalette.SecondaryViolet,
-                density = density,
-                enabled = true,
-            )
             val islandFg = if (islandOn) GlassPalette.SecondaryViolet.toArgb() else primaryColor
-            views.setImageViewBitmap(R.id.cockpit_widget_island_bg, islandBmp)
+            views.setImageViewResource(
+                R.id.cockpit_widget_island_bg,
+                if (islandOn) {
+                    R.drawable.cockpit_widget_pill_active_violet_bg
+                } else {
+                    R.drawable.cockpit_widget_pill_inactive_bg
+                },
+            )
             views.setInt(R.id.cockpit_widget_island_icon, "setColorFilter", islandFg)
             views.setTextViewText(R.id.cockpit_widget_island_label, if (islandOn) "Island On" else "Island")
             views.setTextColor(R.id.cockpit_widget_island_label, islandFg)
@@ -1036,18 +1041,7 @@ class CockpitGlanceWidget {
                 views.setViewVisibility(R.id.cockpit_widget_dock_container, View.GONE)
             } else {
                 views.setViewVisibility(R.id.cockpit_widget_dock_container, View.VISIBLE)
-                val dockHeightDp = when (variant) {
-                    WidgetSizeVariant.COMPACT -> 34f
-                    WidgetSizeVariant.NORMAL -> 60f
-                    WidgetSizeVariant.TALL -> 64f
-                    WidgetSizeVariant.EXPANDED -> 72f
-                }
-                val trayBmp = CockpitHudBitmapRenderer.renderDockTrayBitmap(
-                    widthPx = (312f * density).toInt(),
-                    heightPx = (dockHeightDp * density).toInt(),
-                    density = density,
-                )
-                views.setImageViewBitmap(R.id.cockpit_widget_dock_bg, trayBmp)
+                views.setImageViewResource(R.id.cockpit_widget_dock_bg, R.drawable.cockpit_widget_well_bg)
 
                 val paged = pinnedPageCount > 1
                 views.setViewVisibility(R.id.cockpit_widget_btn_prev, if (paged) View.VISIBLE else View.GONE)
@@ -1073,7 +1067,7 @@ class CockpitGlanceWidget {
                     }
                 }
 
-                val haloPx = ((if (variant.showAppLabels) 28f else 24f) * density).toInt()
+                val haloPx = ((if (variant.showAppLabels) 28f else 24f) * iconBitmapDensity).toInt()
                 for (slotIndex in APP_CONTAINER_IDS.indices) {
                     val app = pinnedApps.getOrNull(slotIndex)
                     if (app == null) {
@@ -1084,7 +1078,8 @@ class CockpitGlanceWidget {
                             sizePx = haloPx,
                             appIcon = app.iconBitmap,
                             accentColor = GlassPalette.HudElectricCyan,
-                            density = density,
+                            density = iconBitmapDensity,
+                            fallbackLabel = app.label,
                         )
                         views.setImageViewBitmap(APP_ICON_IDS[slotIndex], haloBmp)
                         views.setTextViewText(APP_LABEL_IDS[slotIndex], app.label)
