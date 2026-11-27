@@ -1,0 +1,12 @@
+completed	failure	Phase 13b: Fix home screen widget RemoteViews pills, dock, and pinned apps	UI contract	feat/phase-13b-widget-remoteviews-hotfix	pull_request	45916225547	4s	2026-11-27T00:21:17Z
+completed	failure	Phase 13b: Fix home screen widget RemoteViews pills, dock, and pinned apps	Android build	feat/phase-13b-widget-remoteviews-hotfix	pull_request	45915358703	4s	2026-11-27T00:12:15Z
+completed	failure	Phase 13b: Fix home screen widget RemoteViews pills, dock, and pinned apps	UI contract	feat/phase-13b-widget-remoteviews-hotfix	pull_request	45915358685	4s	2026-11-27T00:12:15Z
+completed	failure	Cockpit widget: redesign 4-row RemoteViews HUD and compact chips	UI contract	feat/widget-redesign-compact-hud	pull_request	45904264227	3s	2026-11-26T22:21:31Z
+completed	failure	Cockpit widget: redesign 4-row RemoteViews HUD and compact chips	UI contract	feat/widget-redesign-compact-hud	pull_request	45904141258	4s	2026-11-26T22:20:24Z
+completed	failure	Cockpit widget: redesign 4-row RemoteViews HUD and compact chips	Android build	feat/widget-redesign-compact-hud	pull_request	45904141068	4s	2026-11-26T22:20:24Z
+completed	failure	CI: add native CircleCI config for build and ui-contract	Android build	ci/circleci-native	pull_request	45903629326	4s	2026-11-26T22:15:39Z
+completed	failure	CI: add native CircleCI config for build and ui-contract	UI contract	ci/circleci-native	pull_request	45903629251	3s	2026-11-26T22:15:39Z
+completed	failure	CI: add native CircleCI config for build and ui-contract	Android build	ci/circleci-native	pull_request	45901620236	3s	2026-11-26T21:57:35Z
+completed	failure	CI: add native CircleCI config for build and ui-contract	UI contract	ci/circleci-native	pull_request	45901620148	4s	2026-11-26T21:57:35Z
+completed	failure	CI: never cancel main builds	UI contract	ci/protect-main-builds	pull_request	45900000026	3s	2026-11-26T21:42:46Z
+completed	failure	CI: never cancel main builds	Android build	ci/protect-main-builds	pull_request	45900000004	4s	2026-11-26T21:42:46Z
