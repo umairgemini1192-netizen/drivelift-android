@@ -1,0 +1,111 @@
+version: 2.1
+
+workflows:
+  android-ci:
+    jobs:
+      - android-build
+      - android-ui-contract
+
+jobs:
+  android-build:
+    docker:
+      - image: cimg/android:2024.11.1
+    resource_class: large
+    environment:
+      GRADLE_OPTS: "-Dorg.gradle.jvmargs=-Xmx2g -XX:MaxMetaspaceSize=768m -Dorg.gradle.daemon=false -Dorg.gradle.workers.max=2 -Dkotlin.compiler.execution.strategy=in-process"
+    steps:
+      - checkout
+      - restore_cache:
+          keys:
+            - gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle.kts" }}
+            - gradle-v1-
+      - restore_cache:
+          keys:
+            - robolectric-jars-linux-{{ checksum "app/build.gradle.kts" }}
+            - robolectric-jars-linux-
+      - run:
+          name: Unit tests and screenshots
+          no_output_timeout: 20m
+          command: ./gradlew testDebugUnitTest -PrecordScreenshots --max-workers=1
+      - save_cache:
+          key: gradle-v1-{{ checksum "gradle/wrapper/gradle-wrapper.properties" }}-{{ checksum "app/build.gradle.kts" }}
+          paths:
+            - ~/.gradle/caches
+            - ~/.gradle/wrapper
+      - save_cache:
+          key: robolectric-jars-linux-{{ checksum "app/build.gradle.kts" }}
+          paths:
+            - ~/.m2/repository/org/robolectric
+      - store_test_results:
+          path: app/build/test-results/testDebugUnitTest
+      - run:
+          name: Require every screenshot
+          command: |
+            expected=258
+            actual=$(ls app/build/outputs/screenshots/*.png 2>/dev/null | wc -l)
+            echo "screenshots: $actual of $expected"
+            test "$actual" -eq "$expected"
+      - store_artifacts:
+          path: app/build/outputs/screenshots
+          destination: screenshots
+      - store_artifacts:
+          path: app/build/reports/tests/testDebugUnitTest
+          destination: unit-test-report
+          when: on_fail
+      - run:
+          name: Build debug APK
+          command: |
+            short_sha=$(printf '%s' "$CIRCLE_SHA1" | cut -c1-7)
+            pr_num="${CIRCLE_PULL_REQUEST##*/}"
+            if [ -n "$pr_num" ] && [ "$pr_num" != "$CIRCLE_PULL_REQUEST" ]; then
+              stamp="PR #${pr_num} @ ${short_sha}"
+            else
+              stamp="main @ ${short_sha}"
+            fi
+            ./gradlew assembleDebug -PbuildStamp="$stamp" --max-workers=2
+      - store_artifacts:
+          path: app/build/outputs/apk/debug/app-debug.apk
+          destination: drivelift-debug-apk/app-debug.apk
+
+  android-ui-contract:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: small
+    steps:
+      - checkout
+      - run:
+          name: Fetch history and evidence branch
+          command: |
+            git fetch --unshallow || true
+            git fetch origin +refs/heads/evidence:refs/remotes/origin/evidence || true
+      - run:
+          name: Test the check itself
+          command: python3 -m unittest discover -s .github/gate -p 'test_*.py'
+      - run:
+          name: Check glass surface and token lint
+          command: python3 .github/gate/glass_lint.py
+      - run:
+          name: Check entry points and current-head UI evidence
+          command: |
+            if [ -n "${CIRCLE_PULL_REQUEST:-}" ]; then
+              python3 - \<< 'PY'
+            import json, os, re, subprocess, urllib.request
+            pr_url = os.environ["CIRCLE_PULL_REQUEST"]
+            m = re.search(r"/pull/(\d+)", pr_url)
+            if not m:
+                raise SystemExit(f"Could not parse PR number from {pr_url}")
+            pr_num = m.group(1)
+            api_url = f"https://api.github.com/repos/umairgemini1192-netizen/drivelift-android/pulls/{pr_num}"
+            req = urllib.request.Request(api_url, headers={"Accept": "application/vnd.github+json", "User-Agent": "circleci-ui-contract"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                pr = json.loads(resp.read().decode("utf-8"))
+            base_sha = pr["base"]["sha"]
+            head_sha = pr["head"]["sha"]
+            subprocess.run(["git", "fetch", "origin", base_sha, head_sha], check=False)
+            with open("/tmp/pr_event.json", "w", encoding="utf-8") as f:
+                json.dump({"pull_request": pr}, f)
+            PY
+              GITHUB_EVENT_PATH=/tmp/pr_event.json python3 .github/gate/ui_contract.py
+            else
+              python3 .github/gate/ui_contract.py
+            fi
