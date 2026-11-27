@@ -1,5 +1,8 @@
 package com.drivelift.app.feature.cockpit
 
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import android.appwidget.AppWidgetManager
 import android.content.Context
 import android.content.Intent
@@ -165,6 +168,7 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
             CockpitWidgetActions.SLOT_ISLAND,
             CockpitWidgetActions.SLOT_PAGER_PREV,
             CockpitWidgetActions.SLOT_PAGER_NEXT,
+            CockpitWidgetActions.SLOT_DOCK_EMPTY,
             CockpitWidgetActions.SLOT_PINNED_APP_BASE + 0,
             CockpitWidgetActions.SLOT_PINNED_APP_BASE + 1,
             CockpitWidgetActions.SLOT_PINNED_APP_BASE + 2,
@@ -239,6 +243,74 @@ class CockpitPr93WidgetAndIslandOverhaulTest {
         appWidgetManager.updateAppWidget(widgetId, fullViews)
         assertNotNull(shadowOf(appWidgetManager).getViewFor(widgetId))
         CockpitGlanceWidget.clearWidgetState(app, widgetId)
+    }
+
+    @Test
+    fun fallbackDockSkipsUninstalledAppsHandlesFewerThanFourAndShowsEmptyStateAction() {
+        val cockpit = Graph.get(app).cockpit
+        val repo = cockpit.pinnedAppsRepo
+        try {
+            // Case A: zero launchable apps -> no hardcoded absent apps; shows labeled empty-state setup action.
+            repo.seedForTest(emptyList())
+            val emptyResolved = CockpitGlanceWidget.resolveDockApps(app)
+            assertTrue("Expected empty dock list when zero apps resolve", emptyResolved.isEmpty())
+
+            val emptyViews = CockpitGlanceWidget.buildFullRemoteViews(app, appWidgetId = 91)
+            val emptyRoot = emptyViews.apply(app, FrameLayout(app))
+            val actualDensity = app.resources.displayMetrics.density
+            emptyRoot.measure(
+                View.MeasureSpec.makeMeasureSpec((276f * actualDensity).toInt(), View.MeasureSpec.EXACTLY),
+                View.MeasureSpec.makeMeasureSpec((220f * actualDensity).toInt(), View.MeasureSpec.EXACTLY),
+            )
+            emptyRoot.layout(0, 0, (276f * actualDensity).toInt(), (220f * actualDensity).toInt())
+            val emptyAction = emptyRoot.findViewById<TextView>(R.id.cockpit_widget_dock_empty_action)
+            val appsGroup = emptyRoot.findViewById<View>(R.id.cockpit_widget_dock_apps_group)
+            assertEquals(View.VISIBLE, emptyAction.visibility)
+            assertEquals(View.GONE, appsGroup.visibility)
+            assertEquals("Pin apps in Cockpit Hub", emptyAction.text.toString())
+            assertTrue("Empty action height must be >= 48dp", emptyAction.height >= (48f * actualDensity).toInt())
+
+            // Case B: fewer than four launchable apps -> renders only resolved apps without padding dead icons.
+            val twoApps = listOf(
+                PinnedAppInfo("com.example.alpha", "Alpha"),
+                PinnedAppInfo("com.example.beta", "Beta"),
+            )
+            repo.seedForTest(twoApps)
+            val partialResolved = CockpitGlanceWidget.resolveDockApps(app)
+            assertEquals(listOf("com.example.alpha", "com.example.beta"), partialResolved.map { it.packageName })
+
+            val partialViews = CockpitGlanceWidget.buildFullRemoteViews(app, appWidgetId = 92)
+            val partialRoot = partialViews.apply(app, FrameLayout(app))
+            assertEquals(View.VISIBLE, partialRoot.findViewById<View>(R.id.cockpit_widget_dock_apps_group).visibility)
+            assertEquals(View.GONE, partialRoot.findViewById<View>(R.id.cockpit_widget_dock_empty_action).visibility)
+            assertEquals(View.VISIBLE, partialRoot.findViewById<View>(R.id.cockpit_widget_app_0).visibility)
+            assertEquals(View.VISIBLE, partialRoot.findViewById<View>(R.id.cockpit_widget_app_1).visibility)
+            assertEquals(View.GONE, partialRoot.findViewById<View>(R.id.cockpit_widget_app_2).visibility)
+            assertEquals(View.GONE, partialRoot.findViewById<View>(R.id.cockpit_widget_app_3).visibility)
+            assertEquals(View.GONE, partialRoot.findViewById<View>(R.id.cockpit_widget_btn_prev).visibility)
+            assertEquals(View.GONE, partialRoot.findViewById<View>(R.id.cockpit_widget_btn_next).visibility)
+
+            // Case C: >= 4 launchable apps -> prioritizes preferred launchable defaults, up to 4.
+            repo.seedForTest(
+                listOf(
+                    PinnedAppInfo("com.example.other1", "Other 1"),
+                    PinnedAppInfo("com.android.chrome", "Chrome"),
+                    PinnedAppInfo("com.google.android.apps.maps", "Maps"),
+                    PinnedAppInfo("com.example.other2", "Other 2"),
+                    PinnedAppInfo("com.google.android.deskclock", "Clock"),
+                ),
+            )
+            val fullResolved = CockpitGlanceWidget.resolveDockApps(app)
+            assertEquals(4, fullResolved.size)
+            assertEquals(
+                listOf("com.android.chrome", "com.google.android.apps.maps", "com.google.android.deskclock", "com.example.other1"),
+                fullResolved.map { it.packageName },
+            )
+        } finally {
+            repo.seedForTest(null)
+            CockpitGlanceWidget.clearWidgetState(app, 91)
+            CockpitGlanceWidget.clearWidgetState(app, 92)
+        }
     }
 
     @Test

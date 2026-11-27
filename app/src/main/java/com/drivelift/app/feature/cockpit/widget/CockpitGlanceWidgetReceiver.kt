@@ -182,8 +182,7 @@ class CockpitGlanceWidgetReceiver : AppWidgetProvider() {
     }
 
     private fun handlePageStep(context: Context, appWidgetId: Int, delta: Int) {
-        val cockpit = Graph.get(context).cockpit
-        val total = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages).size
+        val total = CockpitGlanceWidget.resolveDockApps(context).size
         val count = CockpitWidgetModel.pageCount(total)
         val current = CockpitGlanceWidget.readSavedPage(context, appWidgetId)
         val nextPage = CockpitWidgetModel.wrapPage(current + delta, count)

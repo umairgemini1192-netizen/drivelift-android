@@ -674,10 +674,19 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
             assertNotNull("controlsRow missing in ${spec.name}", controlsRow)
             assertNotNull("dockContainer missing in ${spec.name}", dockContainer)
 
-            // DROP LIVE status pill must live inside the clock row (aligned with clock, not floating).
+            // DROP LIVE status pill must sit under date inside the clock column (not floating top-right).
+            var parentView = statusPill.parent
+            var insideClockCol = false
+            while (parentView is View) {
+                if (parentView === clockRow) {
+                    insideClockCol = true
+                    break
+                }
+                parentView = parentView.parent
+            }
             assertTrue(
-                "Status pill must be inside clock row in ${spec.name}",
-                statusPill.parent === clockRow,
+                "Status pill must sit inside clock column in ${spec.name}",
+                insideClockCol,
             )
             assertEquals(
                 "DROP LIVE",
@@ -698,7 +707,7 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 dockContainer.height > 0,
             )
 
-            // Every primary control button and dock target retains a >= 48 dp touch target height in all sizes.
+            // Every primary control button and dock target retains >= 48 dp touch target dimensions in all sizes.
             val minTouchPx = (48f * density).toInt()
             for (btnId in intArrayOf(
                 R.id.cockpit_widget_btn_drop,
@@ -715,6 +724,14 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                     btn.height >= minTouchPx,
                 )
             }
+            val dockPrev = inflated.findViewById<View>(R.id.cockpit_widget_btn_prev)
+            val dockNext = inflated.findViewById<View>(R.id.cockpit_widget_btn_next)
+            val dockApp0 = inflated.findViewById<View>(R.id.cockpit_widget_app_0)
+            val dockApp3 = inflated.findViewById<View>(R.id.cockpit_widget_app_3)
+            assertTrue("Prev chevron width < 48dp in ${spec.name}", dockPrev.width >= minTouchPx)
+            assertTrue("Next chevron width < 48dp in ${spec.name}", dockNext.width >= minTouchPx)
+            assertTrue("Prev chevron overlaps app_0 in ${spec.name}", dockPrev.right <= dockApp0.left)
+            assertTrue("Next chevron overlaps app_3 in ${spec.name}", dockApp3.right <= dockNext.left)
 
             // Compact 4x2 hides app labels so short height never clips them.
             val appLabel0 = inflated.findViewById<View>(R.id.cockpit_widget_app_label_0)
@@ -731,9 +748,9 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 assertNotNull("Tall widget must have network/data row", netRow)
                 assertEquals(View.VISIBLE, netRow.visibility)
                 val netSpeedText = inflated.findViewById<TextView>(R.id.cockpit_widget_net_speed).text.toString()
-                val todayDataText = inflated.findViewById<TextView>(R.id.cockpit_widget_today_data).text.toString()
-                assertTrue("Expected live speed in tall row, got '$netSpeedText'", netSpeedText.contains("1.4M"))
-                assertEquals("Today 420 MB", todayDataText)
+                val todayDataView = inflated.findViewById<View>(R.id.cockpit_widget_today_data)
+                assertTrue("Expected live speed in network chip, got '$netSpeedText'", netSpeedText.contains("1.4M"))
+                assertEquals(View.GONE, todayDataView.visibility)
 
                 val topGapFraction = clockRow.top.toFloat() / heightPx.toFloat()
                 val bottomGapFraction = (heightPx - dockContainer.bottom).toFloat() / heightPx.toFloat()
@@ -831,9 +848,9 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
         )
         partial.reapply(app, inflated)
         val netText = inflated.findViewById<TextView>(R.id.cockpit_widget_net_speed).text.toString()
-        val dataText = inflated.findViewById<TextView>(R.id.cockpit_widget_today_data).text.toString()
+        val dataView = inflated.findViewById<View>(R.id.cockpit_widget_today_data)
         assertTrue("Expected live download speed in patched Tall row, got '$netText'", netText.contains("2.4M"))
-        assertEquals("Today 512 MB", dataText)
+        assertEquals(View.GONE, dataView.visibility)
 
         // Unbinding cleanly stops both telemetry and speed tickers.
         monitor.setWidgetBound(false)

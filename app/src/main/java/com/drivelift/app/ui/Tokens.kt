@@ -183,9 +183,9 @@ object Tokens {
         val HudOuterRadius = 26.dp
         val HudInnerRadius = concentricRadius(HudOuterRadius, Small) // 18.dp concentric
         val HudTileRadius = concentricRadius(HudOuterRadius, Row) // 16.dp concentric
-        val HudControlHeight = 54.dp
-        val HudControlIconSize = 20.dp
-        val HudGaugeSize = 64.dp
+        val HudControlHeight = 48.dp
+        val HudControlIconSize = 18.dp
+        val HudGaugeSize = 56.dp
         val HudDockIconHaloSize = 28.dp
         val HudStatusDotSize = 8.dp
         val HudWallpaperPad = 10.dp

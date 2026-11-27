@@ -17,11 +17,12 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:orientation="vertical"
-        android:padding="14dp">
+        android:paddingHorizontal="12dp"
+        android:paddingVertical="10dp">
 
-        <!-- Zone 1: Clock + baseline-aligned AM/PM + Date (Left) | Status Badge vertically centered on combined clock+date height (Right) -->
+        <!-- Row 1: Clock + Date + Status pill under date (Left) | Battery & RAM rings centered (Right) -->
         <LinearLayout
-            android:id="@+id/cockpit_widget_clock_row"
+            android:id="@+id/cockpit_widget_top_row"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:baselineAligned="false"
@@ -29,14 +30,15 @@
             android:orientation="horizontal">
 
             <LinearLayout
-                android:id="@+id/cockpit_widget_clock_container"
+                android:id="@+id/cockpit_widget_clock_row"
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:orientation="vertical">
+                android:orientation="vertical"
+                android:paddingEnd="8dp">
 
                 <LinearLayout
-                    android:id="@+id/cockpit_widget_time_row"
+                    android:id="@+id/cockpit_widget_clock_container"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:baselineAligned="true"
@@ -52,7 +54,7 @@
                         android:includeFontPadding="false"
                         android:singleLine="true"
                         android:textColor="@color/cockpit_on_surface"
-                        android:textSize="26sp"
+                        android:textSize="28sp"
                         android:textStyle="bold" />
 
                     <TextClock
@@ -78,162 +80,70 @@
                     android:id="@+id/cockpit_widget_date"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="1dp"
+                    android:layout_marginTop="2dp"
+                    android:ellipsize="end"
                     android:fontFeatureSettings="tnum"
                     android:format12Hour="EEE &#183; MMM d"
                     android:format24Hour="EEE &#183; MMM d"
                     android:includeFontPadding="false"
-                    android:singleLine="true"
-                    android:textColor="@color/cockpit_on_surface_variant"
-                    android:textSize="10sp" />
-            </LinearLayout>
-
-            <LinearLayout
-                android:id="@+id/cockpit_widget_status_pill"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_gravity="center_vertical"
-                android:layout_marginStart="6dp"
-                android:background="@drawable/cockpit_widget_status_ready_bg"
-                android:gravity="center_vertical"
-                android:orientation="horizontal"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="4dp">
-
-                <ImageView
-                    android:id="@+id/cockpit_widget_status_dot"
-                    android:layout_width="7dp"
-                    android:layout_height="7dp"
-                    android:layout_marginEnd="4dp"
-                    android:contentDescription="@null"
-                    android:src="@drawable/cockpit_widget_dot"
-                    android:tint="@color/cockpit_tertiary" />
-
-                <TextView
-                    android:id="@+id/cockpit_widget_status_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:includeFontPadding="false"
                     android:maxLines="1"
                     android:singleLine="true"
-                    android:text="READY"
-                    android:textColor="@color/cockpit_tertiary"
-                    android:textSize="10sp"
-                    android:textStyle="bold" />
-            </LinearLayout>
-        </LinearLayout>
-
-        <FrameLayout
-            android:id="@+id/cockpit_widget_spacer_1"
-            android:layout_width="match_parent"
-            android:layout_height="10dp"
-            android:layout_weight="1" />
-
-        <!-- Zone 2: Alarm Card (55%, full telemetry height) | 10dp gutter | Dual Telemetry Gauges (45%) -->
-        <LinearLayout
-            android:id="@+id/cockpit_widget_telemetry_row"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:baselineAligned="false"
-            android:gravity="center_vertical"
-            android:orientation="horizontal">
-
-            <LinearLayout
-                android:id="@+id/cockpit_widget_alarm_container"
-                android:layout_width="0dp"
-                android:layout_height="match_parent"
-                android:layout_marginEnd="10dp"
-                android:layout_weight="55"
-                android:background="@drawable/cockpit_widget_well_bg"
-                android:gravity="start|center_vertical"
-                android:orientation="vertical"
-                android:paddingHorizontal="8dp"
-                android:paddingVertical="6dp">
+                    android:textColor="@color/cockpit_on_surface_variant"
+                    android:textSize="11sp" />
 
                 <LinearLayout
+                    android:id="@+id/cockpit_widget_status_pill"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
+                    android:layout_marginTop="5dp"
+                    android:background="@drawable/cockpit_widget_status_ready_bg"
                     android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:orientation="horizontal"
+                    android:paddingHorizontal="8dp"
+                    android:paddingVertical="3dp">
 
                     <ImageView
-                        android:id="@+id/cockpit_alarm_icon"
-                        android:layout_width="12dp"
-                        android:layout_height="12dp"
+                        android:id="@+id/cockpit_widget_status_dot"
+                        android:layout_width="7dp"
+                        android:layout_height="7dp"
                         android:layout_marginEnd="4dp"
                         android:contentDescription="@null"
-                        android:src="@drawable/ic_cockpit_alarm"
-                        android:tint="@color/cockpit_primary" />
+                        android:src="@drawable/cockpit_widget_dot"
+                        android:tint="@color/cockpit_tertiary" />
 
                     <TextView
-                        android:id="@+id/cockpit_alarm_time_text"
+                        android:id="@+id/cockpit_widget_status_text"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:ellipsize="end"
-                        android:fontFeatureSettings="tnum"
                         android:includeFontPadding="false"
                         android:maxLines="1"
                         android:singleLine="true"
-                        android:text="No alarm set"
-                        android:textColor="@color/cockpit_on_surface"
-                        android:textSize="11sp"
+                        android:text="READY"
+                        android:textColor="@color/cockpit_tertiary"
+                        android:textSize="10sp"
                         android:textStyle="bold" />
                 </LinearLayout>
-
-                <Chronometer
-                    android:id="@+id/cockpit_alarm_chronometer"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:countDown="true"
-                    android:ellipsize="none"
-                    android:fontFeatureSettings="tnum"
-                    android:format="Rings in %s"
-                    android:includeFontPadding="false"
-                    android:maxLines="1"
-                    android:singleLine="true"
-                    android:textColor="@color/cockpit_primary"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
-
-                <TextView
-                    android:id="@+id/cockpit_alarm_static_countdown"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="3dp"
-                    android:ellipsize="none"
-                    android:fontFeatureSettings="tnum"
-                    android:includeFontPadding="false"
-                    android:maxLines="1"
-                    android:singleLine="true"
-                    android:textColor="@color/cockpit_primary"
-                    android:textSize="10sp"
-                    android:textStyle="bold"
-                    android:visibility="gone" />
             </LinearLayout>
 
             <LinearLayout
                 android:id="@+id/cockpit_widget_telemetry_gauges"
-                android:layout_width="0dp"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_weight="45"
                 android:baselineAligned="false"
-                android:gravity="top"
+                android:gravity="center_vertical"
                 android:orientation="horizontal">
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_weight="1"
                     android:gravity="center_horizontal"
                     android:orientation="vertical">
 
                     <ImageView
                         android:id="@+id/cockpit_widget_battery_gauge"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
+                        android:layout_width="60dp"
+                        android:layout_height="60dp"
                         android:contentDescription="Battery level"
                         android:scaleType="fitCenter" />
 
@@ -241,7 +151,7 @@
                         android:id="@+id/cockpit_widget_battery_current"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="3dp"
                         android:ellipsize="end"
                         android:fontFeatureSettings="tnum"
                         android:includeFontPadding="false"
@@ -249,7 +159,7 @@
                         android:singleLine="true"
                         android:text="-- mA"
                         android:textColor="@color/cockpit_secondary"
-                        android:textSize="9.5sp"
+                        android:textSize="11.5sp"
                         android:textStyle="bold" />
 
                     <TextView
@@ -264,21 +174,20 @@
                         android:singleLine="true"
                         android:text="-- mAh"
                         android:textColor="@color/cockpit_on_surface_variant"
-                        android:textSize="8.5sp" />
+                        android:textSize="11sp" />
                 </LinearLayout>
 
                 <LinearLayout
-                    android:layout_width="0dp"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:layout_marginStart="4dp"
-                    android:layout_weight="1"
+                    android:layout_marginStart="8dp"
                     android:gravity="center_horizontal"
                     android:orientation="vertical">
 
                     <ImageView
                         android:id="@+id/cockpit_widget_ram_gauge"
-                        android:layout_width="44dp"
-                        android:layout_height="44dp"
+                        android:layout_width="60dp"
+                        android:layout_height="60dp"
                         android:contentDescription="RAM usage"
                         android:scaleType="fitCenter" />
 
@@ -286,7 +195,7 @@
                         android:id="@+id/cockpit_widget_ram_used"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="6dp"
+                        android:layout_marginTop="3dp"
                         android:ellipsize="end"
                         android:fontFeatureSettings="tnum"
                         android:includeFontPadding="false"
@@ -294,7 +203,7 @@
                         android:singleLine="true"
                         android:text="--"
                         android:textColor="@color/cockpit_primary"
-                        android:textSize="9.5sp"
+                        android:textSize="11.5sp"
                         android:textStyle="bold" />
 
                     <TextView
@@ -309,65 +218,138 @@
                         android:singleLine="true"
                         android:text="RAM"
                         android:textColor="@color/cockpit_on_surface_variant"
-                        android:textSize="8.5sp" />
+                        android:textSize="11sp" />
                 </LinearLayout>
             </LinearLayout>
         </LinearLayout>
 
-        <FrameLayout
-            android:id="@+id/cockpit_widget_spacer_2"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="10dp"
+            android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Wi-Fi Status Bar: 36dp height, 12dp horizontal padding, equal spacing above and below -->
+        <!-- Row 2: Compact content-width Alarm chip + Network chip side by side -->
         <LinearLayout
-            android:id="@+id/cockpit_widget_net_row"
+            android:id="@+id/cockpit_widget_chips_row"
             android:layout_width="match_parent"
-            android:layout_height="36dp"
-            android:background="@drawable/cockpit_widget_well_bg"
+            android:layout_height="wrap_content"
+            android:baselineAligned="false"
             android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp">
+            android:orientation="horizontal">
 
-            <TextView
-                android:id="@+id/cockpit_widget_net_speed"
-                android:layout_width="0dp"
-                android:layout_height="wrap_content"
-                android:layout_weight="1"
-                android:ellipsize="end"
-                android:fontFeatureSettings="tnum"
-                android:includeFontPadding="false"
-                android:maxLines="1"
-                android:singleLine="true"
-                android:text="Wi-Fi &#183; Idle"
-                android:textColor="@color/cockpit_primary"
-                android:textSize="11sp"
-                android:textStyle="bold" />
-
-            <TextView
-                android:id="@+id/cockpit_widget_today_data"
+            <LinearLayout
+                android:id="@+id/cockpit_widget_alarm_container"
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="8dp"
-                android:ellipsize="end"
-                android:fontFeatureSettings="tnum"
-                android:includeFontPadding="false"
-                android:maxLines="1"
-                android:singleLine="true"
-                android:text="Today --"
-                android:textColor="@color/cockpit_on_surface_variant"
-                android:textSize="11sp"
-                android:textStyle="bold" />
+                android:background="@drawable/cockpit_widget_well_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="7dp"
+                android:paddingVertical="4dp">
+
+                <ImageView
+                    android:id="@+id/cockpit_alarm_icon"
+                    android:layout_width="11dp"
+                    android:layout_height="11dp"
+                    android:layout_marginEnd="4dp"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_cockpit_alarm"
+                    android:tint="@color/cockpit_primary" />
+
+                <TextView
+                    android:id="@+id/cockpit_alarm_time_text"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFeatureSettings="tnum"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:text="No alarm set"
+                    android:textColor="@color/cockpit_on_surface"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <Chronometer
+                    android:id="@+id/cockpit_alarm_chronometer"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:countDown="true"
+                    android:ellipsize="none"
+                    android:fontFeatureSettings="tnum"
+                    android:format="%s"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="@color/cockpit_primary"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+
+                <TextView
+                    android:id="@+id/cockpit_alarm_static_countdown"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:ellipsize="none"
+                    android:fontFeatureSettings="tnum"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="@color/cockpit_primary"
+                    android:textSize="9.5sp"
+                    android:textStyle="bold"
+                    android:visibility="gone" />
+            </LinearLayout>
+
+            <LinearLayout
+                android:id="@+id/cockpit_widget_net_row"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="6dp"
+                android:background="@drawable/cockpit_widget_well_bg"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
+                android:paddingHorizontal="7dp"
+                android:paddingVertical="4dp">
+
+                <TextView
+                    android:id="@+id/cockpit_widget_net_speed"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:ellipsize="end"
+                    android:fontFeatureSettings="tnum"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:text="Wi-Fi"
+                    android:textColor="@color/cockpit_primary"
+                    android:textSize="10sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:id="@+id/cockpit_widget_today_data"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:ellipsize="end"
+                    android:fontFeatureSettings="tnum"
+                    android:includeFontPadding="false"
+                    android:maxLines="1"
+                    android:singleLine="true"
+                    android:textColor="@color/cockpit_on_surface_variant"
+                    android:textSize="9.5sp"
+                    android:visibility="gone" />
+            </LinearLayout>
         </LinearLayout>
 
-        <FrameLayout
-            android:id="@+id/cockpit_widget_spacer_3"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="10dp"
+            android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Zone 3: 3-Column Sculptural Control Deck (48dp touch height, 20dp icons, 4dp gap, 10dp column gaps) -->
+        <!-- Row 3: 3 Equal Action Buttons (48dp touch targets with 44dp visual tiles, 8dp gaps) -->
         <LinearLayout
             android:id="@+id/cockpit_widget_controls_row"
             android:layout_width="match_parent"
@@ -385,21 +367,24 @@
                 <ImageView
                     android:id="@+id/cockpit_widget_drop_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
-                    android:scaleType="fitXY" />
+                    android:scaleType="fitXY"
+                    android:src="@drawable/cockpit_widget_pill_inactive_bg" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
 
                     <ImageView
                         android:id="@+id/cockpit_widget_drop_icon"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_cockpit_devices" />
 
@@ -407,7 +392,7 @@
                         android:id="@+id/cockpit_widget_drop_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="3dp"
                         android:ellipsize="end"
                         android:includeFontPadding="false"
                         android:maxLines="1"
@@ -423,27 +408,30 @@
                 android:id="@+id/cockpit_widget_btn_torch"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="10dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1">
 
                 <ImageView
                     android:id="@+id/cockpit_widget_torch_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
-                    android:scaleType="fitXY" />
+                    android:scaleType="fitXY"
+                    android:src="@drawable/cockpit_widget_pill_inactive_bg" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
 
                     <ImageView
                         android:id="@+id/cockpit_widget_torch_icon"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_cockpit_torch_off" />
 
@@ -451,7 +439,7 @@
                         android:id="@+id/cockpit_widget_torch_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="3dp"
                         android:ellipsize="end"
                         android:includeFontPadding="false"
                         android:maxLines="1"
@@ -467,27 +455,30 @@
                 android:id="@+id/cockpit_widget_btn_island"
                 android:layout_width="0dp"
                 android:layout_height="match_parent"
-                android:layout_marginStart="10dp"
+                android:layout_marginStart="8dp"
                 android:layout_weight="1">
 
                 <ImageView
                     android:id="@+id/cockpit_widget_island_bg"
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:contentDescription="@null"
-                    android:scaleType="fitXY" />
+                    android:scaleType="fitXY"
+                    android:src="@drawable/cockpit_widget_pill_inactive_bg" />
 
                 <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="match_parent"
+                    android:layout_height="44dp"
+                    android:layout_gravity="center_vertical"
                     android:gravity="center"
                     android:orientation="vertical"
                     android:paddingHorizontal="4dp">
 
                     <ImageView
                         android:id="@+id/cockpit_widget_island_icon"
-                        android:layout_width="20dp"
-                        android:layout_height="20dp"
+                        android:layout_width="18dp"
+                        android:layout_height="18dp"
                         android:contentDescription="@null"
                         android:src="@drawable/ic_cockpit_tile" />
 
@@ -495,7 +486,7 @@
                         android:id="@+id/cockpit_widget_island_label"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="4dp"
+                        android:layout_marginTop="3dp"
                         android:ellipsize="end"
                         android:includeFontPadding="false"
                         android:maxLines="1"
@@ -508,13 +499,12 @@
             </FrameLayout>
         </LinearLayout>
 
-        <FrameLayout
-            android:id="@+id/cockpit_widget_spacer_4"
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="10dp"
+            android:layout_height="0dp"
             android:layout_weight="1" />
 
-        <!-- Zone 4: Recessed App Dock (chevrons aligned to app icon centers, 8dp bottom clearance below dots) -->
+        <!-- Row 4: Recessed App Dock with 4 icons + labels, small chevrons, page dots -->
         <FrameLayout
             android:id="@+id/cockpit_widget_dock_container"
             android:layout_width="match_parent"
@@ -525,17 +515,17 @@
                 android:layout_width="match_parent"
                 android:layout_height="match_parent"
                 android:contentDescription="@null"
-                android:scaleType="fitXY" />
+                android:scaleType="fitXY"
+                android:src="@drawable/cockpit_widget_well_bg" />
 
             <LinearLayout
+                android:id="@+id/cockpit_widget_dock_apps_group"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingStart="6dp"
-                android:paddingTop="2dp"
-                android:paddingEnd="6dp"
-                android:paddingBottom="8dp">
+                android:paddingTop="4dp"
+                android:paddingBottom="6dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
@@ -546,16 +536,18 @@
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_prev"
-                        android:layout_width="30dp"
+                        android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:contentDescription="Previous pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"
+                        android:paddingStart="8dp"
                         android:paddingTop="4dp"
+                        android:paddingEnd="22dp"
                         android:paddingBottom="16dp"
                         android:text="&#8249;"
                         android:textColor="@color/cockpit_primary"
-                        android:textSize="22sp"
+                        android:textSize="17sp"
                         android:textStyle="bold" />
 
                     <LinearLayout
@@ -569,8 +561,8 @@
 
                         <ImageView
                             android:id="@+id/cockpit_widget_app_icon_0"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
                             android:contentDescription="@null"
                             android:scaleType="fitCenter" />
 
@@ -584,7 +576,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -598,8 +590,8 @@
 
                         <ImageView
                             android:id="@+id/cockpit_widget_app_icon_1"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
                             android:contentDescription="@null"
                             android:scaleType="fitCenter" />
 
@@ -613,7 +605,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -627,8 +619,8 @@
 
                         <ImageView
                             android:id="@+id/cockpit_widget_app_icon_2"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
                             android:contentDescription="@null"
                             android:scaleType="fitCenter" />
 
@@ -642,7 +634,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -656,8 +648,8 @@
 
                         <ImageView
                             android:id="@+id/cockpit_widget_app_icon_3"
-                            android:layout_width="28dp"
-                            android:layout_height="28dp"
+                            android:layout_width="26dp"
+                            android:layout_height="26dp"
                             android:contentDescription="@null"
                             android:scaleType="fitCenter" />
 
@@ -671,21 +663,23 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_next"
-                        android:layout_width="30dp"
+                        android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:contentDescription="Next pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"
+                        android:paddingStart="22dp"
                         android:paddingTop="4dp"
+                        android:paddingEnd="8dp"
                         android:paddingBottom="16dp"
                         android:text="&#8250;"
                         android:textColor="@color/cockpit_primary"
-                        android:textSize="22sp"
+                        android:textSize="17sp"
                         android:textStyle="bold" />
                 </LinearLayout>
 
@@ -700,36 +694,54 @@
 
                     <ImageView
                         android:id="@+id/cockpit_widget_dot_0"
-                        android:layout_width="4dp"
-                        android:layout_height="4dp"
+                        android:layout_width="4.5dp"
+                        android:layout_height="4.5dp"
                         android:contentDescription="@null"
                         android:src="@drawable/cockpit_widget_dot" />
 
                     <ImageView
                         android:id="@+id/cockpit_widget_dot_1"
-                        android:layout_width="4dp"
-                        android:layout_height="4dp"
+                        android:layout_width="4.5dp"
+                        android:layout_height="4.5dp"
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/cockpit_widget_dot" />
 
                     <ImageView
                         android:id="@+id/cockpit_widget_dot_2"
-                        android:layout_width="4dp"
-                        android:layout_height="4dp"
+                        android:layout_width="4.5dp"
+                        android:layout_height="4.5dp"
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/cockpit_widget_dot" />
 
                     <ImageView
                         android:id="@+id/cockpit_widget_dot_3"
-                        android:layout_width="4dp"
-                        android:layout_height="4dp"
+                        android:layout_width="4.5dp"
+                        android:layout_height="4.5dp"
                         android:layout_marginStart="4dp"
                         android:contentDescription="@null"
                         android:src="@drawable/cockpit_widget_dot" />
                 </LinearLayout>
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/cockpit_widget_dock_empty_action"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:contentDescription="No launchable apps found. Open Cockpit Hub to pin apps"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
+                android:singleLine="true"
+                android:text="Pin apps in Cockpit Hub"
+                android:textColor="@color/cockpit_primary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
         </FrameLayout>
     </LinearLayout>
 </FrameLayout>

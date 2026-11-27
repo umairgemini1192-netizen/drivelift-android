@@ -896,6 +896,7 @@ fun CockpitMasterWidgetCard(
     onToggleTorch: () -> Unit = {},
     onToggleIsland: () -> Unit = {},
     modifier: Modifier = Modifier,
+    networkSpeedLabel: String = "Wi-Fi",
     batteryMetric: BatteryHudMetric = BatteryHudMetric(84, 0.84f, "84%"),
     ramMetric: RamHudMetric = CockpitHudBitmapRenderer.formatRamHudMetric(
         availBytes = (1.5 * 1024 * 1024 * 1024).toLong(),
@@ -1044,19 +1045,66 @@ fun CockpitMasterWidgetCard(
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(Tokens.RowLoose),
-                verticalArrangement = Arrangement.spacedBy(Tokens.Row),
+                    .padding(Tokens.Row),
+                verticalArrangement = Arrangement.spacedBy(Tokens.Small),
             ) {
-                // Top Header Row: Clock + Date (Left) | Status Pill aligned directly with the Clock Row (Right)
-                Row(
-                    modifier = Modifier.fillMaxWidth(),
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.SpaceBetween,
-                ) {
-                    Box(Modifier.weight(1f)) {
-                        ClockHeroBlock(clockTimeLabel, clockDateLabel)
+                val telemetryGaugesContent: @Composable () -> Unit = {
+                    Row(
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        if (isInitialTelemetryLoading) {
+                            GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
+                            GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
+                        } else {
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(Tokens.Cockpit.HudGaugeSize)
+                                        .then(
+                                            if (batteryMetric.isCharging) {
+                                                Modifier
+                                                    .clip(CircleShape)
+                                                    .border(
+                                                        width = Tokens.Stroke,
+                                                        color = GlassPalette.HudEmerald.copy(alpha = 0.55f * chargingPulseAlpha),
+                                                        shape = CircleShape,
+                                                    )
+                                            } else {
+                                                Modifier
+                                            },
+                                        )
+                                        .testTag("cockpit-widget-battery-gauge"),
+                                ) {
+                                    Image(
+                                        bitmap = batteryGaugeBitmap,
+                                        contentDescription = "Battery ${batteryMetric.valueText}",
+                                        modifier = Modifier.fillMaxSize(),
+                                    )
+                                }
+                                Spacer(Modifier.height(Tokens.Tiny))
+                                BatteryCurrentLabel(
+                                    reading = batteryMetric.current,
+                                    charge = batteryMetric.charge,
+                                )
+                            }
+                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                                Image(
+                                    bitmap = ramGaugeBitmap,
+                                    contentDescription = "RAM ${ramMetric.valueText}",
+                                    modifier = Modifier
+                                        .size(Tokens.Cockpit.HudGaugeSize)
+                                        .testTag("cockpit-widget-ram-gauge"),
+                                )
+                                Spacer(Modifier.height(Tokens.Tiny))
+                                RamTelemetryLabel(ram = ramMetric)
+                            }
+                        }
                     }
-                    Spacer(Modifier.width(Tokens.Small))
+                }
+
+                // Row 1: Clock + Date + Status Pill under date (Left) | Battery & RAM rings centered (Right)
+                val statusBadgeContent: @Composable () -> Unit = {
                     Box(
                         modifier = Modifier
                             .wrapContentWidth()
@@ -1092,87 +1140,60 @@ fun CockpitMasterWidgetCard(
                     }
                 }
 
-                // Telemetry Split: Alarm Pill (Left) | Dual Neon Arc Gauges (Right)
-                val telemetryGaugesContent: @Composable () -> Unit = {
-                    Row(
-                        horizontalArrangement = Arrangement.spacedBy(Tokens.Cockpit.HudPillSpacing),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        if (isInitialTelemetryLoading) {
-                            GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
-                            GaugeShimmerPlaceholder(reducedMotion = reducedMotion)
-                        } else {
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(Tokens.Cockpit.HudGaugeSize)
-                                        .then(
-                                            if (batteryMetric.isCharging) {
-                                                Modifier
-                                                    .clip(CircleShape)
-                                                    .border(
-                                                        width = Tokens.Stroke,
-                                                        color = GlassPalette.HudEmerald.copy(alpha = 0.55f * chargingPulseAlpha),
-                                                        shape = CircleShape,
-                                                    )
-                                            } else {
-                                                Modifier
-                                            },
-                                        )
-                                        .testTag("cockpit-widget-battery-gauge"),
-                                ) {
-                                    Image(
-                                        bitmap = batteryGaugeBitmap,
-                                        contentDescription = "Battery ${batteryMetric.valueText}",
-                                        modifier = Modifier.fillMaxSize(),
-                                    )
-                                }
-                                Spacer(Modifier.height(Tokens.Snug))
-                                BatteryCurrentLabel(
-                                    reading = batteryMetric.current,
-                                    charge = batteryMetric.charge,
-                                )
-                            }
-                            Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                                Image(
-                                    bitmap = ramGaugeBitmap,
-                                    contentDescription = "RAM ${ramMetric.valueText}",
-                                    modifier = Modifier
-                                        .size(Tokens.Cockpit.HudGaugeSize)
-                                        .testTag("cockpit-widget-ram-gauge"),
-                                )
-                                Spacer(Modifier.height(Tokens.Snug))
-                                RamTelemetryLabel(ram = ramMetric)
-                            }
-                        }
-                    }
-                }
-
                 if (stackTopRow) {
-                    Column(verticalArrangement = Arrangement.spacedBy(Tokens.Row)) {
-                        AlarmBadgeBlock(
-                            alarm = alarm,
-                            onTapAlarm = onTapAlarm,
-                            modifier = Modifier.fillMaxWidth(),
-                        )
+                    Column(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    ) {
+                        ClockHeroBlock(clockTimeLabel, clockDateLabel)
+                        statusBadgeContent()
                         telemetryGaugesContent()
                     }
                 } else {
                     Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(IntrinsicSize.Min),
+                        modifier = Modifier.fillMaxWidth(),
                         verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.SpaceBetween,
                     ) {
-                        AlarmBadgeBlock(
-                            alarm = alarm,
-                            onTapAlarm = onTapAlarm,
-                            modifier = Modifier
-                                .weight(1f)
-                                .fillMaxHeight(),
-                        )
-                        Spacer(Modifier.width(Tokens.Row))
+                        Column(
+                            modifier = Modifier.weight(1f),
+                            verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                        ) {
+                            ClockHeroBlock(clockTimeLabel, clockDateLabel)
+                            statusBadgeContent()
+                        }
+                        Spacer(Modifier.width(Tokens.Small))
                         telemetryGaugesContent()
+                    }
+                }
+
+                // Row 2: Compact content-width Alarm chip + Network chip side by side
+                val chipsRowContent: @Composable () -> Unit = {
+                    AlarmBadgeBlock(
+                        alarm = alarm,
+                        onTapAlarm = onTapAlarm,
+                        modifier = Modifier.wrapContentWidth(),
+                    )
+                    NetworkChipBlock(
+                        label = networkSpeedLabel,
+                        modifier = Modifier.wrapContentWidth(),
+                    )
+                }
+                if (stackTopRow) {
+                    FlowRow(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                        verticalArrangement = Arrangement.spacedBy(Tokens.Tiny),
+                    ) {
+                        chipsRowContent()
+                    }
+                } else {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(Tokens.Small),
+                    ) {
+                        chipsRowContent()
                     }
                 }
 
@@ -1461,7 +1482,7 @@ private fun AlarmBadgeBlock(
             .background(GlassPalette.HudTileRecessed)
             .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.ThumbShape)
             .clickable(role = Role.Button, onClickLabel = "Open Google Clock alarms", onClick = onTapAlarm)
-            .padding(horizontal = Tokens.Row, vertical = Tokens.Small)
+            .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny)
             .testTag("cockpit-widget-alarm-pill"),
         horizontalAlignment = Alignment.Start,
         verticalArrangement = Arrangement.Center,
@@ -1478,7 +1499,10 @@ private fun AlarmBadgeBlock(
             )
             Text(
                 text = if (alarm.hasAlarm) "Alarm ${alarm.formattedTime}" else "No alarm set",
-                style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.labelMedium.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = TABULAR_DIGITS,
+                ),
                 color = MaterialTheme.colorScheme.onSurface,
                 maxLines = 1,
             )
@@ -1486,11 +1510,42 @@ private fun AlarmBadgeBlock(
         if (alarm.hasAlarm) {
             Text(
                 text = alarm.countdownText,
-                style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.SemiBold),
+                style = MaterialTheme.typography.labelSmall.copy(
+                    fontWeight = FontWeight.SemiBold,
+                    fontFeatureSettings = TABULAR_DIGITS,
+                ),
                 color = GlassPalette.HudElectricCyan,
                 maxLines = 1,
             )
         }
+    }
+}
+
+@Composable
+private fun NetworkChipBlock(
+    label: String,
+    modifier: Modifier = Modifier,
+) {
+    Row(
+        modifier = modifier
+            .defaultMinSize(minHeight = Tokens.TouchTarget)
+            .clip(Tokens.ThumbShape)
+            .background(GlassPalette.HudTileRecessed)
+            .border(Tokens.Hairline, GlassPalette.HudTrackRing, Tokens.ThumbShape)
+            .padding(horizontal = Tokens.Small, vertical = Tokens.Tiny)
+            .testTag("cockpit-widget-network-chip"),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            text = label,
+            style = MaterialTheme.typography.labelMedium.copy(
+                fontWeight = FontWeight.SemiBold,
+                fontFeatureSettings = TABULAR_DIGITS,
+            ),
+            color = GlassPalette.HudElectricCyan,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+        )
     }
 }
 

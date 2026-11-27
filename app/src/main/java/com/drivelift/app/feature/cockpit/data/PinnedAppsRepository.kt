@@ -104,6 +104,13 @@ class PinnedAppsRepository(
         }.getOrNull()
     }
 
+    fun isLaunchable(packageName: String): Boolean {
+        testAppsOverride?.let { override ->
+            return override.any { it.packageName == packageName }
+        }
+        return buildLaunchIntent(packageName) != null
+    }
+
     fun buildLaunchIntent(packageName: String): Intent? {
         return context.packageManager.getLaunchIntentForPackage(packageName)
             ?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
