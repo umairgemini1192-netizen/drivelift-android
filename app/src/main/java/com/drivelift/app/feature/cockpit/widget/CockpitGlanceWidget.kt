@@ -139,6 +139,7 @@ object CockpitWidgetActions {
     const val SLOT_ISLAND = 6
     const val SLOT_PAGER_PREV = 7
     const val SLOT_PAGER_NEXT = 8
+    const val SLOT_DOCK_EMPTY = 9
     const val SLOT_PINNED_APP_BASE = 10
 
     private const val REQUEST_CODE_STRIDE = 32
@@ -277,22 +278,25 @@ class CockpitGlanceWidget {
         }
 
         /**
-         * Resolves pinned apps for the widget dock, falling back to up to 4 installed default
-         * launchable apps (or 4 default entries if headless) so the dock is never empty.
+         * Resolves launchable pinned apps for the widget dock, falling back to up to 4 resolved
+         * launchable apps on the device. Returns an empty list when no launchable apps resolve so
+         * the dock shows a labeled setup action instead of dead shortcuts.
          */
         fun resolveDockApps(context: Context): List<PinnedAppInfo> {
             val cockpit = Graph.get(context).cockpit
-            val pinned = cockpit.pinnedAppsRepo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages)
+            val repo = cockpit.pinnedAppsRepo
+            val pinned = repo.resolvePinnedApps(cockpit.prefsRepo.state.value.pinnedPackages)
+                .filter { repo.isLaunchable(it.packageName) }
             if (pinned.isNotEmpty()) return pinned
 
-            val launchable = cockpit.pinnedAppsRepo.listLaunchableApps(excludeSelf = true)
-            if (launchable.isNotEmpty()) {
-                val byPkg = launchable.associateBy { it.packageName }
-                val preferred = DEFAULT_DOCK_PACKAGES.mapNotNull { byPkg[it] }
-                val combined = (preferred + launchable).distinctBy { it.packageName }
-                return combined.take(CockpitWidgetModel.PINNED_PER_PAGE)
-            }
-            return HEADLESS_DEFAULT_DOCK_APPS
+            val launchable = repo.listLaunchableApps(excludeSelf = true)
+                .filter { repo.isLaunchable(it.packageName) }
+            if (launchable.isEmpty()) return emptyList()
+
+            val byPkg = launchable.associateBy { it.packageName }
+            val preferred = DEFAULT_DOCK_PACKAGES.mapNotNull { byPkg[it] }
+            val combined = (preferred + launchable).distinctBy { it.packageName }
+            return combined.take(CockpitWidgetModel.PINNED_PER_PAGE)
         }
 
         private val DEFAULT_DOCK_PACKAGES = listOf(
@@ -304,13 +308,6 @@ class CockpitGlanceWidget {
             "com.google.android.deskclock",
             "com.google.android.apps.photos",
             "com.android.settings",
-        )
-
-        private val HEADLESS_DEFAULT_DOCK_APPS = listOf(
-            PinnedAppInfo("com.google.android.apps.maps", "Maps"),
-            PinnedAppInfo("com.android.chrome", "Chrome"),
-            PinnedAppInfo("com.google.android.deskclock", "Clock"),
-            PinnedAppInfo("com.google.android.apps.photos", "Photos"),
         )
 
         /** Data-usage labels are hidden on the widget network chip per HUD spec. */
@@ -1037,11 +1034,26 @@ class CockpitGlanceWidget {
             views.setTextColor(R.id.cockpit_widget_island_label, islandFg)
 
             // Recessed App Dock (Zone 4)
+            views.setViewVisibility(R.id.cockpit_widget_dock_container, View.VISIBLE)
+            views.setImageViewResource(R.id.cockpit_widget_dock_bg, R.drawable.cockpit_widget_well_bg)
             if (pinnedApps.isEmpty()) {
-                views.setViewVisibility(R.id.cockpit_widget_dock_container, View.GONE)
+                views.setViewVisibility(R.id.cockpit_widget_dock_apps_group, View.GONE)
+                views.setViewVisibility(R.id.cockpit_widget_dock_empty_action, View.VISIBLE)
+                views.setTextViewText(R.id.cockpit_widget_dock_empty_action, "Pin apps in Cockpit Hub")
+                if (attachPendingIntents) {
+                    views.setOnClickPendingIntent(
+                        R.id.cockpit_widget_dock_empty_action,
+                        CockpitWidgetActions.createBroadcastPendingIntent(
+                            context = context,
+                            appWidgetId = appWidgetId,
+                            slot = CockpitWidgetActions.SLOT_DOCK_EMPTY,
+                            action = CockpitWidgetActions.ACTION_OPEN_DRIVELIFT,
+                        ),
+                    )
+                }
             } else {
-                views.setViewVisibility(R.id.cockpit_widget_dock_container, View.VISIBLE)
-                views.setImageViewResource(R.id.cockpit_widget_dock_bg, R.drawable.cockpit_widget_well_bg)
+                views.setViewVisibility(R.id.cockpit_widget_dock_apps_group, View.VISIBLE)
+                views.setViewVisibility(R.id.cockpit_widget_dock_empty_action, View.GONE)
 
                 val paged = pinnedPageCount > 1
                 views.setViewVisibility(R.id.cockpit_widget_btn_prev, if (paged) View.VISIBLE else View.GONE)

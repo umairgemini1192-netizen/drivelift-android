@@ -707,7 +707,7 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                 dockContainer.height > 0,
             )
 
-            // Every primary control button and dock target retains a >= 48 dp touch target height in all sizes.
+            // Every primary control button and dock target retains >= 48 dp touch target dimensions in all sizes.
             val minTouchPx = (48f * density).toInt()
             for (btnId in intArrayOf(
                 R.id.cockpit_widget_btn_drop,
@@ -724,6 +724,14 @@ class CockpitPr99StackedSpeedsWifiCardWidgetTest {
                     btn.height >= minTouchPx,
                 )
             }
+            val dockPrev = inflated.findViewById<View>(R.id.cockpit_widget_btn_prev)
+            val dockNext = inflated.findViewById<View>(R.id.cockpit_widget_btn_next)
+            val dockApp0 = inflated.findViewById<View>(R.id.cockpit_widget_app_0)
+            val dockApp3 = inflated.findViewById<View>(R.id.cockpit_widget_app_3)
+            assertTrue("Prev chevron width < 48dp in ${spec.name}", dockPrev.width >= minTouchPx)
+            assertTrue("Next chevron width < 48dp in ${spec.name}", dockNext.width >= minTouchPx)
+            assertTrue("Prev chevron overlaps app_0 in ${spec.name}", dockPrev.right <= dockApp0.left)
+            assertTrue("Next chevron overlaps app_3 in ${spec.name}", dockApp3.right <= dockNext.left)
 
             // Compact 4x2 hides app labels so short height never clips them.
             val appLabel0 = inflated.findViewById<View>(R.id.cockpit_widget_app_label_0)

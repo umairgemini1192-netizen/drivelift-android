@@ -519,13 +519,12 @@
                 android:src="@drawable/cockpit_widget_well_bg" />
 
             <LinearLayout
+                android:id="@+id/cockpit_widget_dock_apps_group"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:gravity="center_horizontal"
                 android:orientation="vertical"
-                android:paddingStart="6dp"
                 android:paddingTop="4dp"
-                android:paddingEnd="6dp"
                 android:paddingBottom="6dp">
 
                 <LinearLayout
@@ -537,12 +536,14 @@
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_prev"
-                        android:layout_width="26dp"
+                        android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:contentDescription="Previous pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"
+                        android:paddingStart="8dp"
                         android:paddingTop="4dp"
+                        android:paddingEnd="22dp"
                         android:paddingBottom="16dp"
                         android:text="&#8249;"
                         android:textColor="@color/cockpit_primary"
@@ -575,7 +576,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -604,7 +605,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -633,7 +634,7 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <LinearLayout
@@ -662,17 +663,19 @@
                             android:maxLines="1"
                             android:singleLine="true"
                             android:textColor="@color/cockpit_on_surface"
-                            android:textSize="10sp" />
+                            android:textSize="8sp" />
                     </LinearLayout>
 
                     <TextView
                         android:id="@+id/cockpit_widget_btn_next"
-                        android:layout_width="26dp"
+                        android:layout_width="48dp"
                         android:layout_height="match_parent"
                         android:contentDescription="Next pinned apps"
                         android:gravity="center"
                         android:includeFontPadding="false"
+                        android:paddingStart="22dp"
                         android:paddingTop="4dp"
+                        android:paddingEnd="8dp"
                         android:paddingBottom="16dp"
                         android:text="&#8250;"
                         android:textColor="@color/cockpit_primary"
@@ -721,6 +724,24 @@
                         android:src="@drawable/cockpit_widget_dot" />
                 </LinearLayout>
             </LinearLayout>
+
+            <TextView
+                android:id="@+id/cockpit_widget_dock_empty_action"
+                android:layout_width="match_parent"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:contentDescription="No launchable apps found. Open Cockpit Hub to pin apps"
+                android:ellipsize="end"
+                android:gravity="center"
+                android:includeFontPadding="false"
+                android:maxLines="1"
+                android:paddingHorizontal="12dp"
+                android:singleLine="true"
+                android:text="Pin apps in Cockpit Hub"
+                android:textColor="@color/cockpit_primary"
+                android:textSize="11sp"
+                android:textStyle="bold"
+                android:visibility="gone" />
         </FrameLayout>
     </LinearLayout>
 </FrameLayout>

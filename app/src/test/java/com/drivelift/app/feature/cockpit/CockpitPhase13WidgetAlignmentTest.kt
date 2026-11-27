@@ -205,16 +205,28 @@ class CockpitPhase13WidgetAlignmentTest {
         assertEquals(dp(18f), dropIcon.width)
         assertEquals(dp(18f), dropIcon.height)
 
-        // Row 4: App dock with aligned chevrons, >= 48dp touch targets, and zero bottom clipping.
+        // Row 4: App dock with aligned chevrons, >= 48x48dp non-overlapping touch targets, and zero bottom clipping.
         val dockContainer = root.findViewById<View>(R.id.cockpit_widget_dock_container)
         val dotsRow = root.findViewById<View>(R.id.cockpit_widget_pager_dots_row)
         val btnPrev = root.findViewById<View>(R.id.cockpit_widget_btn_prev)
         val btnNext = root.findViewById<View>(R.id.cockpit_widget_btn_next)
+        val app0 = root.findViewById<View>(R.id.cockpit_widget_app_0)
+        val app3 = root.findViewById<View>(R.id.cockpit_widget_app_3)
         val appIcon0 = root.findViewById<View>(R.id.cockpit_widget_app_icon_0)
 
         assertEquals(View.VISIBLE, dotsRow.visibility)
+        assertTrue("Previous chevron must keep >= 48dp touch width", btnPrev.width >= dp(48f))
         assertTrue("Previous chevron must keep >= 48dp touch height", btnPrev.height >= dp(48f))
+        assertTrue("Next chevron must keep >= 48dp touch width", btnNext.width >= dp(48f))
         assertTrue("Next chevron must keep >= 48dp touch height", btnNext.height >= dp(48f))
+        assertTrue(
+            "Prev chevron must not overlap first app slot",
+            leftInRoot(btnPrev, root) + btnPrev.width <= leftInRoot(app0, root),
+        )
+        assertTrue(
+            "Next chevron must not overlap last app slot",
+            leftInRoot(app3, root) + app3.width <= leftInRoot(btnNext, root),
+        )
 
         val iconCenterY = topInRoot(appIcon0, root) + appIcon0.height / 2f
         val prevContentCenterY =
@@ -325,7 +337,23 @@ class CockpitPhase13WidgetAlignmentTest {
                 )
 
                 val btnPrev = root.findViewById<View>(R.id.cockpit_widget_btn_prev)
+                val btnNext = root.findViewById<View>(R.id.cockpit_widget_btn_next)
+                val app0 = root.findViewById<View>(R.id.cockpit_widget_app_0)
+                val app3 = root.findViewById<View>(R.id.cockpit_widget_app_3)
                 val appIcon0 = root.findViewById<View>(R.id.cockpit_widget_app_icon_0)
+                val minTouchPx = (48f * density).roundToInt()
+                assertTrue("$variant prev chevron width < 48dp", btnPrev.width >= minTouchPx)
+                assertTrue("$variant prev chevron height < 48dp", btnPrev.height >= minTouchPx)
+                assertTrue("$variant next chevron width < 48dp", btnNext.width >= minTouchPx)
+                assertTrue("$variant next chevron height < 48dp", btnNext.height >= minTouchPx)
+                assertTrue(
+                    "$variant prev chevron overlaps app_0",
+                    leftInRoot(btnPrev, root) + btnPrev.width <= leftInRoot(app0, root),
+                )
+                assertTrue(
+                    "$variant next chevron overlaps app_3",
+                    leftInRoot(app3, root) + app3.width <= leftInRoot(btnNext, root),
+                )
                 val iconCenterY = topInRoot(appIcon0, root) + appIcon0.height / 2f
                 val prevContentCenterY =
                     topInRoot(btnPrev, root) + btnPrev.paddingTop + (btnPrev.height - btnPrev.paddingTop - btnPrev.paddingBottom) / 2f
@@ -335,6 +363,36 @@ class CockpitPhase13WidgetAlignmentTest {
                 )
             }
         }
+
+        // Verify multipage dock chevrons retain non-overlapping >= 48x48dp hit targets even at minimum 180x110dp bounds.
+        val (minRoot, minDensity) = inflateAndLayout(
+            WidgetSizeVariant.COMPACT,
+            widthDp = CockpitGlanceWidget.COMPACT_MIN_WIDTH_DP,
+            heightDp = CockpitGlanceWidget.COMPACT_MIN_HEIGHT_DP,
+        )
+        val minTouchPx = (48f * minDensity).roundToInt()
+        val minPrev = minRoot.findViewById<View>(R.id.cockpit_widget_btn_prev)
+        val minNext = minRoot.findViewById<View>(R.id.cockpit_widget_btn_next)
+        val minApp0 = minRoot.findViewById<View>(R.id.cockpit_widget_app_0)
+        val minApp3 = minRoot.findViewById<View>(R.id.cockpit_widget_app_3)
+        assertEquals(View.VISIBLE, minPrev.visibility)
+        assertEquals(View.VISIBLE, minNext.visibility)
+        assertTrue("Min COMPACT prev width < 48dp", minPrev.width >= minTouchPx)
+        assertTrue("Min COMPACT prev height < 48dp", minPrev.height >= minTouchPx)
+        assertTrue("Min COMPACT next width < 48dp", minNext.width >= minTouchPx)
+        assertTrue("Min COMPACT next height < 48dp", minNext.height >= minTouchPx)
+        assertTrue(
+            "Min COMPACT chevrons overlap",
+            leftInRoot(minPrev, minRoot) + minPrev.width <= leftInRoot(minNext, minRoot),
+        )
+        assertTrue(
+            "Min COMPACT prev overlaps app_0",
+            leftInRoot(minPrev, minRoot) + minPrev.width <= leftInRoot(minApp0, minRoot),
+        )
+        assertTrue(
+            "Min COMPACT next overlaps app_3",
+            leftInRoot(minApp3, minRoot) + minApp3.width <= leftInRoot(minNext, minRoot),
+        )
     }
 
     @Test
